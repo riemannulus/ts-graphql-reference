@@ -4,6 +4,8 @@ import { GraphQLError } from 'graphql';
 import { createYoga } from 'graphql-yoga';
 import { createContextFactory, createServices } from './context.js';
 import { isDomainError } from './errors.js';
+import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
+import { registerGoogleOAuth } from './modules/auth/oauth.route.js';
 import { createPrismaClient } from './prisma.js';
 import { schema } from './schema.js';
 
@@ -18,6 +20,11 @@ export interface BuildAppOptions {
   prisma?: PrismaClient;
   /** Toggle Fastify request logging (default: true). */
   logger?: boolean;
+  /**
+   * Inject a Google OAuth client. Production omits this (an unimplemented stub
+   * is used); tests pass a fake so the OAuth callback can be exercised.
+   */
+  googleOAuth?: GoogleOAuthClient;
 }
 
 /**
@@ -29,7 +36,7 @@ export interface BuildAppOptions {
  */
 export function buildApp(options: BuildAppOptions = {}) {
   const prisma = options.prisma ?? createPrismaClient();
-  const services = createServices(prisma);
+  const services = createServices(prisma, { googleOAuth: options.googleOAuth });
   const app = fastify({ logger: options.logger ?? true });
 
   const yoga = createYoga<ServerContext>({
@@ -66,9 +73,11 @@ export function buildApp(options: BuildAppOptions = {}) {
     handler: (req, reply) => yoga.handleNodeRequestAndResponse(req, reply, { req, reply }),
   });
 
-  // Non-GraphQL routes (e.g. a payment provider webhook) would be registered
-  // here, calling into a service — they share the same `services` container:
-  //   registerPaymentWebhook(app, services.payment)
+  // Non-GraphQL surface: the Google OAuth callback. It is handed exactly one
+  // dependency — services.auth, from the same container the GraphQL layer uses
+  // — so the REST handler provisions users without ever seeing the PrismaClient
+  // or the GraphQL per-request context. See src/modules/auth/.
+  registerGoogleOAuth(app, services.auth);
 
   app.addHook('onClose', async () => {
     await prisma.$disconnect();

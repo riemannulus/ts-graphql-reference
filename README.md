@@ -100,6 +100,11 @@ src/
         post.query.ts    # query fields
         post.mutation.ts  # mutation fields
       post.service.ts
+    auth/                # REST-only module: a Google OAuth callback (no Pothos schema)
+      oauth.value.ts     # pure core: parse the callback query (parse, don't validate)
+      oauth.provider.ts  # shell: GoogleOAuthClient port + an unimplemented stub
+      oauth.service.ts   # shell: provisions a user (via UserService) from the profile
+      oauth.route.ts     # shell: registerGoogleOAuth(app, svc) — GET /google/oauth[/callback]
   tests/
     support/            # shared infra: helpers (in-process PGlite + resetDb)
     modules/<name>/     # tests mirror src/modules/<name>/ — unit + property +
@@ -133,6 +138,33 @@ relations/fields). Service read methods accept and spread it
 (`findMany({ ...query, ... })`), so the plugin's relation-loading optimization
 is preserved even though queries flow through the service layer.
 
+### Non-GraphQL endpoints (the OAuth callback)
+
+Not every entry point is GraphQL. `src/modules/auth/` is a worked example of a
+plain HTTP surface — a Google OAuth login callback at `GET /google/oauth` and
+`GET /google/oauth/callback` — that still provisions a user through the **same
+`UserService`** the `createUser` mutation uses (`OAuthService.completeLogin` →
+`users.findOrCreateByEmail`). The provider HTTP itself (exchanging the code,
+fetching the profile) is left unimplemented behind a `GoogleOAuthClient` port;
+everything around it is complete and tested.
+
+The point of interest is how dependencies reach the route **without the GraphQL
+context leaking into it**:
+
+- The GraphQL per-request `Context` (`{ prisma, services, req, reply }`) is built
+  by Yoga's context factory and exists *only inside resolvers*.
+- The REST route gets its dependency at **registration time** —
+  `registerGoogleOAuth(app, services.auth)` closes over exactly one service from
+  the container built once in the composition root. Per request it reads only
+  `req.query`; it never sees the `PrismaClient` or a shared mutable context.
+- Both surfaces draw from the **same `services` container** (composed in
+  `createServices`, where `OAuthService` is wired to `UserService`), but neither
+  leaks its request context into the other. Narrowest dependency, no spread.
+
+`OAuthService` depends on a `GoogleOAuthClient` *interface*, so production binds
+an unimplemented stub while tests inject a fake — which is how the callback is
+exercised end-to-end (`buildApp({ googleOAuth })`) with no real network.
+
 ### Error handling
 
 Services throw framework-agnostic `DomainError`s for expected business-rule
@@ -154,9 +186,11 @@ The `user` and `post` modules show two layouts (single schema file vs a
 3. Add `modules/<name>/<name>.schema.ts` (or a `schemas/` split) with
    `builder.prismaObject(...)` / `builder.queryField(...)` /
    `builder.mutationField(...)`, and import it in `src/schema.ts`.
-4. For non-GraphQL surfaces (e.g. a **payment webhook**), register a Fastify
-   route in `app.ts` that calls the service — see the commented hook in
-   `buildApp()`. Sub-features can be nested (e.g. `point/charge`, `point/refund`).
+4. For non-GraphQL surfaces (e.g. an **OAuth callback** or a **payment
+   webhook**), add a `registerXxx(app, service)` to the module and call it in
+   `buildApp()`, handing it just the one service it needs — see
+   `src/modules/auth/oauth.route.ts` and the "Non-GraphQL endpoints" section
+   above. Sub-features can be nested (e.g. `point/charge`, `point/refund`).
 
 State-machine-style invariants belong in a `<name>.state.ts` module (see
 `user.state.ts`), kept separate from persistence and the schema.
@@ -183,10 +217,17 @@ folders: `tests/integrations/` (several services + DB, no transport) and
 - **`modules/post/post.service.test.ts`** — post CRUD, publish idempotence, and the
   `onlyPublished` filter against the test DB. (`post` has no pure core — no domain
   invariants — so it is covered at the service level.)
+- **`modules/auth/oauth.value.test.ts`** — `parseOAuthCallback` boundary parsing:
+  valid callbacks, missing/non-string params, and a provider `error` param.
+- **`modules/auth/oauth.service.test.ts`** — `OAuthService.completeLogin` with a fake
+  provider + the test DB: creates a user from the profile, idempotent on repeat login.
 - **`integrations/user-post.test.ts`** — user and post services together: create a
   user, author a post, and assert the relation persists both ways (and the FK is enforced).
 - **`e2e/graphql.test.ts`** — end-to-end through Fastify via `app.inject`,
   including the relation query and the domain-error mapping.
+- **`e2e/oauth.test.ts`** — the non-GraphQL OAuth callback through `app.inject`: the
+  request provisions a user via the user module, repeat callbacks are idempotent, a
+  missing param maps to a 400 domain error, and `/google/oauth` redirects (302).
 
 Property-based tests (`@fast-check/vitest`, suffix `.prop.test.ts` / `.model.test.ts`)
 sit beside them and assert **laws** rather than examples:
@@ -199,6 +240,9 @@ sit beside them and assert **laws** rather than examples:
 - **`post.service.prop.test.ts`** — persistence laws: `create` round-trips
   title/content and starts unpublished; `onlyPublished` returns exactly the
   published subset for an arbitrary seed.
+- **`oauth.value.prop.test.ts`** — totality: `parseOAuthCallback` either returns a
+  complete callback or throws `OAuthError` (never anything else), and a provider
+  `error` always rejects regardless of the code/state.
 
 ## Notes on version-specific choices
 

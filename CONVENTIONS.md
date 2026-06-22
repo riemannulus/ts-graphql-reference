@@ -11,7 +11,7 @@ Split every module into a **pure core** that holds the rules, and a thin
 | Layer            | Files                              | May import                                  | Tested with                |
 | ---------------- | ---------------------------------- | ------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.state.ts`, `*.value.ts`         | types + other pure modules, `errors.ts`     | unit + **property** tests  |
-| Shell (effects)  | `*.service.ts`, `*.schema.ts`, `app.ts` | the core, Prisma, Fastify, Yoga        | integration + **model**-based PBT |
+| Shell (effects)  | `*.service.ts`, `*.schema.ts`, `*.route.ts`, `app.ts` | the core, Prisma, Fastify, Yoga | integration + **model**-based PBT |
 
 The core never imports Prisma/Fastify/GraphQL. This is what makes it trivially
 testable: pure, deterministic, no setup.
@@ -115,6 +115,17 @@ e.g. `post`) has no pure `*.state.ts` / `*.value.ts`, so its tests are
 service-level integration (`*.service.test.ts`) plus any persistence laws as
 properties. Tests spanning two services (e.g. a user authoring a post) live in
 `integrations/`; tests exercising the GraphQL transport live in `e2e/`.
+
+A module may also expose a **non-GraphQL HTTP surface** — e.g. the `auth`
+module's Google OAuth callback. It adds a `*.route.ts` whose
+`registerXxx(app, service)` is called from `buildApp()`, and (when it talks to a
+third party) a `*.provider.ts` that defines the external dependency as an
+**injected port** so production can stub it and tests can fake it. The rule that
+keeps this clean: a REST handler receives *only the one service it needs*, taken
+from the same `services` container the GraphQL layer uses (composed in
+`createServices`) — it never receives the GraphQL per-request `Context` or the
+`PrismaClient`. The two surfaces share dependencies without sharing request
+context, so neither leaks into the other.
 
 Tests run on real Postgres with no external server: `makeTestPrisma()`
 (`tests/support/helpers.ts`) starts an in-process PGlite (WASM Postgres) database

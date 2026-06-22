@@ -36,6 +36,28 @@ export class UserService {
   }
 
   /**
+   * Returns the user with this email, creating one if none exists yet.
+   *
+   * Used by non-GraphQL entry points like the OAuth callback, where a repeat
+   * login must be idempotent rather than fail on the unique-email constraint.
+   * `upsert` keyed on the unique email makes that atomic — a new account is
+   * created on first login (the `create` branch) and reused as a no-op
+   * afterwards. Email is parsed at the boundary, exactly like `create`.
+   *
+   * NOTE: a production app should link accounts by the provider's stable
+   * account id (and confirm the email is verified), not by email alone.
+   */
+  findOrCreateByEmail(input: CreateUserInput, query: Prisma.UserDefaultArgs = {}): Promise<User> {
+    const email = parseEmail(input.email);
+    return this.prisma.user.upsert({
+      ...query,
+      where: { email },
+      update: {},
+      create: { email, name: input.name ?? null },
+    });
+  }
+
+  /**
    * Transitions a user's status, enforcing the state-machine invariant in
    * user.state.ts. Throws InvalidStatusTransitionError on an illegal move.
    */
