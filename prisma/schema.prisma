@@ -1,17 +1,43 @@
 // Prisma schema — https://pris.ly/d/prisma-schema
-//
-// No models yet (intentionally empty). Add a model below and run
-// `pnpm prisma migrate dev` + `pnpm prisma generate`, then expose it
-// with `builder.prismaObject(...)` in src/.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 generator pothos {
-  provider = "prisma-pothos-types"
+  provider     = "prisma-pothos-types"
+  // Emit a .ts file (not the default type-only .d.ts) so it includes the
+  // runtime getDatamodel() that Pothos requires on Prisma 7.
+  output       = "../src/generated/pothos-types.ts"
+  clientOutput = "@prisma/client"
 }
 
 datasource db {
   provider = "sqlite"
+}
+
+/// A user of the system. `status` is a state machine (see user.state.ts):
+/// ACTIVE | SUSPENDED | DEACTIVATED. SQLite has no native enums, so it is
+/// stored as a string and the allowed transitions are enforced in code.
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  status    String   @default("ACTIVE")
+  posts     Post[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([authorId])
 }

@@ -10,6 +10,9 @@ prisma/dev.db-journal
 *.db
 *.db-journal
 
+# generated (Pothos types — run `pnpm prisma generate`)
+src/generated/
+
 # logs
 *.log
 npm-debug.log*

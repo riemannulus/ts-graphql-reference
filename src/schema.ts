@@ -1,20 +1,12 @@
+// Importing the builder first guarantees the root Query/Mutation types are
+// established before the module files below append fields to them.
 import { builder } from './builder.js';
 
-/**
- * Minimal placeholder schema.
- *
- * The Prisma schema has no models yet, so there are no Prisma-backed GraphQL
- * types. This `health` query exists only so the schema is valid and the server
- * boots. Replace or extend it once you add Prisma models and expose them with
- * `builder.prismaObject(...)`.
- */
-builder.queryType({
-  fields: (t) => ({
-    health: t.string({
-      description: 'Liveness probe — always returns "ok".',
-      resolve: () => 'ok',
-    }),
-  }),
-});
+// Each import registers that module's types/queries/mutations on the shared
+// builder via side effects. Add new modules here.
+import './modules/user/user.schema.js';
+import './modules/post/schemas/post.type.js';
+import './modules/post/schemas/post.query.js';
+import './modules/post/schemas/post.mutation.js';
 
 export const schema = builder.toSchema();
