@@ -8,7 +8,7 @@ export const arbUserStatus = fc.constantFrom(...USER_STATUSES);
 // An "atom" is a non-empty run of characters with no whitespace, '@' or '.'.
 const arbAtom = fc
   .string({ minLength: 1, maxLength: 12 })
-  .map((s) => [...s].filter((c) => !/[\s@.]/.test(c)).join(''))
+  .map((s) => s.replace(/[\s@.]/g, ''))
   .filter((s) => s.length > 0);
 
 /** Valid emails that satisfy `isEmail` (local@domain.tld), already normalized. */

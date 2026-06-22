@@ -6,6 +6,9 @@
     "suspicious": "warn",
     "perf": "warn"
   },
+  "options": {
+    "typeAware": true
+  },
   "env": {
     "node": true,
     "es2024": true
@@ -18,7 +21,11 @@
     "eqeqeq": ["error", "always"],
     "no-console": "warn",
     "typescript/no-explicit-any": "warn",
-    "typescript/consistent-type-imports": "warn"
+    "typescript/consistent-type-imports": "warn",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-unsafe-type-assertion": "off"
   },
   "overrides": [
     {

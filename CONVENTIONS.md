@@ -23,6 +23,9 @@ testable: pure, deterministic, no setup.
   import `@prisma/client`, Fastify, GraphQL, Pothos, or the builder.
 - `no-restricted-imports` on `builder.ts` — it may not import feature modules
   (they import it), which would create a cycle.
+- Type-aware promise safety (`typescript/no-floating-promises`,
+  `no-misused-promises`, `await-thenable`) — every promise is awaited, returned,
+  or explicitly `void`-ed. Requires `oxlint-tsgolint` (`options.typeAware`).
 
 ## 2. Invariants as code
 
