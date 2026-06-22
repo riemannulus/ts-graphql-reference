@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, User } from '@prisma/client';
 import { assertTransition, isUserStatus, type UserStatus } from './user.state.js';
+import { parseEmail } from './user.value.js';
 
 export interface CreateUserInput {
   email: string;
@@ -26,9 +27,11 @@ export class UserService {
   }
 
   create(input: CreateUserInput, query: Prisma.UserDefaultArgs = {}): Promise<User> {
+    // Parse at the boundary: an invalid email never reaches the database.
+    const email = parseEmail(input.email);
     return this.prisma.user.create({
       ...query,
-      data: { email: input.email, name: input.name ?? null },
+      data: { email, name: input.name ?? null },
     });
   }
 

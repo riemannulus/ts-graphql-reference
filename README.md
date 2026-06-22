@@ -82,17 +82,25 @@ src/
   generated/         # Pothos types (git-ignored; `prisma generate`)
   modules/
     user/
-      user.schema.ts   # Pothos type + queries + mutations
-      user.service.ts  # business logic (PrismaClient injected)
-      user.state.ts    # status state machine + invariants
+      user.schema.ts   # shell: Pothos type + queries + mutations
+      user.service.ts  # shell: business logic (PrismaClient injected)
+      user.state.ts    # pure core: status state machine + invariants
+      user.value.ts    # pure core: Email value object (parse, don't validate)
     post/
       schemas/
         post.type.ts     # Pothos prismaObject + relations
         post.query.ts    # query fields
         post.mutation.ts  # mutation fields
       post.service.ts
-  tests/             # Vitest: unit (state), service (DB), GraphQL (via app.inject)
+  testing/arbitraries/  # shared fast-check generators (arbUserStatus, arbValidEmail …)
+  tests/
+    *.test.ts           # unit (state), service (DB), GraphQL (via app.inject)
+    properties/         # *.prop.test.ts — property-based laws + model-based PBT
 ```
+
+> Conventions for invariant-driven, PBT-friendly code (functional core /
+> imperative shell, value objects, property laws) are documented in
+> [CONVENTIONS.md](./CONVENTIONS.md).
 
 ### Dependency injection / request flow
 
@@ -151,10 +159,19 @@ pnpm test
 A Vitest `globalSetup` applies the committed migrations to a throwaway
 `prisma/test.db` (an explicit `DATABASE_URL` overrides `.env`). The suite covers:
 
-- **`user.state.test.ts`** — pure unit tests of the transition rules.
+- **`user.state.test.ts`** — example-based unit tests of the transition rules.
 - **`user.service.test.ts`** — service logic against the test DB.
 - **`graphql.test.ts`** — end-to-end through Fastify via `app.inject`, including
   the relation query and the domain-error mapping.
+
+Property-based tests (`@fast-check/vitest`) under `tests/properties/` assert
+**laws** rather than examples:
+
+- **`user.state.prop.test.ts`** — totality, terminal state, and agreement with
+  `canTransition`.
+- **`email.prop.test.ts`** — parse/normalization laws for the `Email` value object.
+- **`user.service.model.test.ts`** — model-based: random status-change sequences
+  stay consistent between the state-machine model and the real service + DB.
 
 ## Notes on version-specific choices
 
