@@ -1,0 +1,17 @@
+// Prisma schema — https://pris.ly/d/prisma-schema
+//
+// No models yet (intentionally empty). Add a model below and run
+// `pnpm prisma migrate dev` + `pnpm prisma generate`, then expose it
+// with `builder.prismaObject(...)` in src/.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator pothos {
+  provider = "prisma-pothos-types"
+}
+
+datasource db {
+  provider = "sqlite"
+}

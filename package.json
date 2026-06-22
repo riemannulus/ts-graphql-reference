@@ -1,0 +1,53 @@
+{
+  "name": "ts-graphql-reference",
+  "version": "1.0.0",
+  "description": "TypeScript GraphQL reference server: Fastify + GraphQL Yoga + Pothos + Prisma",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "test": "echo \"no tests configured\" && exit 0"
+  },
+  "keywords": [
+    "typescript",
+    "graphql",
+    "fastify",
+    "graphql-yoga",
+    "pothos",
+    "prisma"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.33.0",
+  "dependencies": {
+    "@pothos/core": "^4.13.0",
+    "@pothos/plugin-prisma": "^4.14.3",
+    "@prisma/adapter-better-sqlite3": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "better-sqlite3": "^12.11.1",
+    "fastify": "^5.8.5",
+    "graphql": "^16.14.2",
+    "graphql-yoga": "^5.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "prisma": "^7.8.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "better-sqlite3"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+node_modules/
+dist/
+
+# env
+.env
+
+# prisma / sqlite
+prisma/dev.db
+prisma/dev.db-journal
+*.db
+*.db-journal
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# oh-my-claudecode session/state
+.omc/
