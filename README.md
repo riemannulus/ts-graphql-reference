@@ -98,6 +98,7 @@ src/
     modules/<name>/     # tests mirror src/modules/<name>/ — unit + property +
                         #   integration + model-based (by filename suffix), plus
                         #   <name>.arbitraries.ts (this module's fast-check generators)
+    integrations/       # cross-module: several services + DB, no transport
     e2e/                # whole-app tests through app.inject (cross-module)
 ```
 
@@ -162,12 +163,18 @@ pnpm test
 A Vitest `globalSetup` (`tests/support/global-setup.ts`) applies the committed
 migrations to a throwaway `prisma/test.db` (an explicit `DATABASE_URL` overrides
 `.env`). Tests are organized by module — `tests/modules/<name>/` mirrors
-`src/modules/<name>/`, with the test layer encoded in the filename suffix; truly
-cross-module tests live in `tests/e2e/`. For the `user` module:
+`src/modules/<name>/`, with the test layer encoded in the filename suffix.
+Cross-module tests live outside the module folders: `tests/integrations/`
+(several services + DB, no transport) and `tests/e2e/` (through GraphQL).
 
-- **`user.state.test.ts`** — example-based unit tests of the transition rules.
-- **`user.service.test.ts`** — service logic against the test DB.
-- **`tests/e2e/graphql.test.ts`** — end-to-end through Fastify via `app.inject`,
+- **`modules/user/user.state.test.ts`** — example-based unit tests of the transition rules.
+- **`modules/user/user.service.test.ts`** — user service logic against the test DB.
+- **`modules/post/post.service.test.ts`** — post CRUD, publish idempotence, and the
+  `onlyPublished` filter against the test DB. (`post` has no pure core — no domain
+  invariants — so it is covered at the service level.)
+- **`integrations/user-post.test.ts`** — user and post services together: create a
+  user, author a post, and assert the relation persists both ways (and the FK is enforced).
+- **`e2e/graphql.test.ts`** — end-to-end through Fastify via `app.inject`,
   including the relation query and the domain-error mapping.
 
 Property-based tests (`@fast-check/vitest`, suffix `.prop.test.ts` / `.model.test.ts`)
@@ -178,6 +185,9 @@ sit beside them and assert **laws** rather than examples:
 - **`user.value.prop.test.ts`** — parse/normalization laws for the `Email` value object.
 - **`user.service.model.test.ts`** — model-based: random status-change sequences
   stay consistent between the state-machine model and the real service + DB.
+- **`post.service.prop.test.ts`** — persistence laws: `create` round-trips
+  title/content and starts unpublished; `onlyPublished` returns exactly the
+  published subset for an arbitrary seed.
 
 ## Notes on version-specific choices
 

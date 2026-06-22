@@ -106,8 +106,15 @@ src/
       <name>.value.prop.test.ts     # property: value-object laws
       <name>.service.test.ts        # integration (service + DB)
       <name>.service.model.test.ts  # model-based PBT (stateful shell)
+    integrations/       # cross-module: several services + DB, no transport
     e2e/                # whole-app tests through app.inject (cross-module)
 ```
+
+A module that carries no domain invariants (no state machine, no value object —
+e.g. `post`) has no pure `*.state.ts` / `*.value.ts`, so its tests are
+service-level integration (`*.service.test.ts`) plus any persistence laws as
+properties. Tests spanning two services (e.g. a user authoring a post) live in
+`integrations/`; tests exercising the GraphQL transport live in `e2e/`.
 
 Test *layer* is encoded in the filename suffix (`.test.ts` / `.prop.test.ts` /
 `.model.test.ts`); test *module* is the folder. So one module's entire test
