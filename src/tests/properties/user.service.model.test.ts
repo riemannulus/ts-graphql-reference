@@ -6,7 +6,7 @@ import {
   InvalidStatusTransitionError,
   type UserStatus,
 } from '../../modules/user/user.state.js';
-import { arbUserStatus } from '../../testing/arbitraries/user.js';
+import { arbUserStatus } from '../arbitraries/user.js';
 import { makeTestPrisma, resetDb } from '../helpers.js';
 
 const prisma = makeTestPrisma();

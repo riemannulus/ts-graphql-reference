@@ -69,7 +69,7 @@
       }
     },
     {
-      "files": ["src/tests/**", "src/testing/**"],
+      "files": ["src/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-console": "off"

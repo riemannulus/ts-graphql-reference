@@ -64,7 +64,7 @@ invariant. Construction is the validation.
 Tests assert **laws**, not examples. Tooling: [`@fast-check/vitest`](https://github.com/dubzzz/fast-check)
 (`test.prop`). Test files: `*.prop.test.ts` under `src/tests/properties/`.
 
-Generators (arbitraries) live in `src/testing/arbitraries/` and are reused
+Generators (arbitraries) live in `src/tests/arbitraries/` and are reused
 across tests — generate both valid and invalid inputs.
 
 Laws worth reaching for:
@@ -94,8 +94,8 @@ src/
     <name>.value.ts     # pure: value objects (smart constructors)
     <name>.service.ts   # shell: business logic, deps injected via constructor
     <name>.schema.ts    # shell: Pothos types/queries/mutations  (or schemas/ split)
-  testing/arbitraries/  # shared fast-check generators (arbXxx)
   tests/
+    arbitraries/        # shared fast-check generators (arbXxx)
     *.test.ts           # unit / integration
     properties/*.prop.test.ts   # property-based laws
 ```
@@ -108,5 +108,5 @@ src/
 3. Write the shell (`*.service.ts`) with Prisma injected; parse inputs at the
    boundary. Register it in `createServices()` (context.ts).
 4. Expose it with Pothos (`*.schema.ts`) and import it in `src/schema.ts`.
-5. Add arbitraries in `src/testing/arbitraries/` and property tests asserting
+5. Add arbitraries in `src/tests/arbitraries/` and property tests asserting
    the module's laws; add a model-based test if it is stateful.

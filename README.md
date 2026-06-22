@@ -93,8 +93,8 @@ src/
         post.query.ts    # query fields
         post.mutation.ts  # mutation fields
       post.service.ts
-  testing/arbitraries/  # shared fast-check generators (arbUserStatus, arbValidEmail …)
   tests/
+    arbitraries/        # shared fast-check generators (arbUserStatus, arbValidEmail …)
     *.test.ts           # unit (state), service (DB), GraphQL (via app.inject)
     properties/         # *.prop.test.ts — property-based laws + model-based PBT
 ```
