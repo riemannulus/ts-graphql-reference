@@ -4,8 +4,8 @@ import {
   assertTransition,
   canTransition,
   InvalidStatusTransitionError,
-} from '../../modules/user/user.state.js';
-import { arbUserStatus } from '../arbitraries/user.js';
+} from '../../../modules/user/user.state.js';
+import { arbUserStatus } from './user.arbitraries.js';
 
 describe('user.state invariants', () => {
   test.prop([arbUserStatus])('a transition to the same status is always a no-op', (s) => {

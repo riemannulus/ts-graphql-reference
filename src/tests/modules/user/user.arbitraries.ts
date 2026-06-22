@@ -1,6 +1,6 @@
 import { fc } from '@fast-check/vitest';
-import { USER_STATUSES } from '../../modules/user/user.state.js';
-import { isEmail } from '../../modules/user/user.value.js';
+import { USER_STATUSES } from '../../../modules/user/user.state.js';
+import { isEmail } from '../../../modules/user/user.value.js';
 
 /** Any user status. */
 export const arbUserStatus = fc.constantFrom(...USER_STATUSES);

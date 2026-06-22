@@ -62,10 +62,13 @@ invariant. Construction is the validation.
 ## 4. Property-based testing
 
 Tests assert **laws**, not examples. Tooling: [`@fast-check/vitest`](https://github.com/dubzzz/fast-check)
-(`test.prop`). Test files: `*.prop.test.ts` under `src/tests/properties/`.
+(`test.prop`). Test files: `*.prop.test.ts`, alongside the module's other tests
+in `src/tests/modules/<name>/`.
 
-Generators (arbitraries) live in `src/tests/arbitraries/` and are reused
-across tests — generate both valid and invalid inputs.
+Generators (arbitraries) for a module live beside its tests as
+`<name>.arbitraries.ts` and are reused across that module's tests — generate
+both valid and invalid inputs. A generator shared across modules can go in
+`src/tests/support/`.
 
 Laws worth reaching for:
 
@@ -82,7 +85,7 @@ Laws worth reaching for:
 For a shell with state (e.g. user status in the DB), use `fc.commands` +
 `fc.asyncModelRun`: replay a random sequence of operations against both a tiny
 in-memory **model** (the spec) and the **real** service, asserting they never
-diverge. See `src/tests/properties/user.service.model.test.ts`. The model *is*
+diverge. See `src/tests/modules/user/user.service.model.test.ts`. The model *is*
 the invariant specification.
 
 ## 5. Naming & layout
@@ -95,10 +98,20 @@ src/
     <name>.service.ts   # shell: business logic, deps injected via constructor
     <name>.schema.ts    # shell: Pothos types/queries/mutations  (or schemas/ split)
   tests/
-    arbitraries/        # shared fast-check generators (arbXxx)
-    *.test.ts           # unit / integration
-    properties/*.prop.test.ts   # property-based laws
+    support/            # shared infra: helpers.ts, global-setup.ts
+    modules/<name>/     # tests mirror src/modules/<name>/ — everything for one module
+      <name>.arbitraries.ts         # fast-check generators (arbXxx) for this module
+      <name>.state.test.ts          # unit (pure core)
+      <name>.state.prop.test.ts     # property: core laws
+      <name>.value.prop.test.ts     # property: value-object laws
+      <name>.service.test.ts        # integration (service + DB)
+      <name>.service.model.test.ts  # model-based PBT (stateful shell)
+    e2e/                # whole-app tests through app.inject (cross-module)
 ```
+
+Test *layer* is encoded in the filename suffix (`.test.ts` / `.prop.test.ts` /
+`.model.test.ts`); test *module* is the folder. So one module's entire test
+surface lives in one place, mirroring its source folder.
 
 ## 6. Checklist for a new module
 
@@ -108,5 +121,6 @@ src/
 3. Write the shell (`*.service.ts`) with Prisma injected; parse inputs at the
    boundary. Register it in `createServices()` (context.ts).
 4. Expose it with Pothos (`*.schema.ts`) and import it in `src/schema.ts`.
-5. Add arbitraries in `src/tests/arbitraries/` and property tests asserting
-   the module's laws; add a model-based test if it is stateful.
+5. Add the module's tests under `src/tests/modules/<name>/`, with its generators
+   in `<name>.arbitraries.ts` beside them: example tests plus property tests
+   asserting its laws, and a model-based test if it is stateful.

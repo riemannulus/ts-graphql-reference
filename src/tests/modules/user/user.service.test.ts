@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { UserService } from '../modules/user/user.service.js';
-import { InvalidStatusTransitionError } from '../modules/user/user.state.js';
-import { makeTestPrisma, resetDb } from './helpers.js';
+import { UserService } from '../../../modules/user/user.service.js';
+import { InvalidStatusTransitionError } from '../../../modules/user/user.state.js';
+import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = makeTestPrisma();
 const users = new UserService(prisma);

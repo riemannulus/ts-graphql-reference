@@ -4,7 +4,7 @@ import {
   canTransition,
   InvalidStatusTransitionError,
   isUserStatus,
-} from '../modules/user/user.state.js';
+} from '../../../modules/user/user.state.js';
 
 describe('user.state', () => {
   it('recognizes valid statuses', () => {

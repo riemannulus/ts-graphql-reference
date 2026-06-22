@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildApp } from '../app.js';
-import { makeTestPrisma, resetDb } from './helpers.js';
+import { buildApp } from '../../app.js';
+import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
 // Inject a test-DB-backed client; buildApp wires it through the GraphQL context.
 const prisma = makeTestPrisma();

@@ -1,7 +1,7 @@
 import { test } from '@fast-check/vitest';
 import { describe, expect } from 'vitest';
-import { InvalidEmailError, isEmail, parseEmail } from '../../modules/user/user.value.js';
-import { arbInvalidEmail, arbValidEmail } from '../arbitraries/user.js';
+import { InvalidEmailError, isEmail, parseEmail } from '../../../modules/user/user.value.js';
+import { arbInvalidEmail, arbValidEmail } from './user.arbitraries.js';
 
 describe('Email value object invariants', () => {
   test.prop([arbValidEmail])('parses any valid email; the result satisfies isEmail', (raw) => {

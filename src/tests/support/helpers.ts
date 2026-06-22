@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { createPrismaClient } from '../prisma.js';
+import { createPrismaClient } from '../../prisma.js';
 
 export const TEST_DB_FILE = './prisma/test.db';
 export const TEST_DATABASE_URL = `file:${TEST_DB_FILE}`;

@@ -94,9 +94,11 @@ src/
         post.mutation.ts  # mutation fields
       post.service.ts
   tests/
-    arbitraries/        # shared fast-check generators (arbUserStatus, arbValidEmail …)
-    *.test.ts           # unit (state), service (DB), GraphQL (via app.inject)
-    properties/         # *.prop.test.ts — property-based laws + model-based PBT
+    support/            # shared infra: helpers, global-setup
+    modules/<name>/     # tests mirror src/modules/<name>/ — unit + property +
+                        #   integration + model-based (by filename suffix), plus
+                        #   <name>.arbitraries.ts (this module's fast-check generators)
+    e2e/                # whole-app tests through app.inject (cross-module)
 ```
 
 > Conventions for invariant-driven, PBT-friendly code (functional core /
@@ -157,20 +159,23 @@ State-machine-style invariants belong in a `<name>.state.ts` module (see
 pnpm test
 ```
 
-A Vitest `globalSetup` applies the committed migrations to a throwaway
-`prisma/test.db` (an explicit `DATABASE_URL` overrides `.env`). The suite covers:
+A Vitest `globalSetup` (`tests/support/global-setup.ts`) applies the committed
+migrations to a throwaway `prisma/test.db` (an explicit `DATABASE_URL` overrides
+`.env`). Tests are organized by module — `tests/modules/<name>/` mirrors
+`src/modules/<name>/`, with the test layer encoded in the filename suffix; truly
+cross-module tests live in `tests/e2e/`. For the `user` module:
 
 - **`user.state.test.ts`** — example-based unit tests of the transition rules.
 - **`user.service.test.ts`** — service logic against the test DB.
-- **`graphql.test.ts`** — end-to-end through Fastify via `app.inject`, including
-  the relation query and the domain-error mapping.
+- **`tests/e2e/graphql.test.ts`** — end-to-end through Fastify via `app.inject`,
+  including the relation query and the domain-error mapping.
 
-Property-based tests (`@fast-check/vitest`) under `tests/properties/` assert
-**laws** rather than examples:
+Property-based tests (`@fast-check/vitest`, suffix `.prop.test.ts` / `.model.test.ts`)
+sit beside them and assert **laws** rather than examples:
 
 - **`user.state.prop.test.ts`** — totality, terminal state, and agreement with
   `canTransition`.
-- **`email.prop.test.ts`** — parse/normalization laws for the `Email` value object.
+- **`user.value.prop.test.ts`** — parse/normalization laws for the `Email` value object.
 - **`user.service.model.test.ts`** — model-based: random status-change sequences
   stay consistent between the state-machine model and the real service + DB.
 

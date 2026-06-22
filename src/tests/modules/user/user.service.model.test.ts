@@ -1,13 +1,13 @@
 import { fc, test } from '@fast-check/vitest';
 import { afterAll, beforeEach, expect } from 'vitest';
-import { UserService } from '../../modules/user/user.service.js';
+import { UserService } from '../../../modules/user/user.service.js';
 import {
   canTransition,
   InvalidStatusTransitionError,
   type UserStatus,
-} from '../../modules/user/user.state.js';
-import { arbUserStatus } from '../arbitraries/user.js';
-import { makeTestPrisma, resetDb } from '../helpers.js';
+} from '../../../modules/user/user.state.js';
+import { arbUserStatus } from './user.arbitraries.js';
+import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = makeTestPrisma();
 const users = new UserService(prisma);
