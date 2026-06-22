@@ -1,7 +1,7 @@
 /**
  * User status state machine and invariants.
  *
- * SQLite has no native enums, so `User.status` is stored as a string. This
+ * `User.status` is stored as a plain string rather than a DB enum, so this
  * module is the single source of truth for the allowed values and transitions,
  * keeping that invariant out of both the database and the resolvers.
  */

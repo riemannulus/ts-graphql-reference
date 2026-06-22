@@ -9,7 +9,7 @@ import {
 import { arbUserStatus } from './user.arbitraries.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
-const prisma = makeTestPrisma();
+const prisma = await makeTestPrisma();
 const users = new UserService(prisma);
 
 interface Model {

@@ -1,12 +1,32 @@
-import type { PrismaClient } from '@prisma/client';
-import { createPrismaClient } from '../../prisma.js';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PGlite } from '@electric-sql/pglite';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPGlite } from 'pglite-prisma-adapter';
 
-export const TEST_DB_FILE = './prisma/test.db';
-export const TEST_DATABASE_URL = `file:${TEST_DB_FILE}`;
+const MIGRATIONS_DIR = 'prisma/migrations';
 
-/** A PrismaClient pointed at the throwaway test database. */
-export function makeTestPrisma(): PrismaClient {
-  return createPrismaClient(TEST_DATABASE_URL);
+/** All committed migrations' SQL, concatenated in chronological (folder) order. */
+function migrationSql(): string {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((name) => /^\d/.test(name))
+    .toSorted()
+    .map((name) => readFileSync(join(MIGRATIONS_DIR, name, 'migration.sql'), 'utf8'))
+    .join('\n');
+}
+
+const SCHEMA_DDL = migrationSql();
+
+/**
+ * A PrismaClient backed by a fresh in-process PGlite (WASM Postgres) with the
+ * committed migrations applied. Same dialect as production Postgres, but with no
+ * server and no Docker — and isolated per call, so each test file gets its own
+ * throwaway database. Requires `prisma generate` (provider = postgresql) first.
+ */
+export async function makeTestPrisma(): Promise<PrismaClient> {
+  const pglite = new PGlite();
+  await pglite.exec(SCHEMA_DDL);
+  return new PrismaClient({ adapter: new PrismaPGlite(pglite) });
 }
 
 /** Truncates all tables between tests. Posts first due to the FK to User. */

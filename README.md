@@ -8,8 +8,8 @@ A type-safe, modular GraphQL server reference.
 | HTTP server  | [Fastify](https://fastify.dev)                                      |
 | GraphQL      | [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server)           |
 | Schema       | [Pothos](https://pothos-graphql.dev) (code-first) + Prisma plugin   |
-| ORM / DB     | [Prisma 7](https://www.prisma.io) + SQLite (better-sqlite3 adapter) |
-| Tests        | [Vitest](https://vitest.dev)                                        |
+| ORM / DB     | [Prisma 7](https://www.prisma.io) + PostgreSQL (`@prisma/adapter-pg` driver adapter) |
+| Tests        | [Vitest](https://vitest.dev) + fast-check (PBT) on in-process Postgres ([PGlite](https://pglite.dev)) |
 
 The schema is built code-first with Pothos, every model is exposed through the
 Pothos **Prisma plugin** (efficient relation loading), and all dependencies
@@ -24,10 +24,16 @@ context** — resolvers never construct their own dependencies.
 ## Setup
 
 ```bash
+# A local Postgres for development (matches the default DATABASE_URL in .env):
+docker run -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine
+
 pnpm install            # also runs `prisma generate` (postinstall)
-pnpm prisma migrate dev # creates prisma/dev.db from the migrations
+pnpm prisma migrate dev # applies the migrations to DATABASE_URL
 pnpm dev                # http://localhost:4000/graphql
 ```
+
+> Tests need no database of their own — they run on in-process PGlite (see
+> [Testing](#testing)). The Postgres above is only for the dev server.
 
 Example operations (GraphiQL at `/graphql`):
 
@@ -77,7 +83,8 @@ src/
                      #   modules can import it without a cycle. Pulls the client
                      #   from context: `client: (ctx) => ctx.prisma`.
   schema.ts          # aggregates module schema files → builder.toSchema()
-  prisma.ts          # createPrismaClient(url) — better-sqlite3 driver adapter
+  prisma.ts          # createPrismaClient(url) — PrismaClient on the
+                     #   @prisma/adapter-pg (Postgres) driver adapter
   errors.ts          # DomainError base class (client-safe business errors)
   env.ts             # loads .env (Prisma 7 / Node no longer auto-load it)
   generated/         # Pothos types (git-ignored; `prisma generate`)
@@ -94,7 +101,7 @@ src/
         post.mutation.ts  # mutation fields
       post.service.ts
   tests/
-    support/            # shared infra: helpers, global-setup
+    support/            # shared infra: helpers (in-process PGlite + resetDb)
     modules/<name>/     # tests mirror src/modules/<name>/ — unit + property +
                         #   integration + model-based (by filename suffix), plus
                         #   <name>.arbitraries.ts (this module's fast-check generators)
@@ -160,12 +167,16 @@ State-machine-style invariants belong in a `<name>.state.ts` module (see
 pnpm test
 ```
 
-A Vitest `globalSetup` (`tests/support/global-setup.ts`) applies the committed
-migrations to a throwaway `prisma/test.db` (an explicit `DATABASE_URL` overrides
-`.env`). Tests are organized by module — `tests/modules/<name>/` mirrors
-`src/modules/<name>/`, with the test layer encoded in the filename suffix.
-Cross-module tests live outside the module folders: `tests/integrations/`
-(several services + DB, no transport) and `tests/e2e/` (through GraphQL).
+Tests run against **real Postgres with zero setup**: `makeTestPrisma()`
+(`tests/support/helpers.ts`) starts an in-process [PGlite](https://pglite.dev)
+(WASM Postgres) database, applies the committed migrations, and returns a Prisma
+client on it — no Docker, no server, and a fresh isolated database per test file.
+That client is provider-identical to production (`@prisma/adapter-pg`), so
+dialect bugs surface in tests rather than in prod. Tests are organized by module
+— `tests/modules/<name>/` mirrors `src/modules/<name>/`, with the test layer
+encoded in the filename suffix. Cross-module tests live outside the module
+folders: `tests/integrations/` (several services + DB, no transport) and
+`tests/e2e/` (through GraphQL).
 
 - **`modules/user/user.state.test.ts`** — example-based unit tests of the transition rules.
 - **`modules/user/user.service.test.ts`** — user service logic against the test DB.
@@ -195,8 +206,14 @@ sit beside them and assert **laws** rather than examples:
   don't yet support `graphql@17`, and mixing versions breaks at runtime.
 - **Prisma 7 requires a driver adapter.** `datasource.url` is no longer read
   from `schema.prisma`; the connection lives in `.env` → `prisma.config.ts`
-  (CLI) and the `PrismaBetterSqlite3` adapter (runtime). Swap the adapter (e.g.
-  `@prisma/adapter-pg`) and the datasource provider to change databases.
+  (CLI) and the `@prisma/adapter-pg` adapter (runtime, in `createPrismaClient`).
+- **Tests use PGlite, not a database server.** The generated client is
+  provider-locked to `postgresql`, and both `@prisma/adapter-pg` (production) and
+  the [`pglite-prisma-adapter`](https://www.npmjs.com/package/pglite-prisma-adapter)
+  (tests) report that provider — so one `prisma generate` serves both. PGlite is
+  Postgres compiled to WASM, so tests get real Postgres dialect in-process with
+  no Docker. The committed migrations are Postgres-dialect; tests apply them to a
+  fresh PGlite instance, production applies them with `prisma migrate deploy`.
 - **Pothos gets the datamodel from its generator.** Prisma 7 no longer attaches
   the datamodel to the client, so the Pothos generator emits a `.ts` file with a
   runtime `getDatamodel()` (`src/generated/pothos-types.ts`), passed as

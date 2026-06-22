@@ -3,7 +3,7 @@ import { buildApp } from '../../app.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
 // Inject a test-DB-backed client; buildApp wires it through the GraphQL context.
-const prisma = makeTestPrisma();
+const prisma = await makeTestPrisma();
 const { app } = buildApp({ prisma, logger: false });
 
 interface GqlResult {

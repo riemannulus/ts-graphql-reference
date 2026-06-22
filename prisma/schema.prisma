@@ -13,12 +13,13 @@ generator pothos {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 /// A user of the system. `status` is a state machine (see user.state.ts):
-/// ACTIVE | SUSPENDED | DEACTIVATED. SQLite has no native enums, so it is
-/// stored as a string and the allowed transitions are enforced in code.
+/// ACTIVE | SUSPENDED | DEACTIVATED. It is stored as a string with the allowed
+/// transitions enforced in code, so the state machine stays the single source
+/// of truth for the invariant (rather than splitting it into a DB enum).
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique

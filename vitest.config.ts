@@ -3,9 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/tests/**/*.test.ts'],
-    globalSetup: ['./src/tests/support/global-setup.ts'],
-    // The SQLite test DB is a single shared file — avoid concurrent writers
-    // across test files.
-    fileParallelism: false,
+    // Each test file builds its own in-process PGlite database (helpers.ts), so
+    // files are fully isolated and can run in parallel.
   },
 });

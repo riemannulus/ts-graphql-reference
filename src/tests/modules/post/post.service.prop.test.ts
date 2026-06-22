@@ -4,7 +4,7 @@ import { PostService } from '../../../modules/post/post.service.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 import { arbCreatePostFields } from './post.arbitraries.js';
 
-const prisma = makeTestPrisma();
+const prisma = await makeTestPrisma();
 const posts = new PostService(prisma);
 
 afterAll(() => prisma.$disconnect());

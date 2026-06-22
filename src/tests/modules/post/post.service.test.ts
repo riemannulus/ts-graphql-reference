@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PostService } from '../../../modules/post/post.service.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
-const prisma = makeTestPrisma();
+const prisma = await makeTestPrisma();
 const posts = new PostService(prisma);
 
 /** A post needs an author (FK); create one directly to keep these post-focused. */

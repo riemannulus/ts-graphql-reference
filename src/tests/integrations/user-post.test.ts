@@ -7,7 +7,7 @@ import { makeTestPrisma, resetDb } from '../support/helpers.js';
 // a real database, with no GraphQL/HTTP layer (that path is covered in e2e/).
 // The integration point is the User←Post relation: a post created by PostService
 // must connect to a user created by UserService.
-const prisma = makeTestPrisma();
+const prisma = await makeTestPrisma();
 const users = new UserService(prisma);
 const posts = new PostService(prisma);
 

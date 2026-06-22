@@ -98,7 +98,7 @@ src/
     <name>.service.ts   # shell: business logic, deps injected via constructor
     <name>.schema.ts    # shell: Pothos types/queries/mutations  (or schemas/ split)
   tests/
-    support/            # shared infra: helpers.ts, global-setup.ts
+    support/            # shared infra: helpers.ts (in-process PGlite + resetDb)
     modules/<name>/     # tests mirror src/modules/<name>/ — everything for one module
       <name>.arbitraries.ts         # fast-check generators (arbXxx) for this module
       <name>.state.test.ts          # unit (pure core)
@@ -115,6 +115,12 @@ e.g. `post`) has no pure `*.state.ts` / `*.value.ts`, so its tests are
 service-level integration (`*.service.test.ts`) plus any persistence laws as
 properties. Tests spanning two services (e.g. a user authoring a post) live in
 `integrations/`; tests exercising the GraphQL transport live in `e2e/`.
+
+Tests run on real Postgres with no external server: `makeTestPrisma()`
+(`tests/support/helpers.ts`) starts an in-process PGlite (WASM Postgres) database
+per test file, applies the committed migrations, and returns a Prisma client on
+it. That client is provider-identical to production (`@prisma/adapter-pg`), so
+the suite exercises the dialect you ship — no Docker, no shared state, no skips.
 
 Test *layer* is encoded in the filename suffix (`.test.ts` / `.prop.test.ts` /
 `.model.test.ts`); test *module* is the folder. So one module's entire test

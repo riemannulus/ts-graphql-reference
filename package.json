@@ -32,18 +32,21 @@
   "dependencies": {
     "@pothos/core": "^4.13.0",
     "@pothos/plugin-prisma": "^4.14.3",
-    "@prisma/adapter-better-sqlite3": "^7.8.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
-    "better-sqlite3": "^12.11.1",
     "fastify": "^5.8.5",
     "graphql": "^16.14.2",
-    "graphql-yoga": "^5.21.2"
+    "graphql-yoga": "^5.21.2",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
     "@fast-check/vitest": "^0.4.1",
     "@types/node": "^26.0.0",
+    "@types/pg": "^8.20.0",
     "oxlint": "^1.70.0",
     "oxlint-tsgolint": "^0.23.0",
+    "pglite-prisma-adapter": "^0.7.2",
     "prisma": "^7.8.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
@@ -54,8 +57,7 @@
       "prisma",
       "@prisma/client",
       "@prisma/engines",
-      "esbuild",
-      "better-sqlite3"
+      "esbuild"
     ]
   }
 }

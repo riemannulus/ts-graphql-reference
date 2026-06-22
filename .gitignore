@@ -4,12 +4,6 @@ dist/
 # env
 .env
 
-# prisma / sqlite
-prisma/dev.db
-prisma/dev.db-journal
-*.db
-*.db-journal
-
 # generated (Pothos types — run `pnpm prisma generate`)
 src/generated/
 
