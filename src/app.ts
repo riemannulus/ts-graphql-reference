@@ -2,10 +2,8 @@ import type { PrismaClient } from '@prisma/client';
 import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { GraphQLError } from 'graphql';
 import { createYoga } from 'graphql-yoga';
-import { createContextFactory, type Services } from './context.js';
+import { createContextFactory, createServices } from './context.js';
 import { isDomainError } from './errors.js';
-import { PostService } from './modules/post/post.service.js';
-import { UserService } from './modules/user/user.service.js';
 import { createPrismaClient } from './prisma.js';
 import { schema } from './schema.js';
 
@@ -20,14 +18,6 @@ export interface BuildAppOptions {
   prisma?: PrismaClient;
   /** Toggle Fastify request logging (default: true). */
   logger?: boolean;
-}
-
-/** Wires the service container. The composition root's single source of deps. */
-export function createServices(prisma: PrismaClient): Services {
-  return {
-    user: new UserService(prisma),
-    post: new PostService(prisma),
-  };
 }
 
 /**

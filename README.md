@@ -129,7 +129,9 @@ The `user` and `post` modules show two layouts (single schema file vs a
 1. Add the model(s) to `prisma/schema.prisma`, then
    `pnpm prisma migrate dev && pnpm prisma generate`.
 2. Create `modules/<name>/<name>.service.ts` (business logic, PrismaClient via
-   constructor) and register it in `createServices()` + the `Services` type.
+   constructor) and add it to `createServices()` in `context.ts` — the
+   `Services` context type is `ReturnType<typeof createServices>`, so it updates
+   automatically (one edit, not two).
 3. Add `modules/<name>/<name>.schema.ts` (or a `schemas/` split) with
    `builder.prismaObject(...)` / `builder.queryField(...)` /
    `builder.mutationField(...)`, and import it in `src/schema.ts`.

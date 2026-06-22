@@ -1,17 +1,24 @@
 import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { PostService } from './modules/post/post.service.js';
-import type { UserService } from './modules/user/user.service.js';
+import { PostService } from './modules/post/post.service.js';
+import { UserService } from './modules/user/user.service.js';
 
 /**
- * Services injected into every resolver via the GraphQL context. Resolvers call
- * `ctx.services.user.*` instead of touching Prisma directly, keeping business
- * logic out of the schema layer.
+ * Builds the service container.
+ *
+ * This is the SINGLE place a module's service is registered: the `Services`
+ * type is derived from this function's return type, so adding a service here
+ * automatically flows into the GraphQL context type — no second edit needed.
  */
-export interface Services {
-  user: UserService;
-  post: PostService;
+export function createServices(prisma: PrismaClient) {
+  return {
+    user: new UserService(prisma),
+    post: new PostService(prisma),
+  };
 }
+
+/** Services injected into every resolver (derived from `createServices`). */
+export type Services = ReturnType<typeof createServices>;
 
 /** Per-request GraphQL context handed to every resolver. */
 export interface Context {
