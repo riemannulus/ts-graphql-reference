@@ -1,4 +1,4 @@
-import { fc, test } from '@fast-check/vitest';
+import { test } from '@fast-check/vitest';
 import { describe, expect } from 'vitest';
 import { InvalidEmailError, isEmail, parseEmail } from '../../modules/user/user.value.js';
 import { arbInvalidEmail, arbValidEmail } from '../../testing/arbitraries/user.js';

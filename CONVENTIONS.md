@@ -16,6 +16,14 @@ Split every module into a **pure core** that holds the rules, and a thin
 The core never imports Prisma/Fastify/GraphQL. This is what makes it trivially
 testable: pure, deterministic, no setup.
 
+**Enforced by oxlint** (`.oxlintrc.json`), so these are not just guidelines:
+
+- `import/no-cycle` — the module graph stays acyclic.
+- `no-restricted-imports` on `*.state.ts` / `*.value.ts` — pure core may not
+  import `@prisma/client`, Fastify, GraphQL, Pothos, or the builder.
+- `no-restricted-imports` on `builder.ts` — it may not import feature modules
+  (they import it), which would create a cycle.
+
 ## 2. Invariants as code
 
 - **Total functions over partial ones.** A core function must be defined for

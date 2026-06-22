@@ -57,6 +57,7 @@ mutation {
 | `pnpm build`           | Compile to `dist/` (`tsconfig.build.json`, no tests) |
 | `pnpm start`           | Run the compiled server                           |
 | `pnpm typecheck`       | `tsc --noEmit` (includes tests)                   |
+| `pnpm lint`            | Lint with oxlint (`lint:fix` to auto-fix)         |
 | `pnpm test`            | Run the Vitest suite                              |
 | `pnpm test:watch`      | Vitest in watch mode                              |
 | `pnpm prisma:generate` | Regenerate the Prisma client + Pothos types       |

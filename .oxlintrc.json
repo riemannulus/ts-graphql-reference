@@ -1,0 +1,79 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["import", "typescript", "unicorn", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "node": true,
+    "es2024": true
+  },
+  "rules": {
+    "import/no-cycle": "error",
+    "import/no-self-import": "error",
+    "import/no-duplicates": "error",
+    "import/no-unassigned-import": "off",
+    "eqeqeq": ["error", "always"],
+    "no-console": "warn",
+    "typescript/no-explicit-any": "warn",
+    "typescript/consistent-type-imports": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["src/**/*.state.ts", "src/**/*.value.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/*",
+                  "fastify",
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "**/prisma*"
+                ],
+                "message": "Pure core (*.state.ts / *.value.ts) must stay free of I/O and framework deps. Keep invariants pure; perform effects in the service/shell layer."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/builder.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/modules/**"],
+                "message": "builder.ts must not import feature modules (modules import the builder). Importing them here would create an import cycle."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/tests/**", "src/testing/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "src/generated/**",
+    "prisma/migrations/**",
+    "coverage/**"
+  ]
+}
