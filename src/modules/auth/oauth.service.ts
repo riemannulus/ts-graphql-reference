@@ -36,7 +36,7 @@ export class OAuthService {
    *
    * The first two steps are delegated to the (stubbed) provider; the third is
    * the point of this example — a user is created via the **user module**, the
-   * same `UserService` the GraphQL `createUser` mutation uses, so both surfaces
+   * same `UserService` the GraphQL `signUp` mutation uses, so both surfaces
    * share one code path and one set of invariants.
    */
   async completeLogin(callback: OAuthCallback): Promise<User> {

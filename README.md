@@ -39,7 +39,7 @@ Example operations (GraphiQL at `/graphql`):
 
 ```graphql
 mutation {
-  createUser(input: { email: "alice@example.com", name: "Alice" }) { id status }
+  signUp(input: { email: "alice@example.com", name: "Alice" }) { id status posts { title } }
 }
 
 mutation {
@@ -143,7 +143,7 @@ is preserved even though queries flow through the service layer.
 Not every entry point is GraphQL. `src/modules/auth/` is a worked example of a
 plain HTTP surface — a Google OAuth login callback at `GET /google/oauth` and
 `GET /google/oauth/callback` — that still provisions a user through the **same
-`UserService`** the `createUser` mutation uses (`OAuthService.completeLogin` →
+`UserService`** the `signUp` mutation uses (`OAuthService.completeLogin` →
 `users.findOrCreateByEmail`). The provider HTTP itself (exchanging the code,
 fetching the profile) is left unimplemented behind a `GoogleOAuthClient` port;
 everything around it is complete and tested.
