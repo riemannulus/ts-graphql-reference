@@ -29,8 +29,12 @@ export class PostService {
     });
   }
 
-  create(input: CreatePostInput, query: Prisma.PostDefaultArgs = {}): Promise<Post> {
-    return this.prisma.post.create({
+  create(
+    input: CreatePostInput,
+    query: Prisma.PostDefaultArgs = {},
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<Post> {
+    return client.post.create({
       ...query,
       data: {
         title: input.title,

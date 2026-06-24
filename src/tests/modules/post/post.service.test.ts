@@ -51,4 +51,15 @@ describe('PostService', () => {
     expect(published).toHaveLength(1);
     expect(published[0]?.title).toBe('a');
   });
+
+  it('create participates in a passed transaction and rolls back with it', async () => {
+    const author = await makeAuthor();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await posts.create({ title: 'tx', authorId: author.id }, {}, tx);
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    expect(await prisma.post.count()).toBe(0);
+  });
 });

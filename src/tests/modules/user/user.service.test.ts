@@ -29,4 +29,14 @@ describe('UserService', () => {
       InvalidStatusTransitionError,
     );
   });
+
+  it('create participates in a passed transaction and rolls back with it', async () => {
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await users.create({ email: 'tx@example.com' }, {}, tx);
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    expect(await prisma.user.count()).toBe(0);
+  });
 });

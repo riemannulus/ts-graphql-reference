@@ -26,10 +26,14 @@ export class UserService {
     return this.prisma.user.findMany({ orderBy: { createdAt: 'desc' }, ...query });
   }
 
-  create(input: CreateUserInput, query: Prisma.UserDefaultArgs = {}): Promise<User> {
+  create(
+    input: CreateUserInput,
+    query: Prisma.UserDefaultArgs = {},
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<User> {
     // Parse at the boundary: an invalid email never reaches the database.
     const email = parseEmail(input.email);
-    return this.prisma.user.create({
+    return client.user.create({
       ...query,
       data: { email, name: input.name ?? null },
     });
