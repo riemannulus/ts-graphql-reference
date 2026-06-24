@@ -25,29 +25,25 @@ beforeEach(() => resetDb(prisma));
 afterAll(() => app.close()); // onClose hook disconnects prisma
 
 describe('GraphQL API', () => {
-  it('creates a user and post, then reads the relation', async () => {
-    const created = await gql(
-      'mutation ($e: String!) { createUser(input: { email: $e, name: "Alice" }) { id email } }',
+  it('signUp creates a user with a welcome post', async () => {
+    const res = await gql(
+      'mutation ($e: String!) { signUp(input: { email: $e, name: "Alice" }) { id email posts { title } } }',
       { e: 'a@b.com' },
     );
-    expect(created.errors).toBeUndefined();
-    const userId = Number(created.data?.createUser.id);
-
-    const post = await gql(
-      'mutation ($t: String!, $a: Int!) { createPost(input: { title: $t, authorId: $a }) { id } }',
-      { t: 'Hello', a: userId },
-    );
-    expect(post.errors).toBeUndefined();
-
-    const res = await gql('{ users { email posts { title } } }');
     expect(res.errors).toBeUndefined();
-    expect(res.data?.users).toHaveLength(1);
-    expect(res.data?.users[0].posts[0].title).toBe('Hello');
+    expect(res.data?.signUp.email).toBe('a@b.com');
+    expect(res.data?.signUp.posts).toHaveLength(1);
+    expect(res.data?.signUp.posts[0].title).toBe('Welcome!');
+  });
+
+  it('no longer exposes createUser', async () => {
+    const res = await gql('mutation { createUser(input: { email: "z@z.com" }) { id } }');
+    expect(res.errors?.[0]?.message).toMatch(/createUser/);
   });
 
   it('surfaces an illegal status transition as a domain error', async () => {
-    const created = await gql('mutation { createUser(input: { email: "x@y.com" }) { id } }');
-    const id = Number(created.data?.createUser.id);
+    const created = await gql('mutation { signUp(input: { email: "x@y.com" }) { id } }');
+    const id = Number(created.data?.signUp.id);
 
     await gql(`mutation { changeUserStatus(id: ${id}, status: DEACTIVATED) { status } }`);
     const res = await gql(`mutation { changeUserStatus(id: ${id}, status: ACTIVE) { status } }`);

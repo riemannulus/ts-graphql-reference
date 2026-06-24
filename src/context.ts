@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { type GoogleOAuthClient, StubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { OAuthService } from './modules/auth/oauth.service.js';
+import { OnboardingService } from './modules/onboarding/onboarding.service.js';
 import { PostService } from './modules/post/post.service.js';
 import { UserService } from './modules/user/user.service.js';
 
@@ -32,7 +33,8 @@ export function createServices(prisma: PrismaClient, options: CreateServicesOpti
     users: user,
     google: options.googleOAuth ?? new StubGoogleOAuthClient(),
   });
-  return { user, post, auth };
+  const onboarding = new OnboardingService({ users: user, posts: post, prisma });
+  return { user, post, auth, onboarding };
 }
 
 /** Services injected into every resolver (derived from `createServices`). */

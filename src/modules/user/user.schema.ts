@@ -26,7 +26,8 @@ builder.queryField('user', (t) =>
     type: 'User',
     nullable: true,
     args: { id: t.arg.int({ required: true }) },
-    resolve: (query, _root, args, ctx) => ctx.services.user.findById(args.id, query),
+    resolve: (query, _root, args, ctx) =>
+      ctx.services.user.findById(args.id, query),
   }),
 );
 
@@ -34,22 +35,6 @@ builder.queryField('users', (t) =>
   t.prismaField({
     type: ['User'],
     resolve: (query, _root, _args, ctx) => ctx.services.user.findMany(query),
-  }),
-);
-
-const CreateUserInput = builder.inputType('CreateUserInput', {
-  fields: (t) => ({
-    email: t.string({ required: true }),
-    name: t.string({ required: false }),
-  }),
-});
-
-builder.mutationField('createUser', (t) =>
-  t.prismaField({
-    type: 'User',
-    args: { input: t.arg({ type: CreateUserInput, required: true }) },
-    resolve: (query, _root, args, ctx) =>
-      ctx.services.user.create({ email: args.input.email, name: args.input.name }, query),
   }),
 );
 

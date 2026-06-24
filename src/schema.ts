@@ -8,5 +8,6 @@ import './modules/user/user.schema.js';
 import './modules/post/schemas/post.type.js';
 import './modules/post/schemas/post.query.js';
 import './modules/post/schemas/post.mutation.js';
+import './modules/onboarding/schemas/onboarding.mutation.js';
 
 export const schema = builder.toSchema();
