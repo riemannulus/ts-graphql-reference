@@ -1,9 +1,11 @@
 /**
  * User status state machine and invariants.
  *
- * `User.status` is stored as a plain string rather than a DB enum, so this
- * module is the single source of truth for the allowed values and transitions,
- * keeping that invariant out of both the database and the resolvers.
+ * This module is the single source of truth for the allowed *transitions*.
+ * The allowed *value set* is additionally enforced by a DB CHECK constraint
+ * (see the migrations), so a corrupt write fails at the database; a corrupt
+ * READ — which the CHECK makes unreachable — fails loudly in `parseUserStatus`
+ * instead of being coerced to some default.
  */
 
 import { DomainError } from '../../errors.js';
@@ -20,6 +22,25 @@ const ALLOWED_TRANSITIONS: Record<UserStatus, readonly UserStatus[]> = {
 
 export function isUserStatus(value: string): value is UserStatus {
   return (USER_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * An unknown status came out of the database — corruption, not a client error,
+ * so this is a plain (masked) Error rather than a DomainError.
+ */
+export class UnknownUserStatusError extends Error {
+  constructor(readonly value: string) {
+    super(`Unknown user status read from the database: ${JSON.stringify(value)}`);
+    this.name = 'UnknownUserStatusError';
+  }
+}
+
+/** Parse, don't validate: DB strings become `UserStatus` only through here. */
+export function parseUserStatus(value: string): UserStatus {
+  if (!isUserStatus(value)) {
+    throw new UnknownUserStatusError(value);
+  }
+  return value;
 }
 
 export function canTransition(from: UserStatus, to: UserStatus): boolean {

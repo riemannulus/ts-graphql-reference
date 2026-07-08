@@ -1,18 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { OnboardingService } from '../../../modules/onboarding/onboarding.service.js';
-import { PostService } from '../../../modules/post/post.service.js';
-import { UserService } from '../../../modules/user/user.service.js';
+import { createOnboardingService } from '../../../modules/onboarding/onboarding.service.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();
-const users = new UserService(prisma);
-const posts = new PostService(prisma);
-const onboarding = new OnboardingService({ users, posts, prisma });
+const db = { rw: prisma, ro: prisma };
+const onboarding = createOnboardingService({ db });
 
 beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());
 
-describe('OnboardingService.register', () => {
+describe('onboarding register', () => {
   it('creates the user and a welcome post authored by them', async () => {
     const user = await onboarding.register({ email: 'alice@example.com', name: 'Alice' });
 
@@ -25,11 +22,11 @@ describe('OnboardingService.register', () => {
   });
 
   it('rolls back the user when welcome-post creation fails', async () => {
-    // Inject a PostService whose create always throws, so the transaction aborts.
-    const failingPosts = {
-      create: () => Promise.reject(new Error('post failed')),
-    } as unknown as PostService;
-    const failing = new OnboardingService({ users, posts: failingPosts, prisma });
+    // Inject a post writer that always throws, so the transaction aborts.
+    const failing = createOnboardingService({
+      db,
+      createPost: () => Promise.reject(new Error('post failed')),
+    });
 
     await expect(failing.register({ email: 'bob@example.com' })).rejects.toThrow('post failed');
 

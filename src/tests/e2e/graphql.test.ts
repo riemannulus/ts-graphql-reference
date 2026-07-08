@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../app.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
-// Inject a test-DB-backed client; buildApp wires it through the GraphQL context.
+// Inject a test-DB-backed client; buildApp uses it as both rw and ro.
 const prisma = await makeTestPrisma();
 const { app } = buildApp({ prisma, logger: false });
 
@@ -22,7 +22,7 @@ async function gql(query: string, variables?: Record<string, unknown>): Promise<
 }
 
 beforeEach(() => resetDb(prisma));
-afterAll(() => app.close()); // onClose hook disconnects prisma
+afterAll(() => app.close()); // onClose hook disconnects the db handles
 
 describe('GraphQL API', () => {
   it('signUp creates a user with a welcome post', async () => {
@@ -50,5 +50,45 @@ describe('GraphQL API', () => {
 
     expect(res.data?.changeUserStatus).toBeNull();
     expect(res.errors?.[0]?.extensions?.code).toBe('INVALID_STATUS_TRANSITION');
+  });
+
+  it('charges and spends points through the full stack', async () => {
+    const created = await gql('mutation { signUp(input: { email: "p@q.com" }) { id } }');
+    const id = Number(created.data?.signUp.id);
+
+    const charged = await gql(
+      `mutation { chargePoint(input: { userId: ${id}, paidAmount: 100, freeAmount: 30 }) { state unspentPaidAmount user { email } } }`,
+    );
+    expect(charged.errors).toBeUndefined();
+    expect(charged.data?.chargePoint).toMatchObject({
+      state: 'USABLE',
+      unspentPaidAmount: 100,
+      user: { email: 'p@q.com' },
+    });
+
+    const spent = await gql(
+      `mutation { spendPoint(input: { userId: ${id}, amount: 120, reason: "checkout" }) { paidAmount freeAmount totalAmount } }`,
+    );
+    expect(spent.errors).toBeUndefined();
+    // Paid-first split: all 100 paid before free points are touched.
+    expect(spent.data?.spendPoint).toMatchObject({
+      paidAmount: 100,
+      freeAmount: 20,
+      totalAmount: 120,
+    });
+
+    const balance = await gql(`query { pointBalance(userId: ${id}) { totalAmount freeAmount } }`);
+    expect(balance.data?.pointBalance).toMatchObject({ totalAmount: 10, freeAmount: 10 });
+  });
+
+  it('surfaces an over-balance spend as a domain error', async () => {
+    const created = await gql('mutation { signUp(input: { email: "poor@q.com" }) { id } }');
+    const id = Number(created.data?.signUp.id);
+
+    const res = await gql(
+      `mutation { spendPoint(input: { userId: ${id}, amount: 1, reason: "x" }) { id } }`,
+    );
+    expect(res.data?.spendPoint).toBeNull();
+    expect(res.errors?.[0]?.extensions?.code).toBe('INSUFFICIENT_POINT');
   });
 });

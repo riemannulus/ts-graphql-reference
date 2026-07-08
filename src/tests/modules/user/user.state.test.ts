@@ -4,6 +4,8 @@ import {
   canTransition,
   InvalidStatusTransitionError,
   isUserStatus,
+  parseUserStatus,
+  UnknownUserStatusError,
 } from '../../../modules/user/user.state.js';
 
 describe('user.state', () => {
@@ -25,5 +27,10 @@ describe('user.state', () => {
 
   it('treats a same-status transition as a no-op', () => {
     expect(() => assertTransition('ACTIVE', 'ACTIVE')).not.toThrow();
+  });
+
+  it('parseUserStatus refuses an out-of-set value instead of coercing it', () => {
+    expect(parseUserStatus('SUSPENDED')).toBe('SUSPENDED');
+    expect(() => parseUserStatus('CORRUPTED')).toThrow(UnknownUserStatusError);
   });
 });

@@ -24,6 +24,17 @@ export class DomainError extends Error {
   }
 }
 
+/**
+ * A write's optimistic-concurrency guard missed: the state a decision was made
+ * against changed before the execution landed (another request won the race).
+ * Expected under contention, safe to retry — hence a DomainError.
+ */
+export class ConcurrentUpdateError extends DomainError {
+  constructor(what: string) {
+    super(`Concurrent update on ${what}; retry the operation`, 'CONFLICT');
+  }
+}
+
 export function isDomainError(error: unknown): error is DomainError {
   return (
     typeof error === 'object' &&

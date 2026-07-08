@@ -1,0 +1,117 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GraphQL schema > matches the committed SDL snapshot 1`] = `
+"input ChargePointInput {
+  freeAmount: Int!
+  paidAmount: Int!
+  userId: Int!
+}
+
+input CreatePostInput {
+  authorId: Int!
+  content: String
+  title: String!
+}
+
+type Mutation {
+  changeUserStatus(id: Int!, status: UserStatus!): User
+
+  """Tops up a user with paid and/or free points."""
+  chargePoint(input: ChargePointInput!): PointCharge
+  createPost(input: CreatePostInput!): Post
+  publishPost(id: Int!): Post
+  signUp(input: SignUpInput!): User
+
+  """Spends points, paid balance first, FIFO across charges."""
+  spendPoint(input: SpendPointInput!): PointSpend
+}
+
+type PointBalance {
+  freeAmount: Int
+  paidAmount: Int
+  totalAmount: Int
+  user: User
+}
+
+type PointCharge {
+  chargedAt: String
+  freeAmount: Int
+  id: ID
+  paidAmount: Int
+  state: PointChargeState
+  unspentFreeAmount: Int
+  unspentPaidAmount: Int
+  user: User
+}
+
+"""Lifecycle state of a point charge."""
+enum PointChargeState {
+  CONSUMED
+  USABLE
+}
+
+type PointSpend {
+  createdAt: String
+  freeAmount: Int
+  id: ID
+  paidAmount: Int
+  reason: String
+  totalAmount: Int
+  user: User
+}
+
+type Post {
+  author: User
+  content: String
+  createdAt: String
+  id: ID
+  published: Boolean
+  title: String
+}
+
+type Query {
+  """Liveness probe — always returns "ok"."""
+  health: String
+
+  """A user's current point balance (null until the first charge)."""
+  pointBalance(userId: Int!): PointBalance
+
+  """A user's point charges in spend (FIFO) order."""
+  pointCharges(userId: Int!): [PointCharge!]
+
+  """A user's point spends, most recent first."""
+  pointSpends(userId: Int!): [PointSpend!]
+  post(id: Int!): Post
+  posts(onlyPublished: Boolean): [Post!]
+  user(id: Int!): User
+  users: [User!]
+}
+
+input SignUpInput {
+  email: String!
+  name: String
+}
+
+input SpendPointInput {
+  amount: Int!
+  reason: String!
+  userId: Int!
+}
+
+type User {
+  createdAt: String
+  email: String
+  id: ID
+  name: String
+  pointBalance: PointBalance
+  posts: [Post!]
+  status: UserStatus
+}
+
+"""Lifecycle state of a user."""
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+  SUSPENDED
+}"
+`;

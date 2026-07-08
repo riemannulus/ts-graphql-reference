@@ -29,7 +29,7 @@
   },
   "overrides": [
     {
-      "files": ["src/**/*.state.ts", "src/**/*.value.ts"],
+      "files": ["src/**/*.state.ts", "src/**/*.value.ts", "src/**/*.core.ts", "src/**/*.content.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -43,9 +43,60 @@
                   "graphql-yoga",
                   "@pothos/*",
                   "**/builder*",
-                  "**/prisma*"
+                  "**/prisma*",
+                  "**/db*",
+                  "**/*.repo*",
+                  "**/*.service*"
                 ],
-                "message": "Pure core (*.state.ts / *.value.ts) must stay free of I/O and framework deps. Keep invariants pure; perform effects in the service/shell layer."
+                "message": "Pure core (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O and framework deps. Decide here; read and execute in the repo/service shell."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**/modules/**/*.service.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify"],
+                "message": "Use-cases (*.service.ts) speak the domain language only: no GraphQL/transport imports. The schema layer calls the service, never the other way round."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**/modules/**/*.repo.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify"],
+                "message": "The persistence layer (*.repo.ts) must not know the schema or the transport. It receives a DbClient and returns rows; the Pothos `query` object it spreads is Prisma-shaped data, not a schema dependency."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**/modules/**/*.schema.ts", "src/**/modules/**/schemas/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["fastify", "**/prisma.js", "**/db.js"],
+                "message": "Schema files resolve through ctx (the routed selection client + services) and repo read functions — they never construct or import database handles or transport."
               }
             ]
           }

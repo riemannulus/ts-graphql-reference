@@ -1,15 +1,14 @@
-import type { User } from '@prisma/client';
-
 export interface WelcomePostContent {
   title: string;
   content: string;
 }
 
 /**
- * The welcome post a new user receives on sign-up. Kept as a pure function so
- * the onboarding module owns its copy and it can be unit-tested in isolation.
+ * The welcome post a new user receives on sign-up. Pure core: the input type
+ * asks only for what the decision needs (the display name), so any user-shaped
+ * value satisfies it structurally and the function stays Prisma-free.
  */
-export function buildWelcomePost(user: User): WelcomePostContent {
+export function buildWelcomePost(user: { name: string | null }): WelcomePostContent {
   const who = user.name ?? 'there';
   return {
     title: 'Welcome!',

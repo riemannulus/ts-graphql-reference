@@ -3,10 +3,10 @@ import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { GraphQLError } from 'graphql';
 import { createYoga } from 'graphql-yoga';
 import { createContextFactory, createServices } from './context.js';
+import { createDb, disconnectDb, type Db } from './db.js';
 import { isDomainError } from './errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/oauth.route.js';
-import { createPrismaClient } from './prisma.js';
 import { schema } from './schema.js';
 
 /** Context Yoga receives from Fastify per request. */
@@ -16,7 +16,13 @@ export interface ServerContext {
 }
 
 export interface BuildAppOptions {
-  /** Inject a PrismaClient (e.g. pointing at a test database). */
+  /** Inject both database handles (e.g. distinct rw/ro test databases). */
+  db?: Db;
+  /**
+   * Inject a single PrismaClient used as BOTH `rw` and `ro` (the common test
+   * setup — routing rules still apply, they just route to one database).
+   * Ignored when `db` is given.
+   */
   prisma?: PrismaClient;
   /** Toggle Fastify request logging (default: true). */
   logger?: boolean;
@@ -28,21 +34,22 @@ export interface BuildAppOptions {
 }
 
 /**
- * Composition root: constructs the Prisma client and services, injects them
+ * Composition root: constructs the database handles and services, injects them
  * into the GraphQL context, and assembles the Fastify + Yoga app.
  *
  * Returns the (not-yet-listening) app so tests can import and drive it without
  * binding a port. See src/server.ts for the process entrypoint.
  */
 export function buildApp(options: BuildAppOptions = {}) {
-  const prisma = options.prisma ?? createPrismaClient();
-  const services = createServices(prisma, { googleOAuth: options.googleOAuth });
+  const db: Db =
+    options.db ?? (options.prisma ? { rw: options.prisma, ro: options.prisma } : createDb());
+  const services = createServices(db, { googleOAuth: options.googleOAuth });
   const app = fastify({ logger: options.logger ?? true });
 
   const yoga = createYoga<ServerContext>({
     schema,
     graphqlEndpoint: '/graphql',
-    context: createContextFactory({ prisma, services }),
+    context: createContextFactory({ db, services }),
     // Expected domain errors reach the client with their message + code;
     // everything else is masked as a generic internal error.
     maskedErrors: {
@@ -75,13 +82,13 @@ export function buildApp(options: BuildAppOptions = {}) {
 
   // Non-GraphQL surface: the Google OAuth callback. It is handed exactly one
   // dependency — services.auth, from the same container the GraphQL layer uses
-  // — so the REST handler provisions users without ever seeing the PrismaClient
-  // or the GraphQL per-request context. See src/modules/auth/.
+  // — so the REST handler provisions users without ever seeing the database
+  // handles or the GraphQL per-request context. See src/modules/auth/.
   registerGoogleOAuth(app, services.auth);
 
   app.addHook('onClose', async () => {
-    await prisma.$disconnect();
+    await disconnectDb(db);
   });
 
-  return { app, prisma, services, yoga };
+  return { app, db, services, yoga };
 }

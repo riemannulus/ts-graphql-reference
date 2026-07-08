@@ -1,49 +1,38 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../app.js';
-import type { GoogleOAuthClient, OAuthTokens } from '../../modules/auth/oauth.provider.js';
-import type { OAuthProfile } from '../../modules/auth/oauth.value.js';
+import type { GoogleOAuthClient } from '../../modules/auth/oauth.provider.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
 /** Fake provider injected via buildApp so the callback runs without real network. */
-class FakeGoogleClient implements GoogleOAuthClient {
-  buildAuthUrl(state: string): string {
-    return `https://accounts.example.test/consent?state=${state}`;
-  }
-  exchangeCode(_code: string): Promise<OAuthTokens> {
-    return Promise.resolve({ accessToken: 'fake-access-token' });
-  }
-  fetchProfile(_tokens: OAuthTokens): Promise<OAuthProfile> {
-    return Promise.resolve({ providerAccountId: 'g-1', email: 'oauth@example.com', name: 'OAuth User' });
-  }
-}
+const fakeGoogleClient: GoogleOAuthClient = {
+  buildAuthUrl: (state) => `https://accounts.example.test/consent?state=${state}`,
+  exchangeCode: () => Promise.resolve({ accessToken: 'fake-access-token' }),
+  fetchProfile: () =>
+    Promise.resolve({ providerAccountId: 'g-1', email: 'oauth@example.com', name: 'OAuth User' }),
+};
 
 /** A provider whose token exchange fails — exercises the masked-error (500) path. */
-class FailingGoogleClient implements GoogleOAuthClient {
-  buildAuthUrl(state: string): string {
-    return `https://accounts.example.test/consent?state=${state}`;
-  }
-  exchangeCode(_code: string): Promise<OAuthTokens> {
-    return Promise.reject(new Error('google token endpoint is unavailable'));
-  }
-  fetchProfile(_tokens: OAuthTokens): Promise<OAuthProfile> {
-    return Promise.resolve({ providerAccountId: 'g-1', email: 'unused@example.com' });
-  }
-}
+const failingGoogleClient: GoogleOAuthClient = {
+  buildAuthUrl: (state) => `https://accounts.example.test/consent?state=${state}`,
+  exchangeCode: () => Promise.reject(new Error('google token endpoint is unavailable')),
+  fetchProfile: () =>
+    Promise.resolve({ providerAccountId: 'g-1', email: 'unused@example.com' }),
+};
 
 const prisma = await makeTestPrisma();
-const { app } = buildApp({ prisma, logger: false, googleOAuth: new FakeGoogleClient() });
+const { app } = buildApp({ prisma, logger: false, googleOAuth: fakeGoogleClient });
 
 // A second app with a failing provider, on its own database, for the 500 path.
 const failPrisma = await makeTestPrisma();
 const { app: failApp } = buildApp({
   prisma: failPrisma,
   logger: false,
-  googleOAuth: new FailingGoogleClient(),
+  googleOAuth: failingGoogleClient,
 });
 
 beforeEach(() => resetDb(prisma));
 afterAll(async () => {
-  await app.close(); // onClose hook disconnects prisma
+  await app.close(); // onClose hook disconnects the db handles
   await failApp.close();
 });
 

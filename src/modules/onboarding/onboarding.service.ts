@@ -1,36 +1,45 @@
-import type { Prisma, PrismaClient, User } from '@prisma/client';
-import type { PostService } from '../post/post.service.js';
-import type { CreateUserInput, UserService } from '../user/user.service.js';
+import type { User } from '@prisma/client';
+import type { Db } from '../../db.js';
+import * as postRepo from '../post/post.repo.js';
+import type { CreateUserInput } from '../user/user.service.js';
+import * as userRepo from '../user/user.repo.js';
+import { parseEmail } from '../user/user.value.js';
 import { buildWelcomePost } from './onboarding.content.js';
 
-interface OnboardingServiceDeps {
-  users: UserService;
-  posts: PostService;
-  prisma: PrismaClient;
+export interface OnboardingServiceDeps {
+  db: Db;
+  /**
+   * The welcome-post writer, injectable so tests can force the second write to
+   * fail and observe the rollback. Defaults to the real post repo function.
+   */
+  createPost?: typeof postRepo.createPost;
 }
 
 /**
- * Orchestrates sign-up across the user and post modules. This module depends on
- * UserService and PostService, never the other way round — the same one-way
- * shape as OAuthService → UserService (see context.ts).
+ * Orchestrates sign-up across the user and post modules — the reference's
+ * example of a CROSS-MODULE use-case. Because both writes must commit or roll
+ * back together, it opens ONE transaction and composes the two modules' repo
+ * write functions inside it; decisions still come from the owning modules'
+ * cores (`parseEmail` from user, `buildWelcomePost` from onboarding). This
+ * module depends on user/post, never the other way round.
  */
-export class OnboardingService {
-  constructor(private readonly deps: OnboardingServiceDeps) {}
-
-  /**
-   * Creates a user and their default welcome post in a single interactive
-   * transaction: if the welcome post fails, the user is rolled back too.
-   *
-   * Returns the created user; a `signUp { posts { ... } }` selection sees the
-   * welcome post because Pothos resolves the relation after the transaction
-   * commits.
-   */
-  register(input: CreateUserInput, _query: Prisma.UserDefaultArgs = {}): Promise<User> {
-    return this.deps.prisma.$transaction(async (tx) => {
-      const user = await this.deps.users.create(input, {}, tx);
-      const { title, content } = buildWelcomePost(user);
-      await this.deps.posts.create({ authorId: user.id, title, content }, {}, tx);
-      return user;
-    });
-  }
+export function createOnboardingService(deps: OnboardingServiceDeps) {
+  const createPost = deps.createPost ?? postRepo.createPost;
+  return {
+    /**
+     * Creates a user and their default welcome post atomically: if the welcome
+     * post fails, the user is rolled back too.
+     */
+    register(input: CreateUserInput): Promise<User> {
+      const email = parseEmail(input.email); // decide (parse at the boundary)
+      return deps.db.rw.$transaction(async (tx) => {
+        const user = await userRepo.createUser(tx, { email, name: input.name ?? null });
+        const { title, content } = buildWelcomePost(user); // decide
+        await createPost(tx, { authorId: user.id, title, content });
+        return user;
+      });
+    },
+  };
 }
+
+export type OnboardingService = ReturnType<typeof createOnboardingService>;

@@ -1,30 +1,25 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { GoogleOAuthClient, OAuthTokens } from '../../../modules/auth/oauth.provider.js';
-import { OAuthService } from '../../../modules/auth/oauth.service.js';
+import type { GoogleOAuthClient } from '../../../modules/auth/oauth.provider.js';
+import { createOAuthService, type OAuthService } from '../../../modules/auth/oauth.service.js';
 import { parseOAuthCallback, type OAuthProfile } from '../../../modules/auth/oauth.value.js';
-import { UserService } from '../../../modules/user/user.service.js';
+import { createUserService } from '../../../modules/user/user.service.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();
 
-/** Stands in for the unimplemented StubGoogleOAuthClient; returns a canned profile. */
-class FakeGoogleClient implements GoogleOAuthClient {
-  constructor(private readonly profile: OAuthProfile) {}
-  buildAuthUrl(state: string): string {
-    return `https://accounts.example.test/consent?state=${state}`;
-  }
-  exchangeCode(_code: string): Promise<OAuthTokens> {
-    return Promise.resolve({ accessToken: 'fake-access-token' });
-  }
-  fetchProfile(_tokens: OAuthTokens): Promise<OAuthProfile> {
-    return Promise.resolve(this.profile);
-  }
+/** Stands in for the unimplemented stub; a port fake is just an object literal. */
+function fakeGoogleClient(profile: OAuthProfile): GoogleOAuthClient {
+  return {
+    buildAuthUrl: (state) => `https://accounts.example.test/consent?state=${state}`,
+    exchangeCode: () => Promise.resolve({ accessToken: 'fake-access-token' }),
+    fetchProfile: () => Promise.resolve(profile),
+  };
 }
 
 function oauthFor(profile: OAuthProfile): OAuthService {
-  return new OAuthService({
-    users: new UserService(prisma),
-    google: new FakeGoogleClient(profile),
+  return createOAuthService({
+    users: createUserService({ rw: prisma, ro: prisma }),
+    google: fakeGoogleClient(profile),
   });
 }
 

@@ -1,13 +1,29 @@
 // Importing the builder first guarantees the root Query/Mutation types are
-// established before the module files below append fields to them.
+// established before the register calls below append fields to them.
 import { builder } from './builder.js';
 
-// Each import registers that module's types/queries/mutations on the shared
-// builder via side effects. Add new modules here.
-import './modules/user/user.schema.js';
-import './modules/post/schemas/post.type.js';
-import './modules/post/schemas/post.query.js';
-import './modules/post/schemas/post.mutation.js';
-import './modules/onboarding/schemas/onboarding.mutation.js';
+import { registerOnboardingMutations } from './modules/onboarding/schemas/onboarding.mutation.js';
+import { registerPointMutations } from './modules/point/schemas/point.mutation.js';
+import { registerPointQueries } from './modules/point/schemas/point.query.js';
+import { registerPointTypes } from './modules/point/schemas/point.type.js';
+import { registerPostMutations } from './modules/post/schemas/post.mutation.js';
+import { registerPostQueries } from './modules/post/schemas/post.query.js';
+import { registerPostTypes } from './modules/post/schemas/post.type.js';
+import { registerUserSchema } from './modules/user/user.schema.js';
+
+// Explicit registration, not side-effect imports: each module contributes its
+// types/queries/mutations through a named register function called exactly
+// once, here. A module missing from this list is visibly absent (and its
+// import is flagged as unused) instead of silently dropping out of the schema.
+// The e2e schema snapshot test (src/tests/e2e/schema-snapshot.test.ts) guards
+// the resulting SDL as a whole.
+registerUserSchema();
+registerPostTypes();
+registerPostQueries();
+registerPostMutations();
+registerPointTypes();
+registerPointQueries();
+registerPointMutations();
+registerOnboardingMutations();
 
 export const schema = builder.toSchema();

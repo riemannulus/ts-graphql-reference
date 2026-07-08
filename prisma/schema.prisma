@@ -17,17 +17,21 @@ datasource db {
 }
 
 /// A user of the system. `status` is a state machine (see user.state.ts):
-/// ACTIVE | SUSPENDED | DEACTIVATED. It is stored as a string with the allowed
-/// transitions enforced in code, so the state machine stays the single source
-/// of truth for the invariant (rather than splitting it into a DB enum).
+/// ACTIVE | SUSPENDED | DEACTIVATED. The *transition rules* live in code (the
+/// single source of truth, user.state.ts); the *value set* is additionally
+/// enforced by a DB CHECK constraint (see the migrations), so a corrupt write
+/// fails at the database instead of surfacing later as a bad read.
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
-  status    String   @default("ACTIVE")
-  posts     Post[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           Int           @id @default(autoincrement())
+  email        String        @unique
+  name         String?
+  status       String        @default("ACTIVE")
+  posts        Post[]
+  pointBalance PointBalance?
+  pointCharges PointCharge[]
+  pointSpends  PointSpend[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 model Post {
@@ -41,4 +45,47 @@ model Post {
   updatedAt DateTime @updatedAt
 
   @@index([authorId])
+}
+
+/// Denormalized point balance per user — the snapshot the spend use-case
+/// decides against. Kept consistent with the charge ledger inside the same
+/// transaction that mutates it (see point.repo.ts).
+model PointBalance {
+  userId      Int      @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paidAmount  Int      @default(0)
+  freeAmount  Int      @default(0)
+  totalAmount Int      @default(0)
+  updatedAt   DateTime @updatedAt
+}
+
+/// One charge (top-up) of points. `state` is USABLE | CONSUMED, enforced by a
+/// DB CHECK constraint; the unspent columns carry non-negative CHECKs so an
+/// overdraft can never be persisted even by buggy application code.
+model PointCharge {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state             String   @default("USABLE")
+  paidAmount        Int
+  freeAmount        Int
+  unspentPaidAmount Int
+  unspentFreeAmount Int
+  chargedAt         DateTime @default(now())
+
+  @@index([userId, state, chargedAt])
+}
+
+/// One spend of points, recording how it split across paid and free balance.
+model PointSpend {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paidAmount  Int
+  freeAmount  Int
+  totalAmount Int
+  reason      String
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
