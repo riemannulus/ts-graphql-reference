@@ -30,9 +30,43 @@ export type DbClient = Prisma.TransactionClient;
 export function createDb(): Db {
   const rwUrl = process.env.DATABASE_URL;
   const roUrl = process.env.READONLY_DATABASE_URL;
+  if (roUrl && !rwUrl) {
+    // A replica with no primary is a misconfiguration; failing beats silently
+    // pointing rw at the built-in dev default while ro goes elsewhere.
+    throw new Error('READONLY_DATABASE_URL is set but DATABASE_URL is not');
+  }
   const rw = createPrismaClient(rwUrl);
   const ro = roUrl && roUrl !== rwUrl ? createPrismaClient(roUrl) : rw;
   return { rw, ro };
+}
+
+/**
+ * Structural checks for Prisma's error codes (no `instanceof`, which can fail
+ * across module realms in test runners). Used by shells to translate
+ * infrastructure failures into domain outcomes.
+ */
+function prismaErrorCode(error: unknown): unknown {
+  return typeof error === 'object' && error !== null
+    ? (error as { code?: unknown }).code
+    : undefined;
+}
+
+/** P2002 — a unique constraint was violated. */
+export function isUniqueViolation(error: unknown): boolean {
+  return prismaErrorCode(error) === 'P2002';
+}
+
+/** P2025 — the row a guarded `update` targeted no longer matches. */
+export function isRecordNotFound(error: unknown): boolean {
+  return prismaErrorCode(error) === 'P2025';
+}
+
+/**
+ * P2034 — the transaction failed a serialization check (e.g. a REPEATABLE READ
+ * transaction touched a row a concurrent transaction changed). Retryable.
+ */
+export function isSerializationConflict(error: unknown): boolean {
+  return prismaErrorCode(error) === 'P2034';
 }
 
 /** Disconnects both handles (once, when they are the same client). */

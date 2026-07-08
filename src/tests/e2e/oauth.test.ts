@@ -32,8 +32,11 @@ const { app: failApp } = buildApp({
 
 beforeEach(() => resetDb(prisma));
 afterAll(async () => {
-  await app.close(); // onClose hook disconnects the db handles
+  await app.close();
   await failApp.close();
+  // Injected clients stay the injector's to manage.
+  await prisma.$disconnect();
+  await failPrisma.$disconnect();
 });
 
 describe('Google OAuth callback (non-GraphQL endpoint)', () => {

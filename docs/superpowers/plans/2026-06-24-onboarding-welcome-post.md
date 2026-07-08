@@ -1,3 +1,5 @@
+> **Archival note (2026-07-08):** this document predates the layered-module refactor (core/repo/service/schema, functional services). File names and APIs below — `post.service.ts`, `PostService`, class-based `OnboardingService` — no longer exist; see README.md and CONVENTIONS.md for the current structure.
+
 # Onboarding Welcome-Post Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

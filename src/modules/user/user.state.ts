@@ -47,10 +47,6 @@ export function canTransition(from: UserStatus, to: UserStatus): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
 
-export function isActive(status: UserStatus): boolean {
-  return status === 'ACTIVE';
-}
-
 export class InvalidStatusTransitionError extends DomainError {
   constructor(
     readonly from: UserStatus,
@@ -69,4 +65,19 @@ export function assertTransition(from: UserStatus, to: UserStatus): void {
   if (!canTransition(from, to)) {
     throw new InvalidStatusTransitionError(from, to);
   }
+}
+
+/** What a status change must do: nothing (idempotent repeat) or one CAS write. */
+export type TransitionPlan =
+  | { kind: 'noop' }
+  | { kind: 'transition'; from: UserStatus; to: UserStatus };
+
+/**
+ * Decides a status change (the single-row degenerate case of the plan
+ * pattern): validates the move and returns whether a write is needed — so the
+ * shell branches only on the plan, never on the domain.
+ */
+export function planTransition(from: UserStatus, to: UserStatus): TransitionPlan {
+  assertTransition(from, to);
+  return from === to ? { kind: 'noop' } : { kind: 'transition', from, to };
 }

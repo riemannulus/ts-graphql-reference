@@ -1,5 +1,6 @@
-import type { PointCharge, PointSpend } from '@prisma/client';
-import type { Db } from '../../db.js';
+import { Prisma, type PointCharge, type PointSpend } from '@prisma/client';
+import { isSerializationConflict, type Db } from '../../db.js';
+import { ConcurrentUpdateError } from '../../errors.js';
 import { planCharge, planSpend } from './point.core.js';
 import * as pointRepo from './point.repo.js';
 
@@ -34,16 +35,34 @@ export function createPointService(db: Db) {
     },
 
     /**
-     * Spends `amount` points (paid-first, FIFO across charges). The plan's
-     * optimistic guards make a lost race roll back the whole transaction with
-     * a retryable CONFLICT error instead of double-spending.
+     * Spends `amount` points (paid-first, FIFO across charges).
+     *
+     * REPEATABLE READ gives the decision ONE snapshot: the balance and the
+     * charges are guaranteed to describe the same world (under the default
+     * READ COMMITTED, each read gets its own snapshot and a concurrent charge
+     * or spend committing between them would masquerade as ledger corruption).
+     * A lost race then surfaces one of two ways, both mapped to a retryable
+     * CONFLICT: the plan's optimistic guards miss (the rival committed before
+     * our snapshot was taken), or Postgres reports a serialization failure
+     * (the rival committed after). Either way the transaction rolls back —
+     * never a double-spend.
      */
-    spend(userId: number, input: SpendPointInput): Promise<PointSpend> {
-      return db.rw.$transaction(async (tx) => {
-        const world = await pointRepo.loadSpendWorld(tx, userId); // read
-        const plan = planSpend(world.snapshot, world.charges, input.amount); // decide
-        return pointRepo.applySpendPlan(tx, userId, input.reason, plan); // execute
-      });
+    async spend(userId: number, input: SpendPointInput): Promise<PointSpend> {
+      try {
+        return await db.rw.$transaction(
+          async (tx) => {
+            const world = await pointRepo.loadSpendWorld(tx, userId); // read
+            const plan = planSpend(world.snapshot, world.charges, input.amount); // decide
+            return pointRepo.applySpendPlan(tx, userId, input.reason, plan); // execute
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
+      } catch (error) {
+        if (isSerializationConflict(error)) {
+          throw new ConcurrentUpdateError(`points of user ${userId}`);
+        }
+        throw error;
+      }
     },
   };
 }

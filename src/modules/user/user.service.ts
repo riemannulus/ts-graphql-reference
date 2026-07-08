@@ -1,8 +1,8 @@
 import type { User } from '@prisma/client';
-import type { Db, DbClient } from '../../db.js';
+import type { Db } from '../../db.js';
 import { ConcurrentUpdateError } from '../../errors.js';
 import * as userRepo from './user.repo.js';
-import { assertTransition, parseUserStatus, type UserStatus } from './user.state.js';
+import { parseUserStatus, planTransition, type UserStatus } from './user.state.js';
 import { parseEmail } from './user.value.js';
 
 export interface CreateUserInput {
@@ -20,13 +20,15 @@ function toWriteData(input: CreateUserInput): userRepo.UserWriteData {
  * (`db.rw`) — deciding on replica-lagged state would be wrong. Methods return
  * plain domain results; the GraphQL layer re-fetches with its own selection.
  *
- * `create` takes an optional transaction handle so cross-module use-cases
- * (onboarding) can enlist the user write in THEIR transaction.
+ * Cross-module use-cases that need a user write inside THEIR transaction
+ * (onboarding) compose `userRepo.createUser` directly — a use-case composes
+ * repos, not other use-cases.
  */
 export function createUserService(db: Db) {
   return {
-    create(input: CreateUserInput, tx: DbClient = db.rw): Promise<User> {
-      return userRepo.createUser(tx, toWriteData(input));
+    /** Creates a user (unique-email violations surface as EMAIL_TAKEN). */
+    create(input: CreateUserInput): Promise<User> {
+      return userRepo.createUser(db.rw, toWriteData(input));
     },
 
     /**
@@ -44,22 +46,23 @@ export function createUserService(db: Db) {
     /**
      * Transitions a user's status, enforcing the state machine in
      * user.state.ts. Read → decide → execute: the current status is read from
-     * the primary, the core validates the move, and the write is a
+     * the primary, the core plans the move, and the write is a
      * compare-and-swap on the status the decision was made against — a
      * concurrent transition makes the CAS miss and throws a retryable
-     * CONFLICT instead of persisting an illegal move.
+     * CONFLICT instead of persisting an illegal move. The returned user is the
+     * row the CAS itself wrote (no unguarded re-read).
      */
     async changeStatus(id: number, to: UserStatus): Promise<User> {
       const current = await userRepo.getById(db.rw, id); // read
-      const from = parseUserStatus(current.status);
-      assertTransition(from, to); // decide
-      if (from !== to) {
-        const landed = await userRepo.transitionStatus(db.rw, id, from, to); // execute
-        if (!landed) {
-          throw new ConcurrentUpdateError(`status of user ${id}`);
-        }
+      const plan = planTransition(parseUserStatus(current.status), to); // decide
+      if (plan.kind === 'noop') {
+        return current;
       }
-      return userRepo.getById(db.rw, id);
+      const updated = await userRepo.transitionStatus(db.rw, id, plan.from, plan.to); // execute
+      if (updated === null) {
+        throw new ConcurrentUpdateError(`status of user ${id}`);
+      }
+      return updated;
     },
   };
 }

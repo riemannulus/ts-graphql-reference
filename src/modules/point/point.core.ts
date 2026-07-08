@@ -148,8 +148,15 @@ const isValidChargeSide = (n: number) => Number.isInteger(n) && n >= 0;
  */
 export function planCharge(input: { paidAmount: number; freeAmount: number }): ChargePlan {
   const { paidAmount, freeAmount } = input;
-  if (!isValidChargeSide(paidAmount) || !isValidChargeSide(freeAmount) || paidAmount + freeAmount === 0) {
-    throw new PointAmountNotPositiveError(paidAmount + freeAmount);
+  // Report the side that is actually at fault, not the (misleading) sum.
+  if (!isValidChargeSide(paidAmount)) {
+    throw new PointAmountNotPositiveError(paidAmount);
+  }
+  if (!isValidChargeSide(freeAmount)) {
+    throw new PointAmountNotPositiveError(freeAmount);
+  }
+  if (paidAmount + freeAmount === 0) {
+    throw new PointAmountNotPositiveError(0);
   }
   return { paidAmount, freeAmount, totalAmount: paidAmount + freeAmount };
 }

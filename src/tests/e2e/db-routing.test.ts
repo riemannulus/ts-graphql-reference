@@ -26,7 +26,12 @@ async function gql(query: string): Promise<GqlResult> {
   return res.json() as GqlResult;
 }
 
-afterAll(() => app.close());
+afterAll(async () => {
+  await app.close();
+  // Injected clients stay the injector's to manage.
+  await rw.$disconnect();
+  await ro.$disconnect();
+});
 
 describe('rw/ro selection-client routing', () => {
   it('mutations write to rw AND re-fetch their selection from rw (read-your-writes)', async () => {

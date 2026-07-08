@@ -5,6 +5,7 @@ import {
   InvalidStatusTransitionError,
   isUserStatus,
   parseUserStatus,
+  planTransition,
   UnknownUserStatusError,
 } from '../../../modules/user/user.state.js';
 
@@ -32,5 +33,15 @@ describe('user.state', () => {
   it('parseUserStatus refuses an out-of-set value instead of coercing it', () => {
     expect(parseUserStatus('SUSPENDED')).toBe('SUSPENDED');
     expect(() => parseUserStatus('CORRUPTED')).toThrow(UnknownUserStatusError);
+  });
+
+  it('planTransition returns a noop for a repeat, a CAS plan for a move, and throws otherwise', () => {
+    expect(planTransition('ACTIVE', 'ACTIVE')).toEqual({ kind: 'noop' });
+    expect(planTransition('ACTIVE', 'SUSPENDED')).toEqual({
+      kind: 'transition',
+      from: 'ACTIVE',
+      to: 'SUSPENDED',
+    });
+    expect(() => planTransition('DEACTIVATED', 'ACTIVE')).toThrow(InvalidStatusTransitionError);
   });
 });

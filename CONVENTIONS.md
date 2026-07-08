@@ -11,15 +11,15 @@ Every module splits into explicit layers with one-way dependencies:
 | Layer            | Files                                | Speaks                          | May import                                   | Tested with                |
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
-| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`        | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`)                | integration + **model** PBT |
-| Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads), services via ctx | e2e (`app.inject`) |
+| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`, `errors.ts` | integration (PGlite)       |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`), `errors.ts`   | integration + **model** PBT |
+| Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
 
 ```
 schema ──→ service ──→ repo ──→ prisma
    │           │          │
    └───────────┴──────────┴──→ core          core → (nothing)
-   └─(read path only)─→ repo
+   └─(reads; tier-1 writes)─→ repo
 ```
 
 **Enforced by oxlint** (`.oxlintrc.json` `no-restricted-imports` per layer), so
@@ -39,19 +39,23 @@ reviewed by hand:
 A use-case is the assembly `read → decide → execute`:
 
 1. The repo reads a **world snapshot** — everything the decision needs, mapped
-   to the core's input types.
+   to the core's input types. A multi-read snapshot must actually BE one
+   snapshot: run the transaction at `REPEATABLE READ` (see
+   `point.service.spend`), or a commit landing between the reads shows the
+   decision an impossible world.
 2. The core decides and returns a **plan**: pure data describing every write,
    including the values each write must still observe
    (`allocation.assumed`, `plan.assumedBalance`).
 3. The repo executes the plan mechanically, using those assumptions as
-   optimistic-concurrency guards (`updateMany({ where: { ...assumed } })`);
-   a missed guard throws `ConcurrentUpdateError` (`CONFLICT`, retryable) and
-   rolls back the transaction.
+   optimistic-concurrency guards (`updateMany({ where: { ...assumed } })`).
+   A missed guard throws `ConcurrentUpdateError` (`CONFLICT`, retryable) and
+   rolls back the transaction; a serialization failure from the isolation
+   level (`P2034`) is mapped to the same error in the service.
 
 See `point.core.ts` (`planSpend`) / `point.repo.ts` (`applySpendPlan`) /
-`point.service.ts` (`spend`) for the blueprint, and `user.service.ts`
-(`changeStatus` + the CAS `transitionStatus`) for the single-row degenerate
-case.
+`point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
+(`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
+`user.service.ts` (`changeStatus`) for the single-row degenerate case.
 
 ### The graduation rule
 
@@ -147,7 +151,8 @@ stays Prisma-free.
 
 Tests assert **laws**, not examples. Tooling: [`@fast-check/vitest`](https://github.com/dubzzz/fast-check)
 (`test.prop`). Test files: `*.prop.test.ts`, beside the module's other tests in
-`src/tests/modules/<name>/`; generators live in `<name>.arbitraries.ts`.
+`src/tests/modules/<name>/`; generators shared across a module's tests live in
+`<name>.arbitraries.ts` (a single prop file may keep one-off generators inline).
 
 Laws worth reaching for:
 

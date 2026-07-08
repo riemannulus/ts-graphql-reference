@@ -33,15 +33,18 @@ export interface SpendWorld {
 }
 
 export async function loadSpendWorld(db: DbClient, userId: number): Promise<SpendWorld> {
-  const [balance, charges] = await Promise.all([
-    db.pointBalance.findUnique({ where: { userId } }),
-    db.pointCharge.findMany({
-      where: { userId, state: 'USABLE' },
-      // `id` breaks ties for charges created in the same millisecond, keeping
-      // the FIFO order deterministic.
-      orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
-    }),
-  ]);
+  // Sequential, not Promise.all: interactive-transaction handles do not
+  // support concurrent operations. The two reads only form ONE world because
+  // the spend transaction runs at REPEATABLE READ (point.service.ts) — under
+  // READ COMMITTED each statement would get its own snapshot, and a charge
+  // committing between them would make a healthy ledger look corrupt.
+  const balance = await db.pointBalance.findUnique({ where: { userId } });
+  const charges = await db.pointCharge.findMany({
+    where: { userId, state: 'USABLE' },
+    // `id` breaks ties for charges created in the same millisecond, keeping
+    // the FIFO order deterministic.
+    orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
+  });
   return {
     snapshot: balance ?? ZERO_SNAPSHOT,
     charges: charges.map((c) => ({

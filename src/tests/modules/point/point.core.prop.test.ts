@@ -105,7 +105,7 @@ test.prop([arbLedger, arbSpendAmount])(
   },
 );
 
-test.prop([arbLedger, fc.integer({ min: -1_000, max: 100_000 }), fc.boolean()])(
+test.prop([arbLedger, fc.integer({ min: -1_000, max: 100_000 })])(
   'totality/agreement on a consistent ledger: a plan is returned iff the amount is valid and covered',
   (ledger, amount) => {
     const result = plannedOrRejected(ledger, amount);

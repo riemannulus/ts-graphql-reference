@@ -22,7 +22,10 @@ async function gql(query: string, variables?: Record<string, unknown>): Promise<
 }
 
 beforeEach(() => resetDb(prisma));
-afterAll(() => app.close()); // onClose hook disconnects the db handles
+afterAll(async () => {
+  await app.close();
+  await prisma.$disconnect(); // injected clients stay the injector's to manage
+});
 
 describe('GraphQL API', () => {
   it('signUp creates a user with a welcome post', async () => {
@@ -36,9 +39,16 @@ describe('GraphQL API', () => {
     expect(res.data?.signUp.posts[0].title).toBe('Welcome!');
   });
 
-  it('no longer exposes createUser', async () => {
+  it('createUser is not a schema field (signUp is the only way in)', async () => {
     const res = await gql('mutation { createUser(input: { email: "z@z.com" }) { id } }');
     expect(res.errors?.[0]?.message).toMatch(/createUser/);
+  });
+
+  it('surfaces a duplicate sign-up as the expected domain error', async () => {
+    await gql('mutation { signUp(input: { email: "dup@q.com" }) { id } }');
+    const res = await gql('mutation { signUp(input: { email: "dup@q.com" }) { id } }');
+    expect(res.data?.signUp).toBeNull();
+    expect(res.errors?.[0]?.extensions?.code).toBe('EMAIL_TAKEN');
   });
 
   it('surfaces an illegal status transition as a domain error', async () => {

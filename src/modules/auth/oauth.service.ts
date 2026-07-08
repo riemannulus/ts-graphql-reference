@@ -28,9 +28,10 @@ export function createOAuthService(deps: OAuthServiceDeps) {
      * Steps 2-4: exchange the code, fetch the profile, and provision the user.
      *
      * The first two steps are delegated to the (stubbed) provider; the third is
-     * the point of this example — a user is created via the **user module**,
-     * the same user service the GraphQL `signUp` mutation path uses, so both
-     * surfaces share one code path and one set of invariants.
+     * the point of this example — the user is provisioned via the **user
+     * module** (its service, and through it the same `parseEmail` boundary and
+     * repo write the GraphQL sign-up path uses), so both surfaces share the
+     * module's invariants rather than reimplementing them.
      */
     async completeLogin(callback: OAuthCallback): Promise<User> {
       const tokens = await deps.google.exchangeCode(callback.code);

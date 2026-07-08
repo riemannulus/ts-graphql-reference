@@ -155,13 +155,16 @@ const plan  = planSpend(world.snapshot, world.charges, input.amount); // decide 
 return pointRepo.applySpendPlan(tx, userId, input.reason, plan);      // execute (repo)
 ```
 
-inside one transaction on the primary. The core returns a **plan** — pure data
-describing every write, including the values each UPDATE must still see. The
-repo executes it mechanically; the plan's assumptions become optimistic-
-concurrency guards, so a lost race rolls back with a retryable `CONFLICT`
-instead of double-spending. The resolver then **re-fetches** the result by id
-with the Pothos `query`, so the client's selection set is served without the
-use-case ever learning about GraphQL.
+inside one `REPEATABLE READ` transaction on the primary (one snapshot for the
+whole decision — under `READ COMMITTED`, the two reads could straddle a
+concurrent commit and a healthy ledger would look corrupt). The core returns a
+**plan** — pure data describing every write, including the values each UPDATE
+must still see. The repo executes it mechanically; the plan's assumptions
+become optimistic-concurrency guards, and both a missed guard and a
+serialization failure surface as a retryable `CONFLICT` instead of a
+double-spend. The resolver then **re-fetches** the result by id with the
+Pothos `query`, so the client's selection set is served without the use-case
+ever learning about GraphQL.
 
 ### RWDB / RODB routing
 
@@ -201,8 +204,9 @@ object-literal fakes (`buildApp({ prisma, googleOAuth: fake })`).
 
 Not every entry point is GraphQL. `src/modules/auth/` is a worked example of a
 plain HTTP surface — a Google OAuth login callback at `GET /google/oauth` and
-`GET /google/oauth/callback` — that provisions a user through the **same user
-service** the GraphQL sign-up path uses. The REST route gets its dependency at
+`GET /google/oauth/callback` — that provisions a user through the **user
+module**: the user service, and through it the same `parseEmail` boundary and
+repo write the GraphQL sign-up path uses. The REST route gets its dependency at
 **registration time** — `registerGoogleOAuth(app, services.auth)` closes over
 exactly one service from the container built in the composition root; it never
 sees the `Db` handles or the GraphQL per-request context. The provider HTTP
@@ -256,8 +260,10 @@ Tests run against **real Postgres with zero setup**: `makeTestPrisma()`
 (WASM Postgres) database, applies the committed migrations, and returns a Prisma
 client on it — no Docker, no server, and a fresh isolated database per test
 file. `resetDb` truncates whatever tables the database reports (no manual
-FK-ordered list to maintain). The client is provider-identical to production
-(`@prisma/adapter-pg`), so dialect bugs surface in tests rather than in prod.
+FK-ordered list to maintain). The client is dialect-identical to production —
+both the test adapter (`pglite-prisma-adapter`) and the production one
+(`@prisma/adapter-pg`) speak the `postgresql` provider — so dialect bugs
+surface in tests rather than in prod.
 
 The test *layer* is the filename suffix, the test *module* is the folder:
 

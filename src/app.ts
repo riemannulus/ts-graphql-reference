@@ -41,8 +41,12 @@ export interface BuildAppOptions {
  * binding a port. See src/server.ts for the process entrypoint.
  */
 export function buildApp(options: BuildAppOptions = {}) {
-  const db: Db =
-    options.db ?? (options.prisma ? { rw: options.prisma, ro: options.prisma } : createDb());
+  const injectedDb: Db | undefined =
+    options.db ?? (options.prisma ? { rw: options.prisma, ro: options.prisma } : undefined);
+  const db: Db = injectedDb ?? createDb();
+  // Only handles the app itself created are disconnected on close — an
+  // injected client stays the injector's to manage (two apps may share one).
+  const ownsDb = injectedDb === undefined;
   const services = createServices(db, { googleOAuth: options.googleOAuth });
   const app = fastify({ logger: options.logger ?? true });
 
@@ -87,7 +91,9 @@ export function buildApp(options: BuildAppOptions = {}) {
   registerGoogleOAuth(app, services.auth);
 
   app.addHook('onClose', async () => {
-    await disconnectDb(db);
+    if (ownsDb) {
+      await disconnectDb(db);
+    }
   });
 
   return { app, db, services, yoga };

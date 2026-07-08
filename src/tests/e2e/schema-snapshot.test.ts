@@ -26,7 +26,10 @@ async function fetchSdl(): Promise<string> {
   return printSchema(buildClientSchema(body.data));
 }
 
-afterAll(() => app.close());
+afterAll(async () => {
+  await app.close();
+  await prisma.$disconnect(); // injected clients stay the injector's to manage
+});
 
 describe('GraphQL schema', () => {
   it('matches the committed SDL snapshot', async () => {

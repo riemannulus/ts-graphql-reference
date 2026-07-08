@@ -34,9 +34,14 @@ CREATE TABLE "PointCharge" (
     CONSTRAINT "PointCharge_pkey" PRIMARY KEY ("id"),
     -- Value set in sync with POINT_CHARGE_STATES (src/modules/point/point.core.ts).
     CONSTRAINT "PointCharge_state_check" CHECK ("state" IN ('USABLE', 'CONSUMED')),
-    -- An overdraft on a single charge can never be persisted.
-    CONSTRAINT "PointCharge_unspentPaidAmount_check" CHECK ("unspentPaidAmount" >= 0),
-    CONSTRAINT "PointCharge_unspentFreeAmount_check" CHECK ("unspentFreeAmount" >= 0)
+    -- A charge's sides are non-negative, and its unspent remainder can neither
+    -- go negative (overdraft) nor exceed what was charged (inflation).
+    CONSTRAINT "PointCharge_paidAmount_check" CHECK ("paidAmount" >= 0),
+    CONSTRAINT "PointCharge_freeAmount_check" CHECK ("freeAmount" >= 0),
+    CONSTRAINT "PointCharge_unspentPaidAmount_check"
+        CHECK ("unspentPaidAmount" >= 0 AND "unspentPaidAmount" <= "paidAmount"),
+    CONSTRAINT "PointCharge_unspentFreeAmount_check"
+        CHECK ("unspentFreeAmount" >= 0 AND "unspentFreeAmount" <= "freeAmount")
 );
 
 -- CreateTable
@@ -49,7 +54,12 @@ CREATE TABLE "PointSpend" (
     "reason" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "PointSpend_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "PointSpend_pkey" PRIMARY KEY ("id"),
+    -- A recorded spend is non-negative and internally consistent.
+    CONSTRAINT "PointSpend_paidAmount_check" CHECK ("paidAmount" >= 0),
+    CONSTRAINT "PointSpend_freeAmount_check" CHECK ("freeAmount" >= 0),
+    CONSTRAINT "PointSpend_totalAmount_check"
+        CHECK ("totalAmount" = "paidAmount" + "freeAmount")
 );
 
 -- CreateIndex
