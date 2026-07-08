@@ -50,4 +50,22 @@ describe('database CHECK constraints', () => {
         VALUES (${userId}, -1, 0, 0, CURRENT_TIMESTAMP)`,
     ).rejects.toThrow(/PointBalance_paidAmount_check/);
   });
+
+  it('rejects an unspent remainder larger than what was charged (no inflation)', async () => {
+    const userId = await makeUser();
+    await expect(
+      prisma.$executeRaw`INSERT INTO "PointCharge"
+        ("userId", "paidAmount", "freeAmount", "unspentPaidAmount", "unspentFreeAmount")
+        VALUES (${userId}, 10, 0, 11, 0)`,
+    ).rejects.toThrow(/PointCharge_unspentPaidAmount_check/);
+  });
+
+  it('rejects a spend whose total does not equal paid + free', async () => {
+    const userId = await makeUser();
+    await expect(
+      prisma.$executeRaw`INSERT INTO "PointSpend"
+        ("userId", "paidAmount", "freeAmount", "totalAmount", "reason")
+        VALUES (${userId}, 10, 5, 14, 'inconsistent')`,
+    ).rejects.toThrow(/PointSpend_totalAmount_check/);
+  });
 });

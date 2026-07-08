@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`), `errors.ts`   | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`), `@prisma/client` (row types, tx options), `errors.ts` | integration + **model** PBT |
 | Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
 
 ```
@@ -199,7 +199,14 @@ Tests run on real Postgres with no external server: `makeTestPrisma()` starts
 an in-process PGlite database per test file and applies the committed
 migrations. PGlite is single-connection, so concurrency guards are written to
 be testable sequentially: decide on a snapshot, invalidate it, execute, and
-assert the guarded write refuses.
+assert the guarded write refuses. The other half of the race story — a real
+serialization failure (P2034 → `CONFLICT`) — is inherently untestable on one
+connection and is covered by the structural mapping alone; its worst failure
+mode is a masked 500, never a double-spend.
+
+Migrations are hand-written SQL applied by tests onto fresh databases, which
+is the ONLY reason editing one in an open PR is acceptable — never edit a
+migration any environment has already applied; ship a new one.
 
 ## 8. Checklist for a new module
 
