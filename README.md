@@ -124,7 +124,10 @@ src/
       user.value.ts    # pure core: Email value object (parse, don't validate)
       user.repo.ts     # Prisma: projections + the CAS status write
       user.service.ts  # use-cases (create / findOrCreateByEmail / changeStatus)
-      user.schema.ts   # single-file schema variant (registerUserSchema)
+      schemas/           # GraphQL delivery (split like point/)
+        user.type.ts     #   User object + the shared UserStatus enum ref
+        user.query.ts    #   user / users
+        user.mutation.ts #   changeUserStatus
     post/              # a module with NO decisions: repo + schema only
       post.repo.ts
       schemas/

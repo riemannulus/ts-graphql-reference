@@ -248,7 +248,10 @@ src/
     <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
     <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
     <name>.service.ts   # use-cases: read → decide → execute on db.rw
-    <name>.schema.ts    # GraphQL delivery: register<Name>Schema() (or schemas/ split)
+    schemas/            # GraphQL delivery, split by kind (see §5 for the
+      <name>.type.ts    #   single-file *.schema.ts alternative)
+      <name>.query.ts
+      <name>.mutation.ts
     routes/             # optional HTTP delivery (peer of schemas/):
       <name>.route.ts   #   registerXxx(app, service)
     <name>.provider.ts  # optional external port (function record + stub)

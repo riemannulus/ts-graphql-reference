@@ -9,7 +9,9 @@ import { registerPointTypes } from '../modules/point/schemas/point.type.js';
 import { registerPostMutations } from '../modules/post/schemas/post.mutation.js';
 import { registerPostQueries } from '../modules/post/schemas/post.query.js';
 import { registerPostTypes } from '../modules/post/schemas/post.type.js';
-import { registerUserSchema } from '../modules/user/user.schema.js';
+import { registerUserMutations } from '../modules/user/schemas/user.mutation.js';
+import { registerUserQueries } from '../modules/user/schemas/user.query.js';
+import { registerUserTypes } from '../modules/user/schemas/user.type.js';
 
 // Explicit registration, not side-effect imports: each module contributes its
 // types/queries/mutations through a named register function called exactly
@@ -17,7 +19,9 @@ import { registerUserSchema } from '../modules/user/user.schema.js';
 // import is flagged as unused) instead of silently dropping out of the schema.
 // The e2e schema snapshot test (src/tests/e2e/schema-snapshot.test.ts) guards
 // the resulting SDL as a whole.
-registerUserSchema();
+registerUserTypes();
+registerUserQueries();
+registerUserMutations();
 registerPostTypes();
 registerPostQueries();
 registerPostMutations();
