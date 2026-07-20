@@ -59,6 +59,10 @@ mutation {
   spendPoint(input: { userId: 1, amount: 120, reason: "checkout" }) { paidAmount freeAmount }
 }
 
+mutation {
+  transferPoint(input: { fromUserId: 1, toUserId: 2, amount: 50 }) { paidAmount totalAmount }
+}
+
 query {
   users { email status pointBalance { totalAmount } posts { title } }
 }
@@ -96,6 +100,9 @@ src/
   prisma.ts          # createPrismaClient(url) — PrismaClient on the
                      #   @prisma/adapter-pg (Postgres) driver adapter
   errors.ts          # DomainError base class (client-safe business errors)
+  uow.ts             # unit of work: run / snapshot / serialized / trySerialized
+                     #   — the concurrency ladder, the only way to open a tx
+  locks.ts           # advisory-lock key registry + global acquisition order
   env.ts             # loads .env (Prisma 7 / Node no longer auto-load it)
   generated/         # Pothos types (git-ignored; `prisma generate`)
   modules/
@@ -165,6 +172,13 @@ serialization failure surface as a retryable `CONFLICT` instead of a
 double-spend. The resolver then **re-fetches** the result by id with the
 Pothos `query`, so the client's selection set is served without the use-case
 ever learning about GraphQL.
+
+Every transaction opens through **`uow`** (`src/uow.ts`), the concurrency
+ladder — `run` (a plain atomic tx), `snapshot` (REPEATABLE READ, used by
+`spend`), and `serialized` (advisory-locked, used by `transferPoint` to move
+points between two users under a deadlock-free two-key lock). Pick the weakest
+rung that holds the invariant; all of them surface a lost race as the same
+retryable `CONFLICT`. See CONVENTIONS "The concurrency ladder".
 
 ### RWDB / RODB routing
 
@@ -272,10 +286,18 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   run against hundreds of random ledgers with no database.
 - **`modules/point/point.service.test.ts`** — the shell against the test DB,
   including the lost-race case: a stale plan's guards must roll the whole
-  spend back (`CONFLICT`), writing nothing.
-- **`modules/user/user.service.model.test.ts`** — model-based PBT: random
-  status-change sequences stay consistent between the state-machine model and
-  the real service + DB.
+  spend back (`CONFLICT`), writing nothing, and the `transfer` cases.
+- **`modules/user/user.service.model.test.ts`**,
+  **`modules/point/point.service.model.test.ts`** — model-based PBT: random
+  operation sequences stay consistent between an in-memory spec and the real
+  service + DB (user status machine; point ledger, where the balance must always
+  equal the charge ledger it summarizes).
+- **`integrations/concurrency.test.ts`** — the `uow` rungs against the DB: `run`
+  commits/rolls back, `snapshot` really runs at REPEATABLE READ, `serialized`
+  acquires the advisory locks (visible in `pg_locks`).
+- **`integrations/locks.prop.test.ts`** — the global lock order (`orderLocks`)
+  is sorted, deduplicated, and input-order-independent — the deadlock-freedom
+  law — with no database.
 - **`modules/user/user.state.prop.test.ts`**, **`user.value.prop.test.ts`**,
   **`modules/auth/oauth.value.prop.test.ts`** — core laws (totality, terminal
   state, agreement, normalization).
@@ -305,6 +327,11 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   PGlite is single-connection, so true concurrency (two racing transactions)
   cannot be exercised — which is why the optimistic guards are designed to be
   testable sequentially (decide on a snapshot, invalidate it, execute).
+- **The PGlite adapter ignores the interactive-transaction `isolationLevel`
+  option** that the production `@prisma/adapter-pg` honors, so `uow` raises
+  isolation with a `SET TRANSACTION ISOLATION LEVEL` statement instead —
+  identical, observable behavior on both adapters (`integrations/concurrency.test.ts`
+  asserts `snapshot` is really at REPEATABLE READ).
 - **Pothos gets the datamodel from its generator.** Prisma 7 no longer attaches
   the datamodel to the client, so the Pothos generator emits a `.ts` file with a
   runtime `getDatamodel()` (`src/generated/pothos-types.ts`), passed as

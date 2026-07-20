@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`), `@prisma/client` (row types, tx options), `errors.ts` | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `locks.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
 
 ```
@@ -25,9 +25,10 @@ schema ──→ service ──→ repo ──→ prisma
 **Enforced by oxlint** (`.oxlintrc.json` `no-restricted-imports` per layer), so
 these are not just guidelines: the core cannot import Prisma/GraphQL/repos,
 services and repos cannot import the builder or Pothos, schema files cannot
-import the db handles, `builder.ts` cannot import feature modules, and
-`import/no-cycle` keeps the graph acyclic. Two rules the linter cannot see,
-reviewed by hand:
+import the db handles, the core/repo/schema layers cannot import `uow`/`locks`
+(only a service opens a transaction or takes a lock), `builder.ts` cannot import
+feature modules, and `import/no-cycle` keeps the graph acyclic. Two rules the
+linter cannot see, reviewed by hand:
 
 - **A business `if` in a service or repo is a leaked decision** — move it to
   the core. The only branching allowed in the execute phase is the mechanical
@@ -56,6 +57,58 @@ See `point.core.ts` (`planSpend`) / `point.repo.ts` (`applySpendPlan`) /
 `point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
 (`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
 `user.service.ts` (`changeStatus`) for the single-row degenerate case.
+
+### The concurrency ladder
+
+Transactions open through **one module, `uow.ts`** (unit of work) — never
+`db.rw.$transaction` directly — so isolation, lock acquisition, and error
+translation live in one place, and every use-case fails a race the same way.
+Pick the **weakest rung** that preserves the invariant; each higher rung costs
+more and hides less:
+
+| Level | Tool                                                     | Lives in         | Reach for it when                                   |
+| ----- | -------------------------------------------------------- | ---------------- | --------------------------------------------------- |
+| 0     | Atomic statement / guarded CAS (`updateMany where {…assumed}`) | repo       | one write preserves the invariant                   |
+| 1     | Unique constraint + `P2002` → `DomainError`              | migration + repo | idempotency / no duplicates                         |
+| 2     | Optimistic guard: the plan carries its `assumed` values  | core + repo      | check-then-write, low contention                    |
+| 3     | Snapshot isolation (`uow.snapshot`, REPEATABLE READ)     | service          | a decision reads several rows that must agree        |
+| 4     | Row lock / queue claim (`FOR UPDATE`, `SKIP LOCKED`)     | repo             | claim specific rows (e.g. a worker queue)           |
+| 5     | Advisory lock (`uow.serialized`)                         | service          | serialize across rows a CAS/snapshot can't express  |
+
+`uow` exposes exactly four entry points: `run` (level 0–1, a plain atomic
+transaction), `snapshot` (level 3), and `serialized` / `trySerialized` (level
+5). All run on `db.rw`, and all translate a serialization failure (`P2034`) into
+the same retryable `ConcurrentUpdateError` (`CONFLICT`) the optimistic guards
+raise. That **single failure contract** is what lets you move a key down a rung
+later — swap `uow.serialized(db, keys, fn)` for `uow.snapshot(db, fn)` — without
+touching a single caller.
+
+`uow.snapshot` sets REPEATABLE READ with a `SET TRANSACTION` statement rather
+than Prisma's `isolationLevel` option: the production adapter honors the option
+but the PGlite test adapter silently drops it, so the SQL form is the only one
+that behaves — and is testable — identically in both (see `uow.ts`).
+
+**Advisory locks are the escape hatch, not the default.** The point module
+spends and charges with optimistic guards (levels 0–3) and never locks;
+`point.transfer` is the one `uow.serialized` example, and even it keeps the
+guards. Three rules keep locking safe:
+
+- **Keys come from one registry (`locks.ts`), acquired in one global order.**
+  Two transactions locking an overlapping set cannot deadlock because every
+  caller sorts the keys the same way (`orderLocks` — pure, property-tested).
+  Append a new namespace at the END; never reorder.
+- **A lock only serializes writers that take the SAME key.** Mixing a locked
+  writer with a lock-free one that touches the same rows protects nothing — so a
+  locked operation still carries the lower-rung guards (transfer reuses
+  `applySpendPlan` / `applyChargePlan`), and the lock's job is the
+  pair-serialization the guards don't provide. `trySerialized` is the
+  non-blocking variant for periodic jobs that must yield rather than queue.
+- **`locks.ts` is the ONLY place raw lock SQL lives**, reached through
+  `uow.serialized` — never called from a service or repo directly.
+
+Reads inside a locked or snapshot section run on the `tx` handle the rung passes
+in — never `db.ro` or a module-level client, which would read outside the
+transaction's (and the lock's) protection.
 
 ### The graduation rule
 
@@ -217,9 +270,10 @@ migration any environment has already applied; ship a new one.
 3. When the first decision appears: put the rules in a pure core file — total
    functions, named predicates, plans that carry their assumptions,
    `DomainError`s for violations, parse functions for DB values.
-4. Write `<name>.service.ts` (read → decide → execute inside
-   `db.rw.$transaction`) and register it in `createServices()`. Switch the
-   module's mutations to service-first + re-fetch.
+4. Write `<name>.service.ts` (read → decide → execute inside `uow.run` /
+   `uow.snapshot`, or `uow.serialized` if it needs a lock — the weakest rung of
+   the concurrency ladder that holds the invariant) and register it in
+   `createServices()`. Switch the module's mutations to service-first + re-fetch.
 5. Add the module's tests under `src/tests/modules/<name>/`: example tests,
    property tests for the core's laws (generators in `<name>.arbitraries.ts`),
    an integration test for the shell including the lost-race path, and a
