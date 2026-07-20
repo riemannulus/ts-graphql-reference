@@ -90,6 +90,8 @@ src/
   server.ts          # process entrypoint: loads .env, buildApp(), listen()
   app.ts             # composition root: creates the Db handles + services,
                      #   injects them into the context, assembles Fastify + Yoga
+  services.ts        # createServices(): the service container (domain use-cases
+                     #   + cross-service wiring) — transport-agnostic
   db/                    # persistence + concurrency
     prisma.ts            # createPrismaClient(url) — PrismaClient on the
                          #   @prisma/adapter-pg (Postgres) driver adapter
@@ -104,8 +106,8 @@ src/
                          #   modules can import it without a cycle. Pulls the client
                          #   from context: `client: (ctx) => ctx.prisma`.
     schema.ts            # calls each module's register function → builder.toSchema()
-    context.ts           # Context type, createServices(), createContextFactory(),
-                         #   and the per-operation rw/ro selection-client routing
+    context.ts           # Context type + createContextFactory() + the
+                         #   per-operation rw/ro selection-client routing
   foundation/            # cross-cutting primitives (no I/O, no framework)
     errors.ts            # DomainError base class (client-safe business errors)
     env.ts               # loads .env (Prisma 7 / Node no longer auto-load it)
@@ -262,9 +264,10 @@ appears, not before:
 3. The first real decision (a state machine, a computed plan, a cross-row
    rule) earns a pure `<name>.core.ts` (or `.state.ts`/`.value.ts`) and a
    `<name>.service.ts` whose methods assemble read → decide → execute inside a
-   `db.rw.$transaction`. Register the service in `createServices()`
-   (context.ts) — the `Services` type updates automatically. Mutations then go
-   service-first and re-fetch with the Pothos `query` (see `point/`).
+   `uow.run` / `uow.snapshot` (the concurrency ladder). Register the service in
+   `createServices()` (`services.ts`) — the `Services` type updates
+   automatically. Mutations then go service-first and re-fetch with the Pothos
+   `query` (see `point/`).
 4. For non-GraphQL surfaces (an OAuth callback, a payment webhook), add a
    `routes/<name>.route.ts` (`registerXxx(app, service)`) — the HTTP peer of
    `schemas/` — and call it in `buildApp()` (see `auth/`). Modules group by

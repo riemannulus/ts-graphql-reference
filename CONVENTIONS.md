@@ -189,8 +189,10 @@ stays Prisma-free.
 
 - Services are **factory functions** returning records of closures
   (`createPointService(db)`); the container is a plain object built once in
-  `createServices()` (context.ts), where cross-service wiring happens
-  explicitly. `Services` is `ReturnType<typeof createServices>` — one edit.
+  `createServices()` (`services.ts`, beside the composition root — it is
+  transport-agnostic, consumed by both the GraphQL context and the OAuth route),
+  where cross-service wiring happens explicitly. `Services` is
+  `ReturnType<typeof createServices>` — one edit.
 - External dependencies are **ports as function records**
   (`GoogleOAuthClient`), bound to an unimplemented stub in production and an
   object-literal fake in tests. Injectable seams for tests are also plain
