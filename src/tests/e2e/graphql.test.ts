@@ -101,4 +101,42 @@ describe('GraphQL API', () => {
     expect(res.data?.spendPoint).toBeNull();
     expect(res.errors?.[0]?.extensions?.code).toBe('INSUFFICIENT_POINT');
   });
+
+  it('transfers points between two users through the full stack', async () => {
+    const alice = await gql('mutation { signUp(input: { email: "alice@t.com" }) { id } }');
+    const bob = await gql('mutation { signUp(input: { email: "bob@t.com" }) { id } }');
+    const aliceId = Number(alice.data?.signUp.id);
+    const bobId = Number(bob.data?.signUp.id);
+    await gql(
+      `mutation { chargePoint(input: { userId: ${aliceId}, paidAmount: 100, freeAmount: 0 }) { id } }`,
+    );
+
+    const res = await gql(
+      `mutation { transferPoint(input: { fromUserId: ${aliceId}, toUserId: ${bobId}, amount: 60 }) { paidAmount totalAmount user { email } } }`,
+    );
+    expect(res.errors).toBeUndefined();
+    // The returned record is the sender's spend.
+    expect(res.data?.transferPoint).toMatchObject({
+      paidAmount: 60,
+      totalAmount: 60,
+      user: { email: 'alice@t.com' },
+    });
+
+    const aliceBalance = await gql(`query { pointBalance(userId: ${aliceId}) { totalAmount } }`);
+    const bobBalance = await gql(`query { pointBalance(userId: ${bobId}) { totalAmount } }`);
+    expect(aliceBalance.data?.pointBalance.totalAmount).toBe(40);
+    expect(bobBalance.data?.pointBalance.totalAmount).toBe(60);
+  });
+
+  it('surfaces a transfer to self as a domain error', async () => {
+    const created = await gql('mutation { signUp(input: { email: "solo@t.com" }) { id } }');
+    const id = Number(created.data?.signUp.id);
+    await gql(`mutation { chargePoint(input: { userId: ${id}, paidAmount: 50, freeAmount: 0 }) { id } }`);
+
+    const res = await gql(
+      `mutation { transferPoint(input: { fromUserId: ${id}, toUserId: ${id}, amount: 10 }) { id } }`,
+    );
+    expect(res.data?.transferPoint).toBeNull();
+    expect(res.errors?.[0]?.extensions?.code).toBe('POINT_TRANSFER_TO_SELF');
+  });
 });

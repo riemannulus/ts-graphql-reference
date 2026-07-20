@@ -4,6 +4,7 @@ import {
   InsufficientPointError,
   PointAmountNotPositiveError,
   planSpend,
+  PointTransferToSelfError,
 } from '../../../modules/point/point.core.js';
 import * as pointRepo from '../../../modules/point/point.repo.js';
 import { ConcurrentUpdateError } from '../../../errors.js';
@@ -12,8 +13,8 @@ import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 const prisma = await makeTestPrisma();
 const points = createPointService({ rw: prisma, ro: prisma });
 
-async function makeUser() {
-  return prisma.user.create({ data: { email: 'points@example.com' } });
+async function makeUser(email = 'points@example.com') {
+  return prisma.user.create({ data: { email } });
 }
 
 beforeEach(() => resetDb(prisma));
@@ -110,5 +111,58 @@ describe('PointService.spend', () => {
     const balance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: user.id } });
     expect(balance.totalAmount).toBe(50); // only the rival spend landed
     expect(await prisma.pointSpend.count()).toBe(1);
+  });
+});
+
+describe('PointService.transfer', () => {
+  async function makePair() {
+    const [from, to] = await Promise.all([
+      makeUser('from@example.com'),
+      makeUser('to@example.com'),
+    ]);
+    return { from, to };
+  }
+
+  it('moves points between two users atomically, conserving paid/free kind', async () => {
+    const { from, to } = await makePair();
+    await points.charge(from.id, { paidAmount: 100, freeAmount: 50 });
+
+    const spend = await points.transfer(from.id, to.id, { amount: 120 });
+    // Sender spends paid-first: 100 paid + 20 free.
+    expect(spend).toMatchObject({ userId: from.id, paidAmount: 100, freeAmount: 20 });
+
+    const fromBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: from.id } });
+    expect(fromBalance).toMatchObject({ paidAmount: 0, freeAmount: 30, totalAmount: 30 });
+
+    // The receiver is credited a new USABLE charge with the same split.
+    const toBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: to.id } });
+    expect(toBalance).toMatchObject({ paidAmount: 100, freeAmount: 20, totalAmount: 120 });
+    const toCharge = await prisma.pointCharge.findFirstOrThrow({ where: { userId: to.id } });
+    expect(toCharge).toMatchObject({ state: 'USABLE', unspentPaidAmount: 100, unspentFreeAmount: 20 });
+  });
+
+  it('rejects a transfer beyond the sender balance, writing nothing', async () => {
+    const { from, to } = await makePair();
+    await points.charge(from.id, { paidAmount: 10, freeAmount: 0 });
+
+    await expect(points.transfer(from.id, to.id, { amount: 11 })).rejects.toBeInstanceOf(
+      InsufficientPointError,
+    );
+    const fromBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: from.id } });
+    expect(fromBalance.totalAmount).toBe(10);
+    expect(await prisma.pointCharge.count({ where: { userId: to.id } })).toBe(0);
+    expect(await prisma.pointSpend.count()).toBe(0);
+  });
+
+  it('rejects a transfer to self', async () => {
+    const user = await makeUser('self@example.com');
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
+
+    await expect(points.transfer(user.id, user.id, { amount: 10 })).rejects.toBeInstanceOf(
+      PointTransferToSelfError,
+    );
+    const balance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: user.id } });
+    expect(balance.totalAmount).toBe(100); // untouched
+    expect(await prisma.pointSpend.count()).toBe(0);
   });
 });

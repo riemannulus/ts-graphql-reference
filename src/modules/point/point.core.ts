@@ -229,3 +229,47 @@ export function planSpend(
     },
   };
 }
+
+/** Transferring points to the same account is a no-op the client must not ask for. */
+export class PointTransferToSelfError extends DomainError {
+  constructor(readonly userId: number) {
+    super(`Cannot transfer points to the same user (${userId})`, 'POINT_TRANSFER_TO_SELF');
+  }
+}
+
+/**
+ * The complete description of a transfer: the sender's spend and the receiver's
+ * charge. Pure data — both halves execute together in one transaction.
+ */
+export interface TransferPlan {
+  /** What leaves the sender (paid-first, FIFO, with the spend's guards). */
+  spend: SpendPlan;
+  /** What the receiver gains — the SAME paid/free split, so points keep their kind. */
+  charge: ChargePlan;
+}
+
+/**
+ * Decides a transfer of `amount` points from one user to another.
+ *
+ * Composes the existing decisions rather than adding new ones: the sender side
+ * IS `planSpend` (paid-first, FIFO, fully guarded), and the receiver's charge
+ * mirrors that plan's paid/free split so a transfer conserves each kind of
+ * point (paid→paid, free→free). The only rule this adds is that the two parties
+ * must differ.
+ *
+ * Total: returns a plan or throws `PointTransferToSelfError` or whatever
+ * `planSpend` throws (`InsufficientPointError` / `PointAmountNotPositiveError`).
+ */
+export function planTransfer(
+  fromUserId: number,
+  toUserId: number,
+  senderWorld: { snapshot: PointSnapshot; charges: readonly ChargeBalance[] },
+  amount: number,
+): TransferPlan {
+  if (fromUserId === toUserId) {
+    throw new PointTransferToSelfError(fromUserId);
+  }
+  const spend = planSpend(senderWorld.snapshot, senderWorld.charges, amount);
+  const charge = planCharge({ paidAmount: spend.paidUsage, freeAmount: spend.freeUsage });
+  return { spend, charge };
+}

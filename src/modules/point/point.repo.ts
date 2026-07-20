@@ -1,7 +1,13 @@
 import type { PointCharge, PointSpend, Prisma } from '@prisma/client';
 import type { DbClient } from '../../db.js';
 import { ConcurrentUpdateError } from '../../errors.js';
-import type { ChargeBalance, ChargePlan, PointSnapshot, SpendPlan } from './point.core.js';
+import type {
+  ChargeBalance,
+  ChargePlan,
+  PointSnapshot,
+  SpendPlan,
+  TransferPlan,
+} from './point.core.js';
 
 /**
  * Point persistence — the only point-module file that talks Prisma.
@@ -120,6 +126,25 @@ export async function applySpendPlan(
       reason,
     },
   });
+}
+
+/**
+ * Executes a `TransferPlan`: consumes the sender's charges + records the spend,
+ * then credits the receiver with a new charge. It reuses the SAME guarded
+ * executors as standalone spend/charge, so the transfer stays correct even
+ * against a lock-free single-user spend or charge running concurrently (the
+ * advisory lock the service holds serializes transfer-vs-transfer; the guards
+ * cover the rest). Returns both ledger records.
+ */
+export async function applyTransferPlan(
+  db: DbClient,
+  fromUserId: number,
+  toUserId: number,
+  plan: TransferPlan,
+): Promise<{ spend: PointSpend; charge: PointCharge }> {
+  const spend = await applySpendPlan(db, fromUserId, `transfer to user ${toUserId}`, plan.spend);
+  const charge = await applyChargePlan(db, toUserId, plan.charge);
+  return { spend, charge };
 }
 
 /** Executes a `ChargePlan`: creates the charge and upserts the balance increments. */

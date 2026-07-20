@@ -24,6 +24,11 @@ type Mutation {
 
   """Spends points, paid balance first, FIFO across charges."""
   spendPoint(input: SpendPointInput!): PointSpend
+
+  """
+  Moves points from one user to another atomically; returns the sender's spend record.
+  """
+  transferPoint(input: TransferPointInput!): PointSpend
 }
 
 type PointBalance {
@@ -96,6 +101,12 @@ input SpendPointInput {
   amount: Int!
   reason: String!
   userId: Int!
+}
+
+input TransferPointInput {
+  amount: Int!
+  fromUserId: Int!
+  toUserId: Int!
 }
 
 type User {

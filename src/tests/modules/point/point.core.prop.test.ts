@@ -4,7 +4,9 @@ import {
   InsufficientPointError,
   isValidPointAmount,
   planSpend,
+  planTransfer,
   PointAmountNotPositiveError,
+  PointTransferToSelfError,
   type SpendPlan,
 } from '../../../modules/point/point.core.js';
 import { arbLedger, arbSpendAmount } from './point.arbitraries.js';
@@ -111,5 +113,35 @@ test.prop([arbLedger, fc.integer({ min: -1_000, max: 100_000 })])(
     const result = plannedOrRejected(ledger, amount);
     const shouldPlan = isValidPointAmount(amount) && ledger.snapshot.totalAmount >= amount;
     expect(result === 'rejected').toBe(!shouldPlan);
+  },
+);
+
+// The laws of the transfer decision. planTransfer composes planSpend, so it must
+// keep planSpend's guarantees AND add exactly one rule: distinct parties.
+
+test.prop([arbLedger, arbSpendAmount])(
+  'conservation: what the sender loses equals what the receiver gains, kind for kind',
+  (ledger, amount) => {
+    fc.pre(sufficient(ledger, amount));
+    const { spend, charge } = planTransfer(1, 2, ledger, amount);
+    expect(charge.paidAmount).toBe(spend.paidUsage);
+    expect(charge.freeAmount).toBe(spend.freeUsage);
+    expect(charge.totalAmount).toBe(amount);
+  },
+);
+
+test.prop([arbLedger, arbSpendAmount, fc.integer({ min: 1, max: 1_000 })])(
+  'the sender side IS planSpend: a transfer plan carries exactly the spend planSpend would',
+  (ledger, amount, userId) => {
+    fc.pre(sufficient(ledger, amount));
+    const { spend } = planTransfer(userId, userId + 1, ledger, amount);
+    expect(spend).toEqual(planSpend(ledger.snapshot, ledger.charges, amount));
+  },
+);
+
+test.prop([arbLedger, arbSpendAmount, fc.integer({ min: 1, max: 1_000 })])(
+  'a transfer to self is rejected before any spend is even decided',
+  (ledger, amount, userId) => {
+    expect(() => planTransfer(userId, userId, ledger, amount)).toThrow(PointTransferToSelfError);
   },
 );

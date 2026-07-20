@@ -26,6 +26,14 @@ export function registerPointMutations(): void {
     }),
   });
 
+  const TransferPointInput = builder.inputType('TransferPointInput', {
+    fields: (t) => ({
+      fromUserId: t.int({ required: true }),
+      toUserId: t.int({ required: true }),
+      amount: t.int({ required: true }),
+    }),
+  });
+
   builder.mutationField('chargePoint', (t) =>
     t.prismaField({
       type: 'PointCharge',
@@ -51,6 +59,23 @@ export function registerPointMutations(): void {
           amount: args.input.amount,
           reason: args.input.reason,
         });
+        return pointRepo.getSpendById(ctx.prisma, spend.id, query);
+      },
+    }),
+  );
+
+  builder.mutationField('transferPoint', (t) =>
+    t.prismaField({
+      type: 'PointSpend',
+      description:
+        "Moves points from one user to another atomically; returns the sender's spend record.",
+      args: { input: t.arg({ type: TransferPointInput, required: true }) },
+      resolve: async (query, _root, args, ctx) => {
+        const spend = await ctx.services.point.transfer(
+          args.input.fromUserId,
+          args.input.toUserId,
+          { amount: args.input.amount },
+        );
         return pointRepo.getSpendById(ctx.prisma, spend.id, query);
       },
     }),

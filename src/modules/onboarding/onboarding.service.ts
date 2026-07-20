@@ -1,5 +1,6 @@
 import type { User } from '@prisma/client';
 import type { Db } from '../../db.js';
+import { uow } from '../../uow.js';
 import * as postRepo from '../post/post.repo.js';
 import type { CreateUserInput } from '../user/user.service.js';
 import * as userRepo from '../user/user.repo.js';
@@ -32,7 +33,7 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
      */
     register(input: CreateUserInput): Promise<User> {
       const email = parseEmail(input.email); // decide (parse at the boundary)
-      return deps.db.rw.$transaction(async (tx) => {
+      return uow.run(deps.db, async (tx) => {
         const user = await userRepo.createUser(tx, { email, name: input.name ?? null });
         const { title, content } = buildWelcomePost(user); // decide
         await createPost(tx, { authorId: user.id, title, content });

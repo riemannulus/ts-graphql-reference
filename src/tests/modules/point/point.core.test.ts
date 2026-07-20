@@ -4,8 +4,10 @@ import {
   parsePointChargeState,
   planCharge,
   planSpend,
+  planTransfer,
   PointAmountNotPositiveError,
   PointLedgerInconsistencyError,
+  PointTransferToSelfError,
   UnknownPointChargeStateError,
 } from '../../../modules/point/point.core.js';
 
@@ -97,6 +99,37 @@ describe('planCharge', () => {
     expect(() => planCharge({ paidAmount: 0.5, freeAmount: 0.5 })).toThrow(
       PointAmountNotPositiveError,
     );
+  });
+});
+
+describe('planTransfer', () => {
+  it('splits the receiver charge identically to the sender spend (paid→paid, free→free)', () => {
+    const plan = planTransfer(
+      1,
+      2,
+      { snapshot: snapshot(150, 100), charges: [{ id: 1, unspentPaid: 150, unspentFree: 100 }] },
+      200,
+    );
+    expect(plan.spend.paidUsage).toBe(150);
+    expect(plan.spend.freeUsage).toBe(50);
+    expect(plan.charge).toEqual({ paidAmount: 150, freeAmount: 50, totalAmount: 200 });
+  });
+
+  it('rejects a transfer to the same user before deciding the spend', () => {
+    expect(() =>
+      planTransfer(7, 7, { snapshot: snapshot(100, 0), charges: [] }, 10),
+    ).toThrow(PointTransferToSelfError);
+  });
+
+  it('propagates an insufficient-balance rejection from the sender side', () => {
+    expect(() =>
+      planTransfer(
+        1,
+        2,
+        { snapshot: snapshot(5, 0), charges: [{ id: 1, unspentPaid: 5, unspentFree: 0 }] },
+        11,
+      ),
+    ).toThrow(InsufficientPointError);
   });
 });
 
