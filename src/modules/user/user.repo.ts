@@ -1,6 +1,6 @@
 import type { Prisma, User } from '@prisma/client';
-import type { DbClient } from '../../db.js';
-import { isRecordNotFound, isUniqueViolation } from '../../prisma-errors.js';
+import type { DbClient } from '../../db/db.js';
+import { isRecordNotFound, isUniqueViolation } from '../../db/prisma-errors.js';
 import type { UserStatus } from './user.state.js';
 import { EmailAlreadyRegisteredError, type Email } from './user.value.js';
 

@@ -1,4 +1,4 @@
-import { DomainError } from '../../errors.js';
+import { DomainError } from '../../foundation/errors.js';
 
 /**
  * OAuth value objects (parse, don't validate).

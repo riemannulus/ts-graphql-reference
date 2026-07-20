@@ -90,23 +90,26 @@ src/
   server.ts          # process entrypoint: loads .env, buildApp(), listen()
   app.ts             # composition root: creates the Db handles + services,
                      #   injects them into the context, assembles Fastify + Yoga
-  db.ts              # Db = { rw, ro } PrismaClients + DbClient (what repos take)
-  prisma-errors.ts   # pure Prisma error-code predicates (P2002 / P2025 / P2034)
-  context.ts         # Context type, createServices(), createContextFactory(),
-                     #   and the per-operation rw/ro selection-client routing
-  builder.ts         # Pothos builder (plugins). Imports NO feature modules, so
-                     #   modules can import it without a cycle. Pulls the client
-                     #   from context: `client: (ctx) => ctx.prisma`.
-  schema.ts          # calls each module's register function → builder.toSchema()
-  prisma.ts          # createPrismaClient(url) — PrismaClient on the
-                     #   @prisma/adapter-pg (Postgres) driver adapter
-  errors.ts          # DomainError base class (client-safe business errors)
-  uow.ts             # unit of work: run / snapshot / serialized / trySerialized
-                     #   — the concurrency ladder, the only way to open a tx
-  locks.ts           # pure advisory-lock key policy: registry + global order
-                     #   (orderLocks); the acquire SQL itself lives in uow.ts
-  env.ts             # loads .env (Prisma 7 / Node no longer auto-load it)
-  generated/         # Pothos types (git-ignored; `prisma generate`)
+  db/                    # persistence + concurrency
+    prisma.ts            # createPrismaClient(url) — PrismaClient on the
+                         #   @prisma/adapter-pg (Postgres) driver adapter
+    db.ts                # Db = { rw, ro } PrismaClients + DbClient (what repos take)
+    prisma-errors.ts     # pure Prisma error-code predicates (P2002 / P2025 / P2034)
+    uow.ts               # unit of work: run / snapshot / serialized / trySerialized
+                         #   — the concurrency ladder, the only way to open a tx
+    locks.ts             # pure advisory-lock key policy: registry + global order
+                         #   (orderLocks); the acquire SQL itself lives in uow.ts
+  graphql/               # GraphQL layer assembly
+    builder.ts           # Pothos builder (plugins). Imports NO feature modules, so
+                         #   modules can import it without a cycle. Pulls the client
+                         #   from context: `client: (ctx) => ctx.prisma`.
+    schema.ts            # calls each module's register function → builder.toSchema()
+    context.ts           # Context type, createServices(), createContextFactory(),
+                         #   and the per-operation rw/ro selection-client routing
+  foundation/            # cross-cutting primitives (no I/O, no framework)
+    errors.ts            # DomainError base class (client-safe business errors)
+    env.ts               # loads .env (Prisma 7 / Node no longer auto-load it)
+  generated/             # Pothos types (git-ignored; `prisma generate`)
   modules/
     point/             # the LAYERED module blueprint (has real decisions)
       point.core.ts    # pure: planSpend/planCharge — every business branch
@@ -175,7 +178,7 @@ double-spend. The resolver then **re-fetches** the result by id with the
 Pothos `query`, so the client's selection set is served without the use-case
 ever learning about GraphQL.
 
-Every transaction opens through **`uow`** (`src/uow.ts`), the concurrency
+Every transaction opens through **`uow`** (`src/db/uow.ts`), the concurrency
 ladder — `run` (a plain atomic tx), `snapshot` (REPEATABLE READ, used by
 `spend`), and `serialized` (advisory-locked, used by `transferPoint` to move
 points between two users under a deadlock-free two-key lock). Pick the weakest
@@ -251,7 +254,7 @@ appears, not before:
 2. Start with `modules/<name>/<name>.repo.ts` (all Prisma for the module) and a
    schema file (or `schemas/` split) whose fields call the repo on
    `ctx.prisma`. Export `register<Name>...()` functions and call them in
-   `src/schema.ts`. **A module with no decisions stops here** (see `post/`).
+   `src/graphql/schema.ts`. **A module with no decisions stops here** (see `post/`).
 3. The first real decision (a state machine, a computed plan, a cross-row
    rule) earns a pure `<name>.core.ts` (or `.state.ts`/`.value.ts`) and a
    `<name>.service.ts` whose methods assemble read → decide → execute inside a

@@ -1,4 +1,4 @@
-import { builder } from '../../../builder.js';
+import { builder } from '../../../graphql/builder.js';
 import * as postRepo from '../post.repo.js';
 
 export function registerPostQueries(): void {

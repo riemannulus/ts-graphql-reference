@@ -1,6 +1,6 @@
 import type { User } from '@prisma/client';
-import type { Db } from '../../db.js';
-import { uow } from '../../uow.js';
+import type { Db } from '../../db/db.js';
+import { uow } from '../../db/uow.js';
 import * as postRepo from '../post/post.repo.js';
 import type { CreateUserInput } from '../user/user.service.js';
 import * as userRepo from '../user/user.repo.js';

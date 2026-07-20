@@ -1,6 +1,6 @@
 import type { User } from '@prisma/client';
-import type { Db } from '../../db.js';
-import { ConcurrentUpdateError } from '../../errors.js';
+import type { Db } from '../../db/db.js';
+import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import * as userRepo from './user.repo.js';
 import { parseUserStatus, planTransition, type UserStatus } from './user.state.js';
 import { parseEmail } from './user.value.js';

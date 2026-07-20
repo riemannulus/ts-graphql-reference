@@ -1,4 +1,4 @@
-import { builder } from '../../../builder.js';
+import { builder } from '../../../graphql/builder.js';
 import * as pointRepo from '../point.repo.js';
 
 /**

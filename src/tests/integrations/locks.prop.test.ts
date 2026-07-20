@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest';
 import { expect } from 'vitest';
-import { type LockKey, lockKey, orderLocks } from '../../locks.js';
+import { type LockKey, lockKey, orderLocks } from '../../db/locks.js';
 
 // The laws of the global lock order. orderLocks is pure, so its deadlock-freedom
 // guarantee — every caller acquires an overlapping key set in the SAME order —

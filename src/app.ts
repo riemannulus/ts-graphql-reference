@@ -2,12 +2,12 @@ import type { PrismaClient } from '@prisma/client';
 import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { GraphQLError } from 'graphql';
 import { createYoga } from 'graphql-yoga';
-import { createContextFactory, createServices } from './context.js';
-import { createDb, disconnectDb, type Db } from './db.js';
-import { isDomainError } from './errors.js';
+import { createContextFactory, createServices } from './graphql/context.js';
+import { createDb, disconnectDb, type Db } from './db/db.js';
+import { isDomainError } from './foundation/errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/oauth.route.js';
-import { schema } from './schema.js';
+import { schema } from './graphql/schema.js';
 
 /** Context Yoga receives from Fastify per request. */
 export interface ServerContext {

@@ -1,6 +1,6 @@
 import type { PointCharge, PointSpend, Prisma } from '@prisma/client';
-import type { DbClient } from '../../db.js';
-import { ConcurrentUpdateError } from '../../errors.js';
+import type { DbClient } from '../../db/db.js';
+import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import type {
   ChargeBalance,
   ChargePlan,

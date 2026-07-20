@@ -1,12 +1,12 @@
 import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getOperationAST, OperationTypeNode, parse } from 'graphql';
-import type { Db } from './db.js';
-import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
-import { createOAuthService } from './modules/auth/oauth.service.js';
-import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
-import { createPointService } from './modules/point/point.service.js';
-import { createUserService } from './modules/user/user.service.js';
+import type { Db } from '../db/db.js';
+import { type GoogleOAuthClient, stubGoogleOAuthClient } from '../modules/auth/oauth.provider.js';
+import { createOAuthService } from '../modules/auth/oauth.service.js';
+import { createOnboardingService } from '../modules/onboarding/onboarding.service.js';
+import { createPointService } from '../modules/point/point.service.js';
+import { createUserService } from '../modules/user/user.service.js';
 
 /** Optional overrides for dependencies that have a default production binding. */
 export interface CreateServicesOptions {

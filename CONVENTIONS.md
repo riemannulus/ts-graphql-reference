@@ -148,7 +148,7 @@ Layers are added when their first real content appears, **not before**:
 - **Name the rule, use it everywhere.** Encode each rule as a named predicate
   (`canTransition`, `isEmail`, `isValidPointAmount`) and make higher-level
   functions defer to it. `assertTransition` is just `canTransition` + throw.
-- **Expected violations are `DomainError`s** (`src/errors.ts`) — including
+- **Expected violations are `DomainError`s** (`src/foundation/errors.ts`) — including
   `ConcurrentUpdateError` for lost optimistic races. The shell maps them to
   client-visible errors; anything else is masked.
 - **Corruption is not a DomainError.** A value that a correct system can never

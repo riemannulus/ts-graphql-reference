@@ -1,4 +1,4 @@
-import { DomainError } from '../../errors.js';
+import { DomainError } from '../../foundation/errors.js';
 
 /**
  * Point domain — the pure core.

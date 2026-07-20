@@ -1,5 +1,5 @@
 import type { Post, Prisma } from '@prisma/client';
-import type { DbClient } from '../../db.js';
+import type { DbClient } from '../../db/db.js';
 
 /**
  * Post persistence. The post module carries no domain decisions (no state

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { lockKey } from '../../locks.js';
-import { uow } from '../../uow.js';
+import { lockKey } from '../../db/locks.js';
+import { uow } from '../../db/uow.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
 // The concurrency toolkit against the real (PGlite) database. PGlite is

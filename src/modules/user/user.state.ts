@@ -8,7 +8,7 @@
  * instead of being coerced to some default.
  */
 
-import { DomainError } from '../../errors.js';
+import { DomainError } from '../../foundation/errors.js';
 
 export const USER_STATUSES = ['ACTIVE', 'SUSPENDED', 'DEACTIVATED'] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];

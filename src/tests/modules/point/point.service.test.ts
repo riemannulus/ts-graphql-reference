@@ -7,7 +7,7 @@ import {
   PointTransferToSelfError,
 } from '../../../modules/point/point.core.js';
 import * as pointRepo from '../../../modules/point/point.repo.js';
-import { ConcurrentUpdateError } from '../../../errors.js';
+import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();

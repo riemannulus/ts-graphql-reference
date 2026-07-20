@@ -34,7 +34,7 @@
         "src/**/*.value.ts",
         "src/**/*.core.ts",
         "src/**/*.content.ts",
-        "src/locks.ts"
+        "src/db/locks.ts"
       ],
       "rules": {
         "no-restricted-imports": [
@@ -120,7 +120,7 @@
       }
     },
     {
-      "files": ["src/builder.ts"],
+      "files": ["src/graphql/builder.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",

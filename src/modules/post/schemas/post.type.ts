@@ -1,4 +1,4 @@
-import { builder } from '../../../builder.js';
+import { builder } from '../../../graphql/builder.js';
 
 export function registerPostTypes(): void {
   builder.prismaObject('Post', {

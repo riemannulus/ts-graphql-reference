@@ -1,4 +1,4 @@
-import { builder } from '../../builder.js';
+import { builder } from '../../graphql/builder.js';
 import * as userRepo from './user.repo.js';
 import { parseUserStatus, USER_STATUSES } from './user.state.js';
 

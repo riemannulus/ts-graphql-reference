@@ -1,4 +1,4 @@
-import { builder } from '../../../builder.js';
+import { builder } from '../../../graphql/builder.js';
 import { parsePointChargeState, POINT_CHARGE_STATES } from '../point.core.js';
 
 export function registerPointTypes(): void {

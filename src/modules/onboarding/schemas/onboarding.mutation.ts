@@ -1,4 +1,4 @@
-import { builder } from '../../../builder.js';
+import { builder } from '../../../graphql/builder.js';
 import * as userRepo from '../../user/user.repo.js';
 
 export function registerOnboardingMutations(): void {

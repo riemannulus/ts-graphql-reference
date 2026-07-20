@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { isDomainError } from '../../errors.js';
+import { isDomainError } from '../../foundation/errors.js';
 import type { OAuthService } from './oauth.service.js';
 import { parseOAuthCallback, type OAuthCallbackQuery } from './oauth.value.js';
 

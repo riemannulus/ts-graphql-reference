@@ -1,4 +1,4 @@
-import './env.js';
+import './foundation/env.js';
 import { buildApp } from './app.js';
 
 const { app } = buildApp();

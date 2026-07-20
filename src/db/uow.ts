@@ -1,5 +1,5 @@
 import type { Db, DbClient } from './db.js';
-import { ConcurrentUpdateError } from './errors.js';
+import { ConcurrentUpdateError } from '../foundation/errors.js';
 import { type LockKey, orderLocks } from './locks.js';
 import { isSerializationConflict } from './prisma-errors.js';
 

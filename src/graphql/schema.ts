@@ -2,14 +2,14 @@
 // established before the register calls below append fields to them.
 import { builder } from './builder.js';
 
-import { registerOnboardingMutations } from './modules/onboarding/schemas/onboarding.mutation.js';
-import { registerPointMutations } from './modules/point/schemas/point.mutation.js';
-import { registerPointQueries } from './modules/point/schemas/point.query.js';
-import { registerPointTypes } from './modules/point/schemas/point.type.js';
-import { registerPostMutations } from './modules/post/schemas/post.mutation.js';
-import { registerPostQueries } from './modules/post/schemas/post.query.js';
-import { registerPostTypes } from './modules/post/schemas/post.type.js';
-import { registerUserSchema } from './modules/user/user.schema.js';
+import { registerOnboardingMutations } from '../modules/onboarding/schemas/onboarding.mutation.js';
+import { registerPointMutations } from '../modules/point/schemas/point.mutation.js';
+import { registerPointQueries } from '../modules/point/schemas/point.query.js';
+import { registerPointTypes } from '../modules/point/schemas/point.type.js';
+import { registerPostMutations } from '../modules/post/schemas/post.mutation.js';
+import { registerPostQueries } from '../modules/post/schemas/post.query.js';
+import { registerPostTypes } from '../modules/post/schemas/post.type.js';
+import { registerUserSchema } from '../modules/user/user.schema.js';
 
 // Explicit registration, not side-effect imports: each module contributes its
 // types/queries/mutations through a named register function called exactly

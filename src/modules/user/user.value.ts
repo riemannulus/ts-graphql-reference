@@ -1,4 +1,4 @@
-import { DomainError } from '../../errors.js';
+import { DomainError } from '../../foundation/errors.js';
 
 /**
  * Email value object (parse, don't validate).
