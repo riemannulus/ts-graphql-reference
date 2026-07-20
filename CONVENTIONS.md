@@ -119,6 +119,11 @@ Layers are added when their first real content appears, **not before**:
 - No decisions (plain CRUD/projections) → `repo + schema` only. `post/` stops
   here; its mutations call repo write functions directly on `ctx.write` (they
   accept the Pothos `query`, so no re-fetch is needed).
+- No decision but an external dependency → `provider + service` (no core). The
+  service is thin: it exists to hold the injected port in the container and give
+  tests a fake seam, not to decide. `search/` is this point on the spectrum (the
+  ES index port behind a passthrough service); it graduates a core when its
+  first real rule appears (a filter policy, ranking weights).
 - The first decision (state machine, computed plan, cross-row rule) earns a
   pure core file and a service; from then on mutations go service-first and
   re-fetch with `query`. `user/` and `point/` live here.
@@ -145,6 +150,15 @@ Layers are added when their first real content appears, **not before**:
 - **Repos never pick a client** — it is always the caller's first argument:
   `ReadDbClient` for read projections (rw, ro, and tx handles all satisfy it),
   `DbClient` for writes and plan executors.
+- **When Pothos cannot hand you a `query`** — the selection is nested under a
+  wrapper type, or the ids come from OUTSIDE the database (a search index) —
+  the schema layer builds it by hand with `queryFromInfo({ path: [...] })`. That
+  is the ONE place a `query` is constructed rather than received from
+  `t.prismaField`; its output is the same Prisma-shaped object and still STOPS
+  at the repo. A repo `findByIds(ids, query)` then hydrates, restoring the
+  external order and skipping drift (ids the index has but the DB no longer
+  does). See `modules/search/`. The same `queryFromInfo({ path })` maps a
+  payload/union `...Response` mutation result, not just search.
 
 ## 3. Invariants as code (and as constraints)
 

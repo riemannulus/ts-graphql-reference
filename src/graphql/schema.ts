@@ -9,6 +9,7 @@ import { registerPointTypes } from '../modules/point/schemas/point.type.js';
 import { registerPostMutations } from '../modules/post/schemas/post.mutation.js';
 import { registerPostQueries } from '../modules/post/schemas/post.query.js';
 import { registerPostTypes } from '../modules/post/schemas/post.type.js';
+import { registerPostSearchQueries } from '../modules/search/schemas/post-search.query.js';
 import { registerUserMutations } from '../modules/user/schemas/user.mutation.js';
 import { registerUserQueries } from '../modules/user/schemas/user.query.js';
 import { registerUserTypes } from '../modules/user/schemas/user.type.js';
@@ -29,5 +30,6 @@ registerPointTypes();
 registerPointQueries();
 registerPointMutations();
 registerOnboardingMutations();
+registerPostSearchQueries();
 
 export const schema = builder.toSchema();

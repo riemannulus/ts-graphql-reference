@@ -3,6 +3,11 @@ import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oa
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
+import {
+  type PostSearchIndex,
+  stubPostSearchIndex,
+} from './modules/search/post-search.provider.js';
+import { createPostSearchService } from './modules/search/post-search.service.js';
 import { createUserService } from './modules/user/user.service.js';
 
 /** Optional overrides for dependencies that have a default production binding. */
@@ -12,6 +17,11 @@ export interface CreateServicesOptions {
    * fake. The OAuth service depends on the port, not a concrete client.
    */
   googleOAuth?: GoogleOAuthClient;
+  /**
+   * Post search index. Production binds an unimplemented stub; tests inject a
+   * fake in-memory index. The search service depends on the port.
+   */
+  postSearchIndex?: PostSearchIndex;
 }
 
 /**
@@ -41,7 +51,10 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
     google: options.googleOAuth ?? stubGoogleOAuthClient,
   });
   const onboarding = createOnboardingService({ db });
-  return { user, point, auth, onboarding };
+  const postSearch = createPostSearchService({
+    index: options.postSearchIndex ?? stubPostSearchIndex,
+  });
+  return { user, point, auth, onboarding, postSearch };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */

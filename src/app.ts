@@ -8,6 +8,7 @@ import { createDb, disconnectDb, type Db } from './db/db.js';
 import { isDomainError } from './foundation/errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/routes/oauth.route.js';
+import type { PostSearchIndex } from './modules/search/post-search.provider.js';
 import { schema } from './graphql/schema.js';
 
 /** Context Yoga receives from Fastify per request. */
@@ -32,6 +33,11 @@ export interface BuildAppOptions {
    * is used); tests pass a fake so the OAuth callback can be exercised.
    */
   googleOAuth?: GoogleOAuthClient;
+  /**
+   * Inject a post search index. Production omits this (an unimplemented stub is
+   * used); tests pass a fake in-memory index so `searchPosts` can be exercised.
+   */
+  postSearchIndex?: PostSearchIndex;
 }
 
 /**
@@ -48,7 +54,10 @@ export function buildApp(options: BuildAppOptions = {}) {
   // Only handles the app itself created are disconnected on close — an
   // injected client stays the injector's to manage (two apps may share one).
   const ownsDb = injectedDb === undefined;
-  const services = createServices(db, { googleOAuth: options.googleOAuth });
+  const services = createServices(db, {
+    googleOAuth: options.googleOAuth,
+    postSearchIndex: options.postSearchIndex,
+  });
   const app = fastify({ logger: options.logger ?? true });
 
   const yoga = createYoga<ServerContext>({

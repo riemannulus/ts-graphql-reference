@@ -35,6 +35,31 @@ export function findMany(
   });
 }
 
+/**
+ * Hydrates posts for a list of ids coming from OUTSIDE the database (a search
+ * index), preserving the given order — the hydration half of the "external key
+ * → DB row" pattern (see modules/search/). Two decisions live here, in the only
+ * layer that talks Prisma:
+ *
+ * - **Order.** `WHERE id IN (...)` returns rows in an arbitrary order, so the
+ *   result is re-sorted to match the input `ids` (the index's rank order).
+ * - **Drift.** A search index is eventually consistent: an id it still returns
+ *   may have been deleted from the database. Such ids are skipped, not surfaced
+ *   as nulls — the caller asked for posts, and a vanished one simply isn't one.
+ */
+export async function findByIds(
+  db: ReadDbClient,
+  ids: number[],
+  query: Prisma.PostDefaultArgs = {},
+): Promise<Post[]> {
+  // A `select` projection may omit `id` (the client didn't ask for it), but the
+  // reorder below needs it; `include` keeps all scalars, so id is already there.
+  const args = query.select ? { ...query, select: { ...query.select, id: true } } : query;
+  const rows = await db.post.findMany({ ...args, where: { id: { in: ids } } });
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.map((id) => byId.get(id)).filter((row): row is Post => row !== undefined);
+}
+
 export function createPost(
   db: DbClient,
   input: CreatePostInput,

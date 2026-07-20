@@ -88,8 +88,20 @@ type Query {
   pointSpends(userId: Int!): [PointSpend!]
   post(id: Int!): Post
   posts(onlyPublished: Boolean): [Post!]
+
+  """Full-text search over posts, hydrated from the primary/replica by id."""
+  searchPosts(limit: Int, term: String!): SearchPostsResult
   user(id: Int!): User
   users: [User!]
+}
+
+"""A page of posts matching a search term, plus the total match count."""
+type SearchPostsResult {
+  """The matching posts, in the index's rank order."""
+  hits: [Post!]
+
+  """Total posts matching the term."""
+  total: Int
 }
 
 input SignUpInput {

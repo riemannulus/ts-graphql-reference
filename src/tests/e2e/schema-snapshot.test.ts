@@ -39,7 +39,7 @@ describe('GraphQL schema', () => {
   it('exposes every module root field', async () => {
     const sdl = await fetchSdl();
     for (const field of [
-      'user(', 'users', 'post(', 'posts(',
+      'user(', 'users', 'post(', 'posts(', 'searchPosts(',
       'pointBalance(', 'pointCharges(', 'pointSpends(',
       'signUp(', 'createPost(', 'publishPost(', 'changeUserStatus(',
       'chargePoint(', 'spendPoint(', 'transferPoint(',
