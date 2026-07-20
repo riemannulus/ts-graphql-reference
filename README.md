@@ -115,7 +115,8 @@ src/
   modules/
     point/             # the LAYERED module blueprint (has real decisions)
       point.core.ts    # pure: planSpend/planCharge — every business branch
-      point.repo.ts    # Prisma: loadSpendWorld / applySpendPlan + read fns
+      point.write.repo.ts # Prisma writes: use-case executors (loadSpendWorld/apply*Plan)
+      point.read.repo.ts  # Prisma reads: GraphQL projections (find*/get*ById)
       point.service.ts # use-cases: read → decide → execute, in one rw tx
       schemas/
         point.type.ts      # Pothos objects (registerPointTypes)

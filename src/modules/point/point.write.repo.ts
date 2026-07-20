@@ -1,4 +1,4 @@
-import type { PointCharge, PointSpend, Prisma } from '@prisma/client';
+import type { PointCharge, PointSpend } from '@prisma/client';
 import type { DbClient, ReadDbClient } from '../../db/db.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import type {
@@ -10,23 +10,21 @@ import type {
 } from './point.core.js';
 
 /**
- * Point persistence — the only point-module file that talks Prisma.
+ * Point persistence, write path — the use-case executors. Shaped by USE CASE,
+ * not by table: `applySpendPlan` deliberately crosses three tables
+ * (charge/balance/spend) inside one transaction, because that whole shape IS
+ * the unit of work. Splitting it per model would scatter one atomic use-case
+ * across files and invite reuse of a half-executor outside its plan.
  *
- * Two kinds of functions live here:
+ * The pattern is the load/apply pair: `loadSpendWorld` reads the world the
+ * core decides on, then `apply*Plan` mechanically executes the plan it
+ * returned. No business branching on the write side — every `if` that matters
+ * happened in point.core.ts. (`loadSpendWorld` is a read, but it belongs here:
+ * it feeds a plan inside the spend transaction, it is not a GraphQL
+ * projection — those live in point.read.repo.ts.)
  *
- * - Read projections for the GraphQL query path. They accept the Pothos
- *   `query` object (`select`/`include`) and spread it, so the plugin's
- *   relation-loading optimization survives. The `query` parameter STOPS at
- *   this layer: it is Prisma-shaped (a translation of the GraphQL selection),
- *   so the repo is where it belongs — services never see it.
- *
- * - The use-case pair `loadSpendWorld` / `applySpendPlan`: read the world the
- *   core decides on, then mechanically execute the plan it returned. No
- *   business branching on the write side — every `if` that matters happened in
- *   point.core.ts.
- *
- * Which client a function runs on (rw / ro / a transaction) is ALWAYS the
- * caller's choice, passed as the first parameter.
+ * Which client a function runs on (rw / a transaction) is ALWAYS the caller's
+ * choice, passed as the first parameter.
  */
 
 const ZERO_SNAPSHOT: PointSnapshot = { paidAmount: 0, freeAmount: 0, totalAmount: 0 };
@@ -177,50 +175,4 @@ export async function applyChargePlan(
     },
   });
   return charge;
-}
-
-// --- Read projections (GraphQL query path) ---------------------------------
-
-export function findBalance(
-  db: ReadDbClient,
-  userId: number,
-  query: Prisma.PointBalanceDefaultArgs = {},
-) {
-  return db.pointBalance.findUnique({ ...query, where: { userId } });
-}
-
-export function findCharges(
-  db: ReadDbClient,
-  userId: number,
-  query: Prisma.PointChargeFindManyArgs = {},
-) {
-  return db.pointCharge.findMany({
-    orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
-    ...query,
-    where: { userId },
-  });
-}
-
-export function findSpends(
-  db: ReadDbClient,
-  userId: number,
-  query: Prisma.PointSpendFindManyArgs = {},
-) {
-  return db.pointSpend.findMany({
-    orderBy: { createdAt: 'desc' },
-    ...query,
-    where: { userId },
-  });
-}
-
-export function getChargeById(
-  db: ReadDbClient,
-  id: number,
-  query: Prisma.PointChargeDefaultArgs = {},
-) {
-  return db.pointCharge.findUniqueOrThrow({ ...query, where: { id } });
-}
-
-export function getSpendById(db: ReadDbClient, id: number, query: Prisma.PointSpendDefaultArgs = {}) {
-  return db.pointSpend.findUniqueOrThrow({ ...query, where: { id } });
 }

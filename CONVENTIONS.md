@@ -53,7 +53,7 @@ A use-case is the assembly `read → decide → execute`:
    rolls back the transaction; a serialization failure from the isolation
    level (`P2034`) is mapped to the same error in the service.
 
-See `point.core.ts` (`planSpend`) / `point.repo.ts` (`applySpendPlan`) /
+See `point.core.ts` (`planSpend`) / `point.write.repo.ts` (`applySpendPlan`) /
 `point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
 (`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
 `user.service.ts` (`changeStatus`) for the single-row degenerate case.
@@ -269,6 +269,7 @@ src/
   modules/<name>/
     <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
     <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
+                        #   (when it grows: split .read.repo.ts / .write.repo.ts)
     <name>.service.ts   # use-cases: read → decide → execute on db.rw
     schemas/            # GraphQL delivery, split by kind (see §5 for the
       <name>.type.ts    #   single-file *.schema.ts alternative)

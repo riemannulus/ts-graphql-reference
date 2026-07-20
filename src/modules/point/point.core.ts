@@ -7,7 +7,7 @@ import { DomainError } from '../../foundation/errors.js';
  * the shell": `planSpend` computes a complete description of what a spend must
  * write (a `SpendPlan`) without touching the database. The shell
  * (point.service.ts) reads the world, calls this function, and mechanically
- * applies the returned plan (point.repo.ts). Every business branch of the
+ * applies the returned plan (point.write.repo.ts). Every business branch of the
  * point domain lives here, where property-based tests can hammer it with
  * thousands of random ledgers in milliseconds.
  *

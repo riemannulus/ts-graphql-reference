@@ -1,5 +1,5 @@
 import { builder } from '../../../graphql/builder.js';
-import * as pointRepo from '../point.repo.js';
+import * as pointRepo from '../point.read.repo.js';
 
 /**
  * Query path: resolvers call repo read projections directly on the routed

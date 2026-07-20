@@ -3,7 +3,7 @@ import type { Db } from '../../db/db.js';
 import { lockKey } from '../../db/locks.js';
 import { uow } from '../../db/uow.js';
 import { planCharge, planSpend, planTransfer } from './point.core.js';
-import * as pointRepo from './point.repo.js';
+import * as pointRepo from './point.write.repo.js';
 
 export interface ChargePointInput {
   paidAmount: number;

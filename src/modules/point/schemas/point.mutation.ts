@@ -1,5 +1,5 @@
 import { builder } from '../../../graphql/builder.js';
-import * as pointRepo from '../point.repo.js';
+import * as pointRepo from '../point.read.repo.js';
 
 /**
  * Mutation path: the write goes through the use-case (which never sees the
