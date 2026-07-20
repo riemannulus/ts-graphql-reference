@@ -29,8 +29,18 @@ export async function makeTestPrisma(): Promise<PrismaClient> {
   return new PrismaClient({ adapter: new PrismaPGlite(pglite) });
 }
 
-/** Truncates all tables between tests. Posts first due to the FK to User. */
+/**
+ * Truncates every table between tests. The table list comes from the database
+ * itself (pg_tables), so a new model is covered automatically — no manual,
+ * FK-ordered delete list to forget to update. RESTART IDENTITY also resets the
+ * sequences, keeping ids deterministic across tests.
+ */
 export async function resetDb(prisma: PrismaClient): Promise<void> {
-  await prisma.post.deleteMany();
-  await prisma.user.deleteMany();
+  const tables = await prisma.$queryRaw<Array<{ tablename: string }>>`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  `;
+  const list = tables.map((t) => `"public"."${t.tablename}"`).join(', ');
+  if (list.length > 0) {
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+  }
 }

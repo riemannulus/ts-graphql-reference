@@ -1,3 +1,5 @@
+> **Archival note (2026-07-08):** this document predates the layered-module refactor (core/repo/service/schema, functional services). File names and APIs below — `post.service.ts`, `PostService`, class-based `OnboardingService` — no longer exist; see README.md and CONVENTIONS.md for the current structure.
+
 # Onboarding 모듈: 가입 시 Welcome Post 자동 생성 — 설계
 
 - **날짜**: 2026-06-24

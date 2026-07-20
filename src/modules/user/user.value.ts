@@ -19,6 +19,17 @@ export class InvalidEmailError extends DomainError {
   }
 }
 
+/**
+ * Email uniqueness is a domain rule enforced by the database (the unique
+ * index); the repo translates the constraint violation into this expected,
+ * client-visible error.
+ */
+export class EmailAlreadyRegisteredError extends DomainError {
+  constructor(readonly email: string) {
+    super(`Email already registered: ${email}`, 'EMAIL_TAKEN');
+  }
+}
+
 /** Predicate form of the invariant — total over all strings. */
 export function isEmail(value: string): boolean {
   return EMAIL_RE.test(value);

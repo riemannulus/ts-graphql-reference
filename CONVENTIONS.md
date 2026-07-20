@@ -1,47 +1,112 @@
 # Coding Conventions
 
-How this codebase is organized so that **invariants are first-class** and the
-code is **property-based-testing (PBT) friendly**.
+How this codebase is organized so that **invariants are first-class**, the
+code is **property-based-testing (PBT) friendly**, and the GraphQL schema, the
+database, and the domain logic stay **cleanly separated**.
 
-## 1. Functional core, imperative shell
+## 1. Layers: decide in the core, execute in the shell
 
-Split every module into a **pure core** that holds the rules, and a thin
-**shell** that does I/O and delegates decisions to the core.
+Every module splits into explicit layers with one-way dependencies:
 
-| Layer            | Files                              | May import                                  | Tested with                |
-| ---------------- | ---------------------------------- | ------------------------------------------- | -------------------------- |
-| Core (pure)      | `*.state.ts`, `*.value.ts`         | types + other pure modules, `errors.ts`     | unit + **property** tests  |
-| Shell (effects)  | `*.service.ts`, `*.schema.ts`, `*.route.ts`, `app.ts` | the core, Prisma, Fastify, Yoga | integration + **model**-based PBT |
+| Layer            | Files                                | Speaks                          | May import                                   | Tested with                |
+| ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
+| Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
+| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`, `errors.ts` | integration (PGlite)       |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `db.ts` (`db.rw`), `@prisma/client` (row types, tx options), `errors.ts` | integration + **model** PBT |
+| Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
 
-The core never imports Prisma/Fastify/GraphQL. This is what makes it trivially
-testable: pure, deterministic, no setup.
+```
+schema ──→ service ──→ repo ──→ prisma
+   │           │          │
+   └───────────┴──────────┴──→ core          core → (nothing)
+   └─(reads; tier-1 writes)─→ repo
+```
 
-**Enforced by oxlint** (`.oxlintrc.json`), so these are not just guidelines:
+**Enforced by oxlint** (`.oxlintrc.json` `no-restricted-imports` per layer), so
+these are not just guidelines: the core cannot import Prisma/GraphQL/repos,
+services and repos cannot import the builder or Pothos, schema files cannot
+import the db handles, `builder.ts` cannot import feature modules, and
+`import/no-cycle` keeps the graph acyclic. Two rules the linter cannot see,
+reviewed by hand:
 
-- `import/no-cycle` — the module graph stays acyclic.
-- `no-restricted-imports` on `*.state.ts` / `*.value.ts` — pure core may not
-  import `@prisma/client`, Fastify, GraphQL, Pothos, or the builder.
-- `no-restricted-imports` on `builder.ts` — it may not import feature modules
-  (they import it), which would create a cycle.
-- Type-aware promise safety (`typescript/no-floating-promises`,
-  `no-misused-promises`, `await-thenable`) — every promise is awaited, returned,
-  or explicitly `void`-ed. Requires `oxlint-tsgolint` (`options.typeAware`).
+- **A business `if` in a service or repo is a leaked decision** — move it to
+  the core. The only branching allowed in the execute phase is the mechanical
+  mapping of plan fields (`a.depleted ? 'CONSUMED' : undefined`).
+- **`await` never appears in a core file.**
 
-## 2. Invariants as code
+### The plan pattern
+
+A use-case is the assembly `read → decide → execute`:
+
+1. The repo reads a **world snapshot** — everything the decision needs, mapped
+   to the core's input types. A multi-read snapshot must actually BE one
+   snapshot: run the transaction at `REPEATABLE READ` (see
+   `point.service.spend`), or a commit landing between the reads shows the
+   decision an impossible world.
+2. The core decides and returns a **plan**: pure data describing every write,
+   including the values each write must still observe
+   (`allocation.assumed`, `plan.assumedBalance`).
+3. The repo executes the plan mechanically, using those assumptions as
+   optimistic-concurrency guards (`updateMany({ where: { ...assumed } })`).
+   A missed guard throws `ConcurrentUpdateError` (`CONFLICT`, retryable) and
+   rolls back the transaction; a serialization failure from the isolation
+   level (`P2034`) is mapped to the same error in the service.
+
+See `point.core.ts` (`planSpend`) / `point.repo.ts` (`applySpendPlan`) /
+`point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
+(`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
+`user.service.ts` (`changeStatus`) for the single-row degenerate case.
+
+### The graduation rule
+
+Layers are added when their first real content appears, **not before**:
+
+- No decisions (plain CRUD/projections) → `repo + schema` only. `post/` stops
+  here; its mutations call repo write functions directly (which accept the
+  Pothos `query`, so no re-fetch is needed).
+- The first decision (state machine, computed plan, cross-row rule) earns a
+  pure core file and a service; from then on mutations go service-first and
+  re-fetch with `query`. `user/` and `point/` live here.
+- Full hexagonal (domain entities mapped both ways, no Prisma types anywhere)
+  is deliberately NOT the goal — structural typing does the isolation cheaper.
+
+## 2. Where GraphQL meets the database
+
+- **The Pothos `query` object stops at the repo.** It is Prisma-shaped data (a
+  translated selection set), so repo read functions accept and spread it —
+  and nothing above the repo ever sees it. Service signatures stay pure domain.
+- **Query operations** resolve through repo read functions on `ctx.prisma`,
+  the per-operation routed selection client (replica for queries, primary for
+  mutations — see README "RWDB / RODB routing").
+- **Mutations** call the use-case, then re-fetch the result by id with `query`
+  on `ctx.prisma` (the primary during mutations → read-your-writes).
+- **Use-cases read and write `db.rw` only.** Deciding on replica-lagged state
+  is a correctness bug, not a performance tradeoff.
+- **Repos never pick a client** — rw/ro/tx is always the caller's first
+  argument (`DbClient`).
+
+## 3. Invariants as code (and as constraints)
 
 - **Total functions over partial ones.** A core function must be defined for
   every value of its input type, so a property test can throw arbitrary inputs
-  at it. (`canTransition` is defined for every status pair.)
+  at it (`canTransition`, `planSpend`).
 - **Name the rule, use it everywhere.** Encode each rule as a named predicate
-  (`canTransition`, `isEmail`) and make higher-level functions defer to it, so
-  there is a single source of truth. `assertTransition` is just
-  `canTransition` + throw.
-- **Expected violations are `DomainError`s** (`src/errors.ts`). The shell maps
-  them to client-visible errors; anything else is an unexpected bug and is
-  masked. Detection is structural (a brand), not `instanceof`, so it survives
-  module duplication in test runners.
+  (`canTransition`, `isEmail`, `isValidPointAmount`) and make higher-level
+  functions defer to it. `assertTransition` is just `canTransition` + throw.
+- **Expected violations are `DomainError`s** (`src/errors.ts`) — including
+  `ConcurrentUpdateError` for lost optimistic races. The shell maps them to
+  client-visible errors; anything else is masked.
+- **Corruption is not a DomainError.** A value that a correct system can never
+  produce (an out-of-set status, a ledger that doesn't cover its snapshot) is
+  *parsed* (`parseUserStatus`, `parsePointChargeState`) and throws a plain,
+  masked Error — never silently coerced to a default.
+- **The database backs the value sets.** Transition rules live in code (single
+  source of truth); the value sets and signs also live in CHECK constraints
+  (`User_status_check`, `PointCharge_state_check`, non-negative amounts), so a
+  bypassing writer cannot persist garbage. `integrations/schema-constraints.test.ts`
+  keeps code and constraints in sync.
 
-## 3. Value objects — parse, don't validate
+## 4. Value objects — parse, don't validate
 
 Push validation to the boundary and encode the result in the type.
 
@@ -52,99 +117,110 @@ export function parseEmail(raw: string): Email { /* normalize + validate or thro
 ```
 
 ```ts
-// user.service.ts — parse once, at the edge
-const email = parseEmail(input.email); // invalid input never reaches the DB
+// user.service.ts — parse once, at the edge; the repo takes the branded type
+const data = { email: parseEmail(input.email), name: input.name ?? null };
 ```
 
 Downstream code receives an `Email`, not a `string`, so it never re-checks the
-invariant. Construction is the validation.
+invariant. The same applies to reads: DB strings become `UserStatus` /
+`PointChargeState` only through their parse functions.
 
-## 4. Property-based testing
+Core input types are **narrow and structural** (`ChargeBalance`,
+`{ name: string | null }`): they state what the decision needs, Prisma rows
+satisfy them structurally (or via a one-line mapping in the repo), and the core
+stays Prisma-free.
+
+## 5. Composition, not containers
+
+- Services are **factory functions** returning records of closures
+  (`createPointService(db)`); the container is a plain object built once in
+  `createServices()` (context.ts), where cross-service wiring happens
+  explicitly. `Services` is `ReturnType<typeof createServices>` — one edit.
+- External dependencies are **ports as function records**
+  (`GoogleOAuthClient`), bound to an unimplemented stub in production and an
+  object-literal fake in tests. Injectable seams for tests are also plain
+  function parameters (`OnboardingServiceDeps.createPost`).
+- **Cross-module use-cases** (onboarding) open ONE `db.rw.$transaction` and
+  compose the other modules' repo write functions inside it; decisions still
+  come from each owning module's core. Module services depend one way only.
+- The schema is assembled from **explicit register functions** called once in
+  `schema.ts` — no side-effect imports, no import-order contract beyond
+  "builder first". The e2e SDL snapshot guards the result.
+
+## 6. Property-based testing
 
 Tests assert **laws**, not examples. Tooling: [`@fast-check/vitest`](https://github.com/dubzzz/fast-check)
-(`test.prop`). Test files: `*.prop.test.ts`, alongside the module's other tests
-in `src/tests/modules/<name>/`.
-
-Generators (arbitraries) for a module live beside its tests as
-`<name>.arbitraries.ts` and are reused across that module's tests — generate
-both valid and invalid inputs. A generator shared across modules can go in
-`src/tests/support/`.
+(`test.prop`). Test files: `*.prop.test.ts`, beside the module's other tests in
+`src/tests/modules/<name>/`; generators shared across a module's tests live in
+`<name>.arbitraries.ts` (a single prop file may keep one-off generators inline).
 
 Laws worth reaching for:
 
 | Law            | Example                                                              |
-| -------------- | ------------------------------------------------------------------- |
-| Totality       | `assertTransition` only ever throws `InvalidStatusTransitionError`  |
-| Idempotence    | `parseEmail(parseEmail(x)) === parseEmail(x)`                       |
-| Agreement      | `assertTransition` throws ⇔ `!canTransition` (single source of truth) |
-| Terminal state | `∀ to: !canTransition('DEACTIVATED', to)`                          |
-| Round-trip     | `decode(encode(x)) === x`                                           |
+| -------------- | -------------------------------------------------------------------- |
+| Totality       | `planSpend` returns a plan or throws one of its named errors — nothing else |
+| Conservation   | allocations sum exactly to the requested amount                      |
+| Idempotence    | `parseEmail(parseEmail(x)) === parseEmail(x)`                        |
+| Agreement      | plan returned ⇔ amount valid and covered (single source of truth)   |
+| Terminal state | `∀ to: !canTransition('DEACTIVATED', to)`                            |
+| Order          | allocations are an in-order subsequence of the charges (FIFO)        |
+
+Generate **consistent worlds** (see `arbLedger`: charges plus the snapshot
+derived from them) so properties exercise the states a correct system can
+reach; corruption paths get their own explicit tests.
 
 ### Stateful shells → model-based PBT
 
 For a shell with state (e.g. user status in the DB), use `fc.commands` +
 `fc.asyncModelRun`: replay a random sequence of operations against both a tiny
 in-memory **model** (the spec) and the **real** service, asserting they never
-diverge. See `src/tests/modules/user/user.service.model.test.ts`. The model *is*
-the invariant specification.
+diverge. See `src/tests/modules/user/user.service.model.test.ts`.
 
-## 5. Naming & layout
+## 7. Naming & layout
 
 ```
 src/
   modules/<name>/
-    <name>.state.ts     # pure: state machine / invariants
-    <name>.value.ts     # pure: value objects (smart constructors)
-    <name>.service.ts   # shell: business logic, deps injected via constructor
-    <name>.schema.ts    # shell: Pothos types/queries/mutations  (or schemas/ split)
+    <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
+    <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
+    <name>.service.ts   # use-cases: read → decide → execute on db.rw
+    <name>.schema.ts    # register<Name>Schema()  (or schemas/ split: .type/.query/.mutation)
+    <name>.route.ts     # optional non-GraphQL surface: registerXxx(app, service)
+    <name>.provider.ts  # optional external port (function record + stub)
   tests/
-    support/            # shared infra: helpers.ts (in-process PGlite + resetDb)
-    modules/<name>/     # tests mirror src/modules/<name>/ — everything for one module
-      <name>.arbitraries.ts         # fast-check generators (arbXxx) for this module
-      <name>.state.test.ts          # unit (pure core)
-      <name>.state.prop.test.ts     # property: core laws
-      <name>.value.prop.test.ts     # property: value-object laws
-      <name>.service.test.ts        # integration (service + DB)
-      <name>.service.model.test.ts  # model-based PBT (stateful shell)
-    integrations/       # cross-module: several services + DB, no transport
-    e2e/                # whole-app tests through app.inject (cross-module)
+    support/            # helpers.ts: in-process PGlite + introspection-driven resetDb
+    modules/<name>/     # mirrors src/modules/<name>/, suffix = layer:
+                        #   .test.ts / .prop.test.ts / .model.test.ts + arbitraries
+    integrations/       # cross-module + DB-constraint tests, no transport
+    e2e/                # app.inject: flows, schema snapshot, rw/ro routing
 ```
 
-A module that carries no domain invariants (no state machine, no value object —
-e.g. `post`) has no pure `*.state.ts` / `*.value.ts`, so its tests are
-service-level integration (`*.service.test.ts`) plus any persistence laws as
-properties. Tests spanning two services (e.g. a user authoring a post) live in
-`integrations/`; tests exercising the GraphQL transport live in `e2e/`.
+Tests run on real Postgres with no external server: `makeTestPrisma()` starts
+an in-process PGlite database per test file and applies the committed
+migrations. PGlite is single-connection, so concurrency guards are written to
+be testable sequentially: decide on a snapshot, invalidate it, execute, and
+assert the guarded write refuses. The other half of the race story — a real
+serialization failure (P2034 → `CONFLICT`) — is inherently untestable on one
+connection and is covered by the structural mapping alone; its worst failure
+mode is a masked 500, never a double-spend.
 
-A module may also expose a **non-GraphQL HTTP surface** — e.g. the `auth`
-module's Google OAuth callback. It adds a `*.route.ts` whose
-`registerXxx(app, service)` is called from `buildApp()`, and (when it talks to a
-third party) a `*.provider.ts` that defines the external dependency as an
-**injected port** so production can stub it and tests can fake it. The rule that
-keeps this clean: a REST handler receives *only the one service it needs*, taken
-from the same `services` container the GraphQL layer uses (composed in
-`createServices`) — it never receives the GraphQL per-request `Context` or the
-`PrismaClient`. The two surfaces share dependencies without sharing request
-context, so neither leaks into the other.
+Migrations are hand-written SQL applied by tests onto fresh databases, which
+is the ONLY reason editing one in an open PR is acceptable — never edit a
+migration any environment has already applied; ship a new one.
 
-Tests run on real Postgres with no external server: `makeTestPrisma()`
-(`tests/support/helpers.ts`) starts an in-process PGlite (WASM Postgres) database
-per test file, applies the committed migrations, and returns a Prisma client on
-it. That client is provider-identical to production (`@prisma/adapter-pg`), so
-the suite exercises the dialect you ship — no Docker, no shared state, no skips.
+## 8. Checklist for a new module
 
-Test *layer* is encoded in the filename suffix (`.test.ts` / `.prop.test.ts` /
-`.model.test.ts`); test *module* is the folder. So one module's entire test
-surface lives in one place, mirroring its source folder.
-
-## 6. Checklist for a new module
-
-1. Model the data in `prisma/schema.prisma`; `migrate` + `generate`.
-2. Put the rules in a pure `*.state.ts` / `*.value.ts` — total functions, named
-   predicates, `DomainError`s for violations.
-3. Write the shell (`*.service.ts`) with Prisma injected; parse inputs at the
-   boundary. Register it in `createServices()` (context.ts).
-4. Expose it with Pothos (`*.schema.ts`) and import it in `src/schema.ts`.
-5. Add the module's tests under `src/tests/modules/<name>/`, with its generators
-   in `<name>.arbitraries.ts` beside them: example tests plus property tests
-   asserting its laws, and a model-based test if it is stateful.
+1. Model the data in `prisma/schema.prisma`; encode value sets / signs as
+   CHECKs in the migration; `migrate` + `generate`.
+2. Write `<name>.repo.ts` and the schema register function(s); call them in
+   `schema.ts`. Stop here if the module has no decisions.
+3. When the first decision appears: put the rules in a pure core file — total
+   functions, named predicates, plans that carry their assumptions,
+   `DomainError`s for violations, parse functions for DB values.
+4. Write `<name>.service.ts` (read → decide → execute inside
+   `db.rw.$transaction`) and register it in `createServices()`. Switch the
+   module's mutations to service-first + re-fetch.
+5. Add the module's tests under `src/tests/modules/<name>/`: example tests,
+   property tests for the core's laws (generators in `<name>.arbitraries.ts`),
+   an integration test for the shell including the lost-race path, and a
+   model-based test if the shell is stateful. Update the SDL snapshot.

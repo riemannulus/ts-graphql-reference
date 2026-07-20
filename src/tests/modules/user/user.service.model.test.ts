@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest';
 import { afterAll, beforeEach, expect } from 'vitest';
-import { UserService } from '../../../modules/user/user.service.js';
+import { createUserService } from '../../../modules/user/user.service.js';
 import {
   canTransition,
   InvalidStatusTransitionError,
@@ -10,7 +10,7 @@ import { arbUserStatus } from './user.arbitraries.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();
-const users = new UserService(prisma);
+const users = createUserService({ rw: prisma, ro: prisma });
 
 interface Model {
   status: UserStatus;
@@ -58,7 +58,7 @@ beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());
 
 test.prop([fc.commands(commands, { size: '+1' })])(
-  'UserService status stays consistent with the state-machine model',
+  'user service status stays consistent with the state-machine model',
   async (cmds) => {
     const user = await users.create({ email: `model-${seq++}@example.com` });
     await fc.asyncModelRun(
@@ -66,4 +66,5 @@ test.prop([fc.commands(commands, { size: '+1' })])(
       cmds,
     );
   },
+  30_000, // 100 runs × several commands × real DB round-trips
 );
