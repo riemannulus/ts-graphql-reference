@@ -20,9 +20,3 @@ export const arbValidEmail = fc
 export const arbInvalidEmail = fc
   .string()
   .filter((s) => !isEmail(s.trim().toLowerCase()));
-
-/** Valid input for UserService.create. */
-export const arbCreateUserInput = fc.record({
-  email: arbValidEmail,
-  name: fc.option(fc.string(), { nil: null }),
-});
