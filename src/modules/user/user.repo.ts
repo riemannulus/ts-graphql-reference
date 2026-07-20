@@ -1,5 +1,5 @@
 import type { Prisma, User } from '@prisma/client';
-import type { DbClient } from '../../db/db.js';
+import type { DbClient, ReadDbClient } from '../../db/db.js';
 import { isRecordNotFound, isUniqueViolation } from '../../db/prisma-errors.js';
 import type { UserStatus } from './user.state.js';
 import { EmailAlreadyRegisteredError, type Email } from './user.value.js';
@@ -21,7 +21,7 @@ export interface UserWriteData {
 }
 
 export function findById(
-  db: DbClient,
+  db: ReadDbClient,
   id: number,
   query: Prisma.UserDefaultArgs = {},
 ): Promise<User | null> {
@@ -29,14 +29,14 @@ export function findById(
 }
 
 export function getById(
-  db: DbClient,
+  db: ReadDbClient,
   id: number,
   query: Prisma.UserDefaultArgs = {},
 ): Promise<User> {
   return db.user.findUniqueOrThrow({ ...query, where: { id } });
 }
 
-export function findMany(db: DbClient, query: Prisma.UserFindManyArgs = {}): Promise<User[]> {
+export function findMany(db: ReadDbClient, query: Prisma.UserFindManyArgs = {}): Promise<User[]> {
   return db.user.findMany({ orderBy: { createdAt: 'desc' }, ...query });
 }
 

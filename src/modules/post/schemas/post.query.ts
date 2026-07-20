@@ -7,7 +7,7 @@ export function registerPostQueries(): void {
       type: 'Post',
       nullable: true,
       args: { id: t.arg.int({ required: true }) },
-      resolve: (query, _root, args, ctx) => postRepo.findById(ctx.prisma, args.id, query),
+      resolve: (query, _root, args, ctx) => postRepo.findById(ctx.read, args.id, query),
     }),
   );
 
@@ -16,7 +16,7 @@ export function registerPostQueries(): void {
       type: ['Post'],
       args: { onlyPublished: t.arg.boolean({ required: false }) },
       resolve: (query, _root, args, ctx) =>
-        postRepo.findMany(ctx.prisma, query, { onlyPublished: args.onlyPublished ?? false }),
+        postRepo.findMany(ctx.read, query, { onlyPublished: args.onlyPublished ?? false }),
     }),
   );
 }

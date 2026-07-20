@@ -4,7 +4,7 @@ import { UserStatusEnum } from './user.type.js';
 
 /**
  * Mutation path: the use-case decides and writes; the resolver re-fetches with
- * the Pothos `query` (on the primary — ctx.prisma routes mutations to rw) so the
+ * the Pothos `query` (on the primary — ctx.read routes mutations to rw) so the
  * selection set is loaded optimally and reads-its-own-write. The `status` arg
  * reuses the `UserStatusEnum` registered by `registerUserTypes` (called first in
  * schema.ts).
@@ -19,7 +19,7 @@ export function registerUserMutations(): void {
       },
       resolve: async (query, _root, args, ctx) => {
         const user = await ctx.services.user.changeStatus(args.id, args.status);
-        return userRepo.getById(ctx.prisma, user.id, query);
+        return userRepo.getById(ctx.read, user.id, query);
       },
     }),
   );

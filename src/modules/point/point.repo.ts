@@ -1,5 +1,5 @@
 import type { PointCharge, PointSpend, Prisma } from '@prisma/client';
-import type { DbClient } from '../../db/db.js';
+import type { DbClient, ReadDbClient } from '../../db/db.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import type {
   ChargeBalance,
@@ -38,7 +38,7 @@ export interface SpendWorld {
   charges: ChargeBalance[];
 }
 
-export async function loadSpendWorld(db: DbClient, userId: number): Promise<SpendWorld> {
+export async function loadSpendWorld(db: ReadDbClient, userId: number): Promise<SpendWorld> {
   // Sequential, not Promise.all: interactive-transaction handles do not
   // support concurrent operations. The two reads only form ONE world because
   // the spend transaction runs at REPEATABLE READ (point.service.ts) — under
@@ -182,7 +182,7 @@ export async function applyChargePlan(
 // --- Read projections (GraphQL query path) ---------------------------------
 
 export function findBalance(
-  db: DbClient,
+  db: ReadDbClient,
   userId: number,
   query: Prisma.PointBalanceDefaultArgs = {},
 ) {
@@ -190,7 +190,7 @@ export function findBalance(
 }
 
 export function findCharges(
-  db: DbClient,
+  db: ReadDbClient,
   userId: number,
   query: Prisma.PointChargeFindManyArgs = {},
 ) {
@@ -201,7 +201,11 @@ export function findCharges(
   });
 }
 
-export function findSpends(db: DbClient, userId: number, query: Prisma.PointSpendFindManyArgs = {}) {
+export function findSpends(
+  db: ReadDbClient,
+  userId: number,
+  query: Prisma.PointSpendFindManyArgs = {},
+) {
   return db.pointSpend.findMany({
     orderBy: { createdAt: 'desc' },
     ...query,
@@ -209,10 +213,14 @@ export function findSpends(db: DbClient, userId: number, query: Prisma.PointSpen
   });
 }
 
-export function getChargeById(db: DbClient, id: number, query: Prisma.PointChargeDefaultArgs = {}) {
+export function getChargeById(
+  db: ReadDbClient,
+  id: number,
+  query: Prisma.PointChargeDefaultArgs = {},
+) {
   return db.pointCharge.findUniqueOrThrow({ ...query, where: { id } });
 }
 
-export function getSpendById(db: DbClient, id: number, query: Prisma.PointSpendDefaultArgs = {}) {
+export function getSpendById(db: ReadDbClient, id: number, query: Prisma.PointSpendDefaultArgs = {}) {
   return db.pointSpend.findUniqueOrThrow({ ...query, where: { id } });
 }

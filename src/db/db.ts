@@ -27,6 +27,35 @@ export interface Db {
  */
 export type DbClient = Prisma.TransactionClient;
 
+/** The model-delegate methods that only read. */
+type ReadMethod =
+  | 'findUnique'
+  | 'findUniqueOrThrow'
+  | 'findFirst'
+  | 'findFirstOrThrow'
+  | 'findMany'
+  | 'count'
+  | 'aggregate'
+  | 'groupBy';
+
+/**
+ * The read-projection subset of `DbClient`: every model delegate, but only its
+ * read methods — no writes, no `$`-methods (raw SQL can write), no
+ * transactions. This is what the query path provides (`ctx.read`) and what repo
+ * READ functions accept, so "the query path never writes" is a compile-time
+ * fact, not a convention: a repo write function cannot even be called with a
+ * `ReadDbClient`.
+ *
+ * Structural typing does the wiring: `PrismaClient` and a transaction handle
+ * both satisfy this type (so services can run repo reads on their `tx`), while
+ * nothing satisfies `DbClient` through it.
+ */
+export type ReadDbClient = {
+  [K in keyof DbClient as DbClient[K] extends { findMany: (...args: never) => unknown }
+    ? K
+    : never]: Pick<DbClient[K], Extract<keyof DbClient[K], ReadMethod>>;
+};
+
 export function createDb(): Db {
   const rwUrl = process.env.DATABASE_URL;
   const roUrl = process.env.READONLY_DATABASE_URL;

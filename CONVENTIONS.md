@@ -11,7 +11,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Layer            | Files                                | Speaks                          | May import                                   | Tested with                |
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
-| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
+| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `locks.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
 
@@ -117,8 +117,8 @@ transaction's (and the lock's) protection.
 Layers are added when their first real content appears, **not before**:
 
 - No decisions (plain CRUD/projections) → `repo + schema` only. `post/` stops
-  here; its mutations call repo write functions directly (which accept the
-  Pothos `query`, so no re-fetch is needed).
+  here; its mutations call repo write functions directly on `ctx.write` (they
+  accept the Pothos `query`, so no re-fetch is needed).
 - The first decision (state machine, computed plan, cross-row rule) earns a
   pure core file and a service; from then on mutations go service-first and
   re-fetch with `query`. `user/` and `point/` live here.
@@ -130,15 +130,21 @@ Layers are added when their first real content appears, **not before**:
 - **The Pothos `query` object stops at the repo.** It is Prisma-shaped data (a
   translated selection set), so repo read functions accept and spread it —
   and nothing above the repo ever sees it. Service signatures stay pure domain.
-- **Query operations** resolve through repo read functions on `ctx.prisma`,
-  the per-operation routed selection client (replica for queries, primary for
-  mutations — see README "RWDB / RODB routing").
+- **Query operations** resolve through repo read functions on `ctx.read`, the
+  per-operation routed read client (replica for queries, primary for mutations
+  — see README "RWDB / RODB routing"). Its type, `ReadDbClient`, carries only
+  the model read methods — no writes, no raw SQL, no transactions — so "the
+  query path never writes" is a compile-time fact.
 - **Mutations** call the use-case, then re-fetch the result by id with `query`
-  on `ctx.prisma` (the primary during mutations → read-your-writes).
+  on `ctx.read` (the primary during mutations → read-your-writes). A tier-1
+  module (no service) executes its single-statement repo write on `ctx.write`
+  instead — always the primary, typed `DbClient`, so a resolver cannot open a
+  transaction through it (multi-statement writes belong to a use-case + `uow`).
 - **Use-cases read and write `db.rw` only.** Deciding on replica-lagged state
   is a correctness bug, not a performance tradeoff.
-- **Repos never pick a client** — rw/ro/tx is always the caller's first
-  argument (`DbClient`).
+- **Repos never pick a client** — it is always the caller's first argument:
+  `ReadDbClient` for read projections (rw, ro, and tx handles all satisfy it),
+  `DbClient` for writes and plan executors.
 
 ## 3. Invariants as code (and as constraints)
 

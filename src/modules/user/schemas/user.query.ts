@@ -8,14 +8,14 @@ export function registerUserQueries(): void {
       type: 'User',
       nullable: true,
       args: { id: t.arg.int({ required: true }) },
-      resolve: (query, _root, args, ctx) => userRepo.findById(ctx.prisma, args.id, query),
+      resolve: (query, _root, args, ctx) => userRepo.findById(ctx.read, args.id, query),
     }),
   );
 
   builder.queryField('users', (t) =>
     t.prismaField({
       type: ['User'],
-      resolve: (query, _root, _args, ctx) => userRepo.findMany(ctx.prisma, query),
+      resolve: (query, _root, _args, ctx) => userRepo.findMany(ctx.read, query),
     }),
   );
 }

@@ -1,17 +1,26 @@
-import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getOperationAST, OperationTypeNode, parse } from 'graphql';
-import type { Db } from '../db/db.js';
+import type { Db, DbClient, ReadDbClient } from '../db/db.js';
 import type { Services } from '../services.js';
 
 /** Per-request GraphQL context handed to every resolver. */
 export interface Context {
   /**
-   * The selection client: what the Pothos Prisma plugin (relations, `query`
+   * The READ client: what the Pothos Prisma plugin (relations, `query`
    * spreads) and repo read calls in resolvers run on. Routed per operation —
-   * `ro` for queries, `rw` for mutations — see `selectSelectionClient`.
+   * `ro` for queries, `rw` for mutations (so a mutation's re-fetch
+   * reads-its-own-writes) — see `selectReadClient`. The type has no write
+   * methods: a resolver cannot write through it, by construction.
    */
-  prisma: PrismaClient;
+  read: ReadDbClient;
+  /**
+   * The WRITE client: always the primary. For tier-1 modules only, whose
+   * mutations execute a single atomic repo write directly (see `post/`);
+   * graduated modules write through `ctx.services.*` instead. Typed as
+   * `DbClient`, so a resolver cannot open a transaction through it either —
+   * multi-statement writes belong to a use-case and `uow`.
+   */
+  write: DbClient;
   services: Services;
   req: FastifyRequest;
   reply: FastifyReply;
@@ -32,13 +41,13 @@ export interface ContextRequest {
 }
 
 /**
- * Routes the request's selection client between the primary and the replica by
+ * Routes the request's READ client between the primary and the replica by
  * operation type:
  *
  * - `query`    → `ro`. Plain reads are projections; replica lag is acceptable.
- * - `mutation` → `rw`. The mutation's own writes AND the re-fetch that fills
- *   its selection set (plus any `t.relation` under it) must read-your-writes —
- *   a replica may not have the row yet.
+ * - `mutation` → `rw`. The re-fetch that fills a mutation's selection set
+ *   (plus any `t.relation` under it) must read-your-writes — a replica may not
+ *   have the row yet.
  * - anything unparseable → `rw`. Correctness over replica offload; an invalid
  *   document fails in Yoga's own validation right after.
  *
@@ -47,10 +56,10 @@ export interface ContextRequest {
  * result; the reference keeps it inline so the routing rule is visible in one
  * place.
  */
-export function selectSelectionClient(
+export function selectReadClient(
   db: Db,
   params?: { query?: string | null; operationName?: string | null },
-): PrismaClient {
+): ReadDbClient {
   if (db.ro === db.rw || !params?.query) return db.rw;
   try {
     const operation = getOperationAST(parse(params.query), params.operationName ?? undefined);
@@ -64,13 +73,14 @@ export function selectSelectionClient(
  * Builds the per-request context factory.
  *
  * The expensive, long-lived dependencies (db, services) are created once and
- * closed over here; only request-scoped values (req/reply, the routed
- * selection client) are computed per call. This is the single place where
- * dependencies enter the GraphQL layer.
+ * closed over here; only request-scoped values (req/reply, the routed read
+ * client) are computed per call. This is the single place where dependencies
+ * enter the GraphQL layer.
  */
 export function createContextFactory(deps: ContextDeps) {
   return ({ req, reply, params }: ContextRequest): Context => ({
-    prisma: selectSelectionClient(deps.db, params),
+    read: selectReadClient(deps.db, params),
+    write: deps.db.rw,
     services: deps.services,
     req,
     reply,

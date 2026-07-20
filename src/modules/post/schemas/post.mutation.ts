@@ -23,7 +23,7 @@ export function registerPostMutations(): void {
       args: { input: t.arg({ type: CreatePostInput, required: true }) },
       resolve: (query, _root, args, ctx) =>
         postRepo.createPost(
-          ctx.prisma,
+          ctx.write,
           {
             title: args.input.title,
             content: args.input.content,
@@ -38,7 +38,7 @@ export function registerPostMutations(): void {
     t.prismaField({
       type: 'Post',
       args: { id: t.arg.int({ required: true }) },
-      resolve: (query, _root, args, ctx) => postRepo.publishPost(ctx.prisma, args.id, query),
+      resolve: (query, _root, args, ctx) => postRepo.publishPost(ctx.write, args.id, query),
     }),
   );
 }

@@ -104,10 +104,10 @@ src/
   graphql/               # GraphQL layer assembly
     builder.ts           # Pothos builder (plugins). Imports NO feature modules, so
                          #   modules can import it without a cycle. Pulls the client
-                         #   from context: `client: (ctx) => ctx.prisma`.
+                         #   from context: `client: (ctx) => ctx.read`.
     schema.ts            # calls each module's register function → builder.toSchema()
     context.ts           # Context type + createContextFactory() + the
-                         #   per-operation rw/ro selection-client routing
+                         #   per-operation rw/ro read-client routing
   foundation/            # cross-cutting primitives (no I/O, no framework)
     errors.ts            # DomainError base class (client-safe business errors)
     env.ts               # loads .env (Prisma 7 / Node no longer auto-load it)
@@ -119,7 +119,7 @@ src/
       point.service.ts # use-cases: read → decide → execute, in one rw tx
       schemas/
         point.type.ts      # Pothos objects (registerPointTypes)
-        point.query.ts     # query fields → repo reads on ctx.prisma
+        point.query.ts     # query fields → repo reads on ctx.read
         point.mutation.ts  # mutations → service, then re-fetch with `query`
     user/
       user.state.ts    # pure core: status state machine + invariants
@@ -160,9 +160,9 @@ src/
 ### The layers in one request
 
 **Query path** (`users { ... }`): the resolver calls a repo read function on
-`ctx.prisma` — the routed selection client — spreading the Pothos `query`
-object so relations load optimally. No service in between: plain reads are
-projections and carry no decisions.
+`ctx.read` — the routed read client, whose `ReadDbClient` type carries no write
+methods — spreading the Pothos `query` object so relations load optimally. No
+service in between: plain reads are projections and carry no decisions.
 
 **Mutation path** (`spendPoint(...)`): the resolver calls a use-case, which is
 the three-line assembly
@@ -197,16 +197,20 @@ retryable `CONFLICT`. See CONVENTIONS "The concurrency ladder".
 (the same client when `READONLY_DATABASE_URL` is unset). Three rules, each
 enforced by construction rather than convention where possible:
 
-1. **The selection client is routed per operation.** The context factory
-   inspects the operation type: queries get `ro`, mutations get `rw`
-   (`selectSelectionClient` in context.ts). Because mutations resolve their
+1. **The read client (`ctx.read`) is routed per operation.** The context
+   factory inspects the operation type: queries get `ro`, mutations get `rw`
+   (`selectReadClient` in context.ts). Because mutations resolve their
    selection sets on `rw`, the post-write re-fetch — and every `t.relation`
-   under it — reads-its-own-writes even with a lagging replica.
+   under it — reads-its-own-writes even with a lagging replica. Its
+   `ReadDbClient` type has no write methods, so the query path cannot write —
+   by type, not convention. Tier-1 direct writes use `ctx.write` (always the
+   primary, and typed without `$transaction`).
 2. **Use-cases never touch `ro`.** A decision must be made on the state it
    will write against; services receive the full `Db` but use `db.rw` only.
-3. **Repos never choose.** Every repo function takes the client (rw, ro, or a
-   transaction handle) as its first parameter — where a statement runs is
-   always the caller's decision.
+3. **Repos never choose.** Every repo function takes the client as its first
+   parameter — `ReadDbClient` for reads (rw, ro, and tx handles all satisfy
+   it), `DbClient` for writes — so where a statement runs is always the
+   caller's decision.
 
 The e2e test `db-routing.test.ts` proves the routing by giving the app two
 *different* databases and observing which one each operation touches.
@@ -216,9 +220,10 @@ The e2e test `db-routing.test.ts` proves the routing by giving the app two
 1. `buildApp()` (composition root) creates the `Db` handles and the service
    container **once**, then builds the context factory with them.
 2. Per request, Yoga calls the factory, which returns
-   `{ prisma (routed), services, req, reply }` as the resolver `Context`.
+   `{ read (routed), write (primary), services, req, reply }` as the resolver
+   `Context`.
 3. Resolvers call `ctx.services.*` for use-cases and repo read functions (with
-   `ctx.prisma`) for projections.
+   `ctx.read`) for projections.
 
 Services are factory functions (`createUserService(db)`) returning records of
 closures — no classes, no DI container. Ports (the Google OAuth client) are
@@ -259,7 +264,8 @@ appears, not before:
    sign constraints as CHECKs in the migration.
 2. Start with `modules/<name>/<name>.repo.ts` (all Prisma for the module) and a
    schema file (or `schemas/` split) whose fields call the repo on
-   `ctx.prisma`. Export `register<Name>...()` functions and call them in
+   `ctx.read` (tier-1 writes on `ctx.write`). Export `register<Name>...()`
+   functions and call them in
    `src/graphql/schema.ts`. **A module with no decisions stops here** (see `post/`).
 3. The first real decision (a state machine, a computed plan, a cross-row
    rule) earns a pure `<name>.core.ts` (or `.state.ts`/`.value.ts`) and a
