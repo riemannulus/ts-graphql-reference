@@ -45,10 +45,12 @@
                   "**/builder*",
                   "**/prisma*",
                   "**/db*",
+                  "**/uow*",
+                  "**/locks*",
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure core (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O and framework deps. Decide here; read and execute in the repo/service shell."
+                "message": "Pure core (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
               }
             ]
           }
@@ -79,8 +81,16 @@
           {
             "patterns": [
               {
-                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify"],
-                "message": "The persistence layer (*.repo.ts) must not know the schema or the transport. It receives a DbClient and returns rows; the Pothos `query` object it spreads is Prisma-shaped data, not a schema dependency."
+                "group": [
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "fastify",
+                  "**/uow*",
+                  "**/locks*"
+                ],
+                "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, or transactions. It receives a DbClient (rw/ro/tx — the caller's choice, who also opens the transaction and takes the locks) and returns rows."
               }
             ]
           }
@@ -95,8 +105,8 @@
           {
             "patterns": [
               {
-                "group": ["fastify", "**/prisma.js", "**/db.js"],
-                "message": "Schema files resolve through ctx (the routed selection client + services) and repo read functions — they never construct or import database handles or transport."
+                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*"],
+                "message": "Schema files resolve through ctx (the routed selection client + services) and repo read functions — they never construct or import database handles, open transactions, or take locks (that is the service's job)."
               }
             ]
           }
