@@ -10,8 +10,8 @@ const defineUserStatusEnum = () =>
 /**
  * The `UserStatus` enum ref, shared with the mutation file (the
  * `changeUserStatus` `status` arg). Assigned when `registerUserTypes` runs;
- * because `schema.ts` registers types before mutations, it is defined by the
- * time `registerUserMutations` reads it.
+ * because `registerUserModule` (schemas/index.ts) registers types before
+ * mutations, it is defined by the time `registerUserMutations` reads it.
  *
  * This is a module-scoped ref, NOT an import-time side effect — the enum is
  * registered only inside the register function. A named type used by more than

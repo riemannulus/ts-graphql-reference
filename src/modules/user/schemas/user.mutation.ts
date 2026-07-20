@@ -6,8 +6,8 @@ import { UserStatusEnum } from './user.type.js';
  * Mutation path: the use-case decides and writes; the resolver re-fetches with
  * the Pothos `query` (on the primary — ctx.read routes mutations to rw) so the
  * selection set is loaded optimally and reads-its-own-write. The `status` arg
- * reuses the `UserStatusEnum` registered by `registerUserTypes` (called first in
- * schema.ts).
+ * reuses the `UserStatusEnum` registered by `registerUserTypes` (called first
+ * by `registerUserModule` in schemas/index.ts).
  */
 export function registerUserMutations(): void {
   builder.mutationField('changeUserStatus', (t) =>

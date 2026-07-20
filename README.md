@@ -105,7 +105,7 @@ src/
     builder.ts           # Pothos builder (plugins). Imports NO feature modules, so
                          #   modules can import it without a cycle. Pulls the client
                          #   from context: `client: (ctx) => ctx.read`.
-    schema.ts            # calls each module's register function → builder.toSchema()
+    schema.ts            # calls each module's registerXxxModule() → builder.toSchema()
     context.ts           # Context type + createContextFactory() + the
                          #   per-operation rw/ro read-client routing
   foundation/            # cross-cutting primitives (no I/O, no framework)
@@ -119,6 +119,7 @@ src/
       point.read.repo.ts  # Prisma reads: GraphQL projections (find*/get*ById)
       point.service.ts # use-cases: read → decide → execute, in one rw tx
       schemas/
+        index.ts           # registerPointModule(): the module's one entry point
         point.type.ts      # Pothos objects (registerPointTypes)
         point.query.ts     # query fields → repo reads on ctx.read
         point.mutation.ts  # mutations → service, then re-fetch with `query`
@@ -270,9 +271,10 @@ appears, not before:
    sign constraints as CHECKs in the migration.
 2. Start with `modules/<name>/<name>.repo.ts` (all Prisma for the module) and a
    schema file (or `schemas/` split) whose fields call the repo on
-   `ctx.read` (tier-1 writes on `ctx.write`). Export `register<Name>...()`
-   functions and call them in
-   `src/graphql/schema.ts`. **A module with no decisions stops here** (see `post/`).
+   `ctx.read` (tier-1 writes on `ctx.write`). Compose the schema register
+   functions into `registerXxxModule()` in `schemas/index.ts` and call that one
+   function in `src/graphql/schema.ts`. **A module with no decisions stops
+   here** (see `post/`).
 3. The first real decision (a state machine, a computed plan, a cross-row
    rule) earns a pure `<name>.core.ts` (or `.state.ts`/`.value.ts`) and a
    `<name>.service.ts` whose methods assemble read → decide → execute inside a

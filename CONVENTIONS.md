@@ -220,14 +220,20 @@ stays Prisma-free.
 - **Cross-module use-cases** (onboarding) open ONE `db.rw.$transaction` and
   compose the other modules' repo write functions inside it; decisions still
   come from each owning module's core. Module services depend one way only.
-- The schema is assembled from **explicit register functions** called once in
-  `schema.ts` — no side-effect imports, no import-order contract beyond
-  "builder first". The e2e SDL snapshot guards the result.
+- The schema is assembled from **one register function per module** —
+  `registerXxxModule()` in that module's `schemas/index.ts`, called once in
+  `schema.ts`. No side-effect imports, no import-order contract beyond
+  "builder first"; **intra**-module ordering (e.g. user types before user
+  mutations, so the shared enum ref exists) lives inside that module's register
+  function, not in `schema.ts`'s line order. The index is a composition point,
+  NOT a barrel — it calls the register functions, it never re-exports the
+  module's core/repo/service, so the file-name lint globs stay intact. The e2e
+  SDL snapshot guards the result.
 - A module's outermost layer is its **delivery**, and it lives in a named place:
   GraphQL fields in `schemas/` (or a single `*.schema.ts`), an HTTP surface in
   `routes/*.route.ts`. Both get their service from the container at registration
-  (`register<Name>Schema()` in `schema.ts`; `registerXxx(app, service)` in
-  `buildApp()`), never a db handle — so the domain layers (core/repo/service/
+  (`registerXxxModule()` from `schemas/index.ts`, called in `schema.ts`;
+  `registerXxx(app, service)` in `buildApp()`), never a db handle — so the domain layers (core/repo/service/
   provider) stay transport-agnostic and a module can be delivered over GraphQL,
   HTTP, both, or neither (a pure cross-module use-case like `onboarding/`). This
   is why modules are grouped by **domain, not by transport**: `auth/` reuses the
@@ -272,7 +278,8 @@ src/
                         #   (when it grows: split .read.repo.ts / .write.repo.ts)
     <name>.service.ts   # use-cases: read → decide → execute on db.rw
     schemas/            # GraphQL delivery, split by kind (see §5 for the
-      <name>.type.ts    #   single-file *.schema.ts alternative)
+      index.ts          #   registerXxxModule(): the module's ONE entry point
+      <name>.type.ts    #   (single-file *.schema.ts alternative also in §5)
       <name>.query.ts
       <name>.mutation.ts
     routes/             # optional HTTP delivery (peer of schemas/):
@@ -303,8 +310,9 @@ migration any environment has already applied; ship a new one.
 
 1. Model the data in `prisma/schema.prisma`; encode value sets / signs as
    CHECKs in the migration; `migrate` + `generate`.
-2. Write `<name>.repo.ts` and the schema register function(s); call them in
-   `schema.ts`. Stop here if the module has no decisions.
+2. Write `<name>.repo.ts` and the schema files, compose their register
+   function(s) into `registerXxxModule()` in `schemas/index.ts`, and call that
+   one function in `schema.ts`. Stop here if the module has no decisions.
 3. When the first decision appears: put the rules in a pure core file — total
    functions, named predicates, plans that carry their assumptions,
    `DomainError`s for violations, parse functions for DB values.
