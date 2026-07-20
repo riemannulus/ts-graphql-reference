@@ -128,11 +128,12 @@ src/
     post/              # a module with NO decisions: repo + schema only
       post.repo.ts
       schemas/
-    auth/              # REST-only module: a Google OAuth callback (no schema)
+    auth/              # a module delivered over HTTP, not GraphQL (no schema)
       oauth.value.ts     # pure core: parse the callback query
       oauth.provider.ts  # port: GoogleOAuthClient (function record) + stub
       oauth.service.ts   # use-case: provisions a user via the user service
-      oauth.route.ts     # registerGoogleOAuth(app, svc)
+      routes/            # HTTP delivery layer (the peer of schemas/)
+        oauth.route.ts   # registerGoogleOAuth(app, svc)
     onboarding/        # cross-module use-case (one tx across user + post)
       onboarding.content.ts
       onboarding.service.ts
@@ -262,8 +263,10 @@ appears, not before:
    (context.ts) — the `Services` type updates automatically. Mutations then go
    service-first and re-fetch with the Pothos `query` (see `point/`).
 4. For non-GraphQL surfaces (an OAuth callback, a payment webhook), add a
-   `registerXxx(app, service)` route file and call it in `buildApp()` (see
-   `auth/`).
+   `routes/<name>.route.ts` (`registerXxx(app, service)`) — the HTTP peer of
+   `schemas/` — and call it in `buildApp()` (see `auth/`). Modules group by
+   domain, not transport: the route sits beside the same service the GraphQL
+   fields use.
 5. A use-case spanning modules composes the other modules' repo functions
    inside ONE transaction, with decisions still taken by each module's core
    (see `onboarding/`).

@@ -13,7 +13,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `locks.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
-| Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
+| Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
 
 ```
 schema ──→ service ──→ repo ──→ prisma
@@ -201,6 +201,15 @@ stays Prisma-free.
 - The schema is assembled from **explicit register functions** called once in
   `schema.ts` — no side-effect imports, no import-order contract beyond
   "builder first". The e2e SDL snapshot guards the result.
+- A module's outermost layer is its **delivery**, and it lives in a named place:
+  GraphQL fields in `schemas/` (or a single `*.schema.ts`), an HTTP surface in
+  `routes/*.route.ts`. Both get their service from the container at registration
+  (`register<Name>Schema()` in `schema.ts`; `registerXxx(app, service)` in
+  `buildApp()`), never a db handle — so the domain layers (core/repo/service/
+  provider) stay transport-agnostic and a module can be delivered over GraphQL,
+  HTTP, both, or neither (a pure cross-module use-case like `onboarding/`). This
+  is why modules are grouped by **domain, not by transport**: `auth/` reuses the
+  `user` service, so a GraphQL/REST split would only fragment shared logic.
 
 ## 6. Property-based testing
 
@@ -239,8 +248,9 @@ src/
     <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
     <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
     <name>.service.ts   # use-cases: read → decide → execute on db.rw
-    <name>.schema.ts    # register<Name>Schema()  (or schemas/ split: .type/.query/.mutation)
-    <name>.route.ts     # optional non-GraphQL surface: registerXxx(app, service)
+    <name>.schema.ts    # GraphQL delivery: register<Name>Schema() (or schemas/ split)
+    routes/             # optional HTTP delivery (peer of schemas/):
+      <name>.route.ts   #   registerXxx(app, service)
     <name>.provider.ts  # optional external port (function record + stub)
   tests/
     support/            # helpers.ts: in-process PGlite + introspection-driven resetDb

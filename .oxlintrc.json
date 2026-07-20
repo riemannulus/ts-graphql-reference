@@ -120,6 +120,31 @@
       }
     },
     {
+      "files": ["src/**/modules/**/*.route.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@pothos/*",
+                  "graphql",
+                  "graphql-yoga",
+                  "**/builder*",
+                  "**/prisma.js",
+                  "**/db.js",
+                  "**/uow*",
+                  "**/locks*"
+                ],
+                "message": "Route files are the HTTP delivery layer (the peer of schemas/): they register on Fastify and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, or locks — the service owns those."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/graphql/builder.ts"],
       "rules": {
         "no-restricted-imports": [

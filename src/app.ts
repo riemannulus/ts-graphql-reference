@@ -6,7 +6,7 @@ import { createContextFactory, createServices } from './graphql/context.js';
 import { createDb, disconnectDb, type Db } from './db/db.js';
 import { isDomainError } from './foundation/errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
-import { registerGoogleOAuth } from './modules/auth/oauth.route.js';
+import { registerGoogleOAuth } from './modules/auth/routes/oauth.route.js';
 import { schema } from './graphql/schema.js';
 
 /** Context Yoga receives from Fastify per request. */

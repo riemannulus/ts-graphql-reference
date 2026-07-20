@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { isDomainError } from '../../foundation/errors.js';
-import type { OAuthService } from './oauth.service.js';
-import { parseOAuthCallback, type OAuthCallbackQuery } from './oauth.value.js';
+import { isDomainError } from '../../../foundation/errors.js';
+import type { OAuthService } from '../oauth.service.js';
+import { parseOAuthCallback, type OAuthCallbackQuery } from '../oauth.value.js';
 
 /**
  * Registers the Google OAuth routes — the example of a non-GraphQL HTTP surface.
