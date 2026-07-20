@@ -11,7 +11,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Layer            | Files                                | Speaks                          | May import                                   | Tested with                |
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
-| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts`, `errors.ts` | integration (PGlite)       |
+| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `locks.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Schema (GraphQL) | `*.schema.ts`, `schemas/*`           | GraphQL types, `ctx`            | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services via ctx | e2e (`app.inject`) |
 
@@ -103,8 +103,10 @@ guards. Three rules keep locking safe:
   `applySpendPlan` / `applyChargePlan`), and the lock's job is the
   pair-serialization the guards don't provide. `trySerialized` is the
   non-blocking variant for periodic jobs that must yield rather than queue.
-- **`locks.ts` is the ONLY place raw lock SQL lives**, reached through
-  `uow.serialized` — never called from a service or repo directly.
+- **Raw lock SQL lives only in `uow.ts`** (beside its `SET TRANSACTION`),
+  reached through `uow.serialized` — never from a service or repo directly.
+  `locks.ts` stays pure — the key registry and the `orderLocks` law, lint-enforced
+  free of I/O — so the deadlock-freedom guarantee is a property, not a side effect.
 
 Reads inside a locked or snapshot section run on the `tx` handle the rung passes
 in — never `db.ro` or a module-level client, which would read outside the

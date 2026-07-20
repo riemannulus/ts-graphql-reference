@@ -1,15 +1,17 @@
-import type { DbClient } from './db.js';
-
 /**
- * Advisory-lock key registry and the toolkit's ONLY raw lock SQL.
+ * Advisory-lock key registry and global ordering — the PURE key policy of the
+ * concurrency ladder (see CONVENTIONS "Concurrency: the ladder"). No imports, no
+ * I/O: this module only says what is lockable and in what order, and is
+ * lint-enforced free of transactions and framework deps. The raw acquisition SQL
+ * lives in `uow.ts` (beside its `SET TRANSACTION`); a service reaches locks only
+ * through `uow.serialized` / `uow.trySerialized`.
  *
- * Postgres advisory locks are the top rung of the concurrency ladder (see
- * CONVENTIONS "Concurrency: the ladder"): reach for them only when an invariant
- * spans rows in a way a single guarded write or a REPEATABLE READ snapshot
- * cannot express, and remember that a lock only serializes against writers that
- * take the SAME key. Prefer the lower rungs.
+ * Advisory locks are the top rung: reach for them only when an invariant spans
+ * rows in a way a single guarded write or a REPEATABLE READ snapshot cannot
+ * express, and remember that a lock only serializes writers that take the SAME
+ * key. Prefer the lower rungs.
  *
- * A key is a `(namespace, id)` pair mapped to the two-int form
+ * A key is a `(namespace, id)` pair for the two-int form
  * `pg_advisory_xact_lock(classid int, objid int)`, so `pg_locks` shows exactly
  * which entity is locked. `classid` is the namespace's ordinal; `objid` is the
  * entity id. Reference ids are `Int` (int4) and used directly; a system with
@@ -67,36 +69,4 @@ export function orderLocks(keys: readonly LockKey[]): LockKey[] {
     unique.push(key);
   }
   return unique.toSorted((a, b) => a.ns - b.ns || a.obj - b.obj);
-}
-
-/**
- * Acquires transaction-scoped advisory locks in the global order, blocking
- * until each is held. The locks release automatically when the surrounding
- * transaction ends (commit or rollback) — there is nothing to unlock by hand.
- *
- * This is the ONLY place raw advisory-lock SQL lives; call it through
- * `uow.serialized`, never directly from a service or repo.
- */
-export async function acquireLocks(tx: DbClient, keys: readonly LockKey[]): Promise<void> {
-  for (const key of orderLocks(keys)) {
-    // eslint-disable-next-line no-await-in-loop -- ordered acquisition on one tx handle
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${key.ns}, ${key.obj})`;
-  }
-}
-
-/**
- * Non-blocking variant: tries every key in the global order and returns `false`
- * the moment one is unavailable (the already-acquired subset releases at
- * transaction end). For contenders that must yield rather than queue — e.g. a
- * periodic job that should skip a row the API is mutating and retry next tick.
- */
-export async function tryAcquireLocks(tx: DbClient, keys: readonly LockKey[]): Promise<boolean> {
-  for (const key of orderLocks(keys)) {
-    // eslint-disable-next-line no-await-in-loop -- ordered acquisition on one tx handle
-    const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
-      SELECT pg_try_advisory_xact_lock(${key.ns}, ${key.obj}) AS locked
-    `;
-    if (!rows[0]?.locked) return false;
-  }
-  return true;
 }

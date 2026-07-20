@@ -40,35 +40,6 @@ export function createDb(): Db {
   return { rw, ro };
 }
 
-/**
- * Structural checks for Prisma's error codes (no `instanceof`, which can fail
- * across module realms in test runners). Used by shells to translate
- * infrastructure failures into domain outcomes.
- */
-function prismaErrorCode(error: unknown): unknown {
-  return typeof error === 'object' && error !== null
-    ? (error as { code?: unknown }).code
-    : undefined;
-}
-
-/** P2002 — a unique constraint was violated. */
-export function isUniqueViolation(error: unknown): boolean {
-  return prismaErrorCode(error) === 'P2002';
-}
-
-/** P2025 — the row a guarded `update` targeted no longer matches. */
-export function isRecordNotFound(error: unknown): boolean {
-  return prismaErrorCode(error) === 'P2025';
-}
-
-/**
- * P2034 — the transaction failed a serialization check (e.g. a REPEATABLE READ
- * transaction touched a row a concurrent transaction changed). Retryable.
- */
-export function isSerializationConflict(error: unknown): boolean {
-  return prismaErrorCode(error) === 'P2034';
-}
-
 /** Disconnects both handles (once, when they are the same client). */
 export async function disconnectDb(db: Db): Promise<void> {
   await db.rw.$disconnect();

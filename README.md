@@ -91,6 +91,7 @@ src/
   app.ts             # composition root: creates the Db handles + services,
                      #   injects them into the context, assembles Fastify + Yoga
   db.ts              # Db = { rw, ro } PrismaClients + DbClient (what repos take)
+  prisma-errors.ts   # pure Prisma error-code predicates (P2002 / P2025 / P2034)
   context.ts         # Context type, createServices(), createContextFactory(),
                      #   and the per-operation rw/ro selection-client routing
   builder.ts         # Pothos builder (plugins). Imports NO feature modules, so
@@ -102,7 +103,8 @@ src/
   errors.ts          # DomainError base class (client-safe business errors)
   uow.ts             # unit of work: run / snapshot / serialized / trySerialized
                      #   — the concurrency ladder, the only way to open a tx
-  locks.ts           # advisory-lock key registry + global acquisition order
+  locks.ts           # pure advisory-lock key policy: registry + global order
+                     #   (orderLocks); the acquire SQL itself lives in uow.ts
   env.ts             # loads .env (Prisma 7 / Node no longer auto-load it)
   generated/         # Pothos types (git-ignored; `prisma generate`)
   modules/

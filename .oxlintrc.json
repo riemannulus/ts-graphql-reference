@@ -29,7 +29,13 @@
   },
   "overrides": [
     {
-      "files": ["src/**/*.state.ts", "src/**/*.value.ts", "src/**/*.core.ts", "src/**/*.content.ts"],
+      "files": [
+        "src/**/*.state.ts",
+        "src/**/*.value.ts",
+        "src/**/*.core.ts",
+        "src/**/*.content.ts",
+        "src/locks.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -50,7 +56,7 @@
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure core (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts, and locks.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
               }
             ]
           }

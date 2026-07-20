@@ -1,6 +1,7 @@
-import { type Db, type DbClient, isSerializationConflict } from './db.js';
+import type { Db, DbClient } from './db.js';
 import { ConcurrentUpdateError } from './errors.js';
-import { acquireLocks, type LockKey, tryAcquireLocks } from './locks.js';
+import { type LockKey, orderLocks } from './locks.js';
+import { isSerializationConflict } from './prisma-errors.js';
 
 /**
  * Unit of work — the sanctioned way to open a transaction, and the four rungs
@@ -51,6 +52,32 @@ type Body<T> = (tx: DbClient) => Promise<T>;
  */
 function beginSnapshot(tx: DbClient): Promise<unknown> {
   return tx.$executeRawUnsafe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+}
+
+/**
+ * Acquires the advisory locks in the global order, blocking until each is held;
+ * they release when the transaction ends. This and `beginSnapshot` are the
+ * toolkit's only raw transaction/lock SQL — `locks.ts` stays pure (the key
+ * registry and the `orderLocks` law), so a service reaches locks only through
+ * `serialized` / `trySerialized`.
+ */
+async function acquire(tx: DbClient, keys: readonly LockKey[]): Promise<void> {
+  for (const key of orderLocks(keys)) {
+    // eslint-disable-next-line no-await-in-loop -- ordered acquisition on one tx handle
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${key.ns}, ${key.obj})`;
+  }
+}
+
+/** Non-blocking `acquire`: returns false the moment a key is unavailable. */
+async function tryAcquire(tx: DbClient, keys: readonly LockKey[]): Promise<boolean> {
+  for (const key of orderLocks(keys)) {
+    // eslint-disable-next-line no-await-in-loop -- ordered acquisition on one tx handle
+    const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+      SELECT pg_try_advisory_xact_lock(${key.ns}, ${key.obj}) AS locked
+    `;
+    if (!rows[0]?.locked) return false;
+  }
+  return true;
 }
 
 async function runTx<T>(db: Db, body: Body<T>, options: TxOptions = {}): Promise<T> {
@@ -110,7 +137,7 @@ function serialized<T>(
     db,
     async (client) => {
       if (asSnapshot) await beginSnapshot(client);
-      await acquireLocks(client, keys);
+      await acquire(client, keys);
       return body(client);
     },
     tx,
@@ -137,7 +164,7 @@ function trySerialized<T>(
     db,
     async (client): Promise<TryResult<T>> => {
       if (asSnapshot) await beginSnapshot(client);
-      if (!(await tryAcquireLocks(client, keys))) return { acquired: false };
+      if (!(await tryAcquire(client, keys))) return { acquired: false };
       return { acquired: true, result: await body(client) };
     },
     tx,
