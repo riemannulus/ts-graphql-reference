@@ -15,19 +15,9 @@
  * `pg_advisory_xact_lock(classid int, objid int)`, so `pg_locks` shows exactly
  * which entity is locked. `classid` is the namespace's ordinal; `objid` is the
  * entity id. Reference ids are `Int` (int4) and used directly; a system with
- * string / UUID ids would hash them to an int4 here — that constructor is the
- * only thing that would change.
+ * string / UUID ids would hash them to an int4 in that entity's mapper — the
+ * mapper is the only thing that would change.
  */
-
-// Declaration order == acquisition order ACROSS namespaces. Append new
-// namespaces at the END; never reorder — one global order over all keys is what
-// makes multi-key acquisition deadlock-free (see `orderLocks`).
-const LOCK_NAMESPACES = ['pointBalance'] as const;
-export type LockNamespace = (typeof LOCK_NAMESPACES)[number];
-
-const NAMESPACE_ORDINAL = Object.fromEntries(
-  LOCK_NAMESPACES.map((name, index) => [name, index + 1]),
-) as Record<LockNamespace, number>;
 
 export interface LockKey {
   /** `classid` — the namespace ordinal (stable, from declaration order). */
@@ -38,19 +28,42 @@ export interface LockKey {
   readonly label: string;
 }
 
-function makeKey(namespace: LockNamespace, id: number): LockKey {
-  return { ns: NAMESPACE_ORDINAL[namespace], obj: id, label: `${namespace}:${id}` };
+/**
+ * Builds the lock-key registry from ONE declaration — the single place to touch
+ * when a new entity needs serializing. Each entry is a lockable entity: its key
+ * is the namespace, its value maps the entity's identifier(s) to an int4
+ * `objid`. The namespace ordinal (`classid`) is the entry's position, so
+ * DECLARATION ORDER == acquisition order ACROSS namespaces: append new entries
+ * at the END, never reorder — one global order over all keys is what makes
+ * multi-key acquisition deadlock-free (see `orderLocks`). Insertion order is
+ * preserved because every namespace is a non-numeric string key.
+ */
+function defineLocks<T extends Record<string, (...args: never[]) => number>>(
+  entities: T,
+): { readonly [K in keyof T]: (...args: Parameters<T[K]>) => LockKey } {
+  const registry: Record<string, (...args: never[]) => LockKey> = {};
+  Object.entries(entities).forEach(([namespace, toObjId], index) => {
+    const ns = index + 1;
+    registry[namespace] = (...args: never[]) => {
+      const obj = toObjId(...args);
+      return { ns, obj, label: `${namespace}:${obj}` };
+    };
+  });
+  return registry as unknown as { readonly [K in keyof T]: (...args: Parameters<T[K]>) => LockKey };
 }
 
 /**
- * The ONLY way to construct a lock key: one constructor per lockable entity.
- * Add a constructor (and, if it is new, its namespace above) when a new entity
- * needs serializing.
+ * The ONLY way to construct a lock key, and the ONE place to register a lockable
+ * entity: add an entry (namespace → id-to-`objid` mapper) here — nothing else in
+ * this module changes. See `defineLocks` for the ordering rule.
  */
-export const lockKey = {
+export const lockKey = defineLocks({
   /** Serializes all point movement for one user (balance + charge ledger). */
-  pointBalance: (userId: number): LockKey => makeKey('pointBalance', userId),
-};
+  pointBalance: (userId: number) => userId,
+});
+
+/** The registered lock namespaces, derived from the registry. */
+export type LockNamespace = keyof typeof lockKey;
 
 /**
  * Global acquisition order: sort by `(namespace, id)` and drop duplicates.
