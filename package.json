@@ -12,6 +12,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "check:graph": "depcruise --config .dependency-cruiser.mjs src",
+    "graph:modules": "depcruise src/modules --config .dependency-cruiser.mjs --include-only ^src/modules --collapse '^src/modules/[^/]+' -T dot | dot -T svg -o src/modules/dependency-graph.svg && depcruise src/modules --config .dependency-cruiser.mjs --include-only ^src/modules -T dot | dot -T svg -o src/modules/dependency-graph-detail.svg",
     "test": "vitest run",
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
