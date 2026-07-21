@@ -76,6 +76,36 @@ model PointCharge {
   @@index([userId, state, chargedAt])
 }
 
+/// A feature flag — the crepe model: a flag is ACTIVE only for a specific deploy
+/// `stage`, inside its `[enableAfter, disableAfter]` window, and while not
+/// soft-deleted. `name` is the OpenFeature flag key; the DB-backed OpenFeature
+/// provider (src/modules/feature-flag/feature-flag.provider.ts) reads the one
+/// LIVE row per name. The activation rule lives in code (feature-flag.core.ts
+/// `isActive`, single source of truth); the `stage` value set and the window
+/// ordering are additionally backed by DB CHECK constraints (see the migration),
+/// and one-live-row-per-name by a partial unique index — so a name is reusable
+/// after a soft delete (crepe recreate-by-name).
+model FeatureFlag {
+  id           Int       @id @default(autoincrement())
+  name         String
+  description  String?
+  /// Deploy environment this flag applies to (value set backed by a CHECK, like
+  /// User.status — never a Prisma enum). A NULL-stage row can never be active.
+  stage        String?
+  /// Optional payload for a non-boolean flag: the variant/value an ACTIVE flag
+  /// resolves to (e.g. the welcome-post variant). NULL for a plain on/off gate.
+  /// This extends the crepe model, which is boolean-only, so the DB provider can
+  /// back OpenFeature string/variant resolution over the same table.
+  value        String?
+  enableAfter  DateTime?
+  disableAfter DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([name])
+}
+
 /// One spend of points, recording how it split across paid and free balance.
 model PointSpend {
   id          Int      @id @default(autoincrement())

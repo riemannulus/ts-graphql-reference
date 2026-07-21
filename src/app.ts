@@ -1,3 +1,4 @@
+import { OpenFeature, type Provider } from '@openfeature/server-sdk';
 import type { PrismaClient } from '@prisma/client';
 import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { GraphQLError } from 'graphql';
@@ -8,6 +9,8 @@ import { createDb, disconnectDb, type Db } from './db/db.js';
 import { isDomainError } from './foundation/errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/routes/oauth.route.js';
+import { parseStage, type Stage } from './modules/feature-flag/feature-flag.core.js';
+import { DbFeatureFlagProvider } from './modules/feature-flag/feature-flag.provider.js';
 import type { PostSearchIndex } from './modules/search/post-search.provider.js';
 import { schema } from './graphql/schema.js';
 
@@ -38,6 +41,17 @@ export interface BuildAppOptions {
    * used); tests pass a fake in-memory index so `searchPosts` can be exercised.
    */
   postSearchIndex?: PostSearchIndex;
+  /**
+   * Inject an OpenFeature provider. Production omits this (the DB-backed
+   * `DbFeatureFlagProvider` is used); tests pass the SDK's `InMemoryProvider` to
+   * fix flag values, or omit it and drive flags through the real DB provider.
+   */
+  flagProvider?: Provider;
+  /**
+   * Override the deploy stage the DB provider evaluates against (default:
+   * `parseStage(process.env.STAGE)`). Tests pin it here instead of mutating env.
+   */
+  stage?: Stage | null;
 }
 
 /**
@@ -58,12 +72,24 @@ export function buildApp(options: BuildAppOptions = {}) {
     googleOAuth: options.googleOAuth,
     postSearchIndex: options.postSearchIndex,
   });
+
+  // Feature flags via OpenFeature. The DB-backed provider evaluates the crepe
+  // rule (stage + window + soft-delete); tests may inject an `InMemoryProvider`.
+  // Register under a per-app domain so parallel in-process apps (test files) get
+  // isolated providers, and read through that domain's client. `setProvider` is
+  // synchronous and the provider needs no async init, so `buildApp` stays sync.
+  const stage = options.stage ?? parseStage(process.env.STAGE);
+  const flagProvider = options.flagProvider ?? new DbFeatureFlagProvider(db.rw, stage);
+  const flagDomain = crypto.randomUUID();
+  OpenFeature.setProvider(flagDomain, flagProvider);
+  const flagClient = OpenFeature.getClient(flagDomain);
+
   const app = fastify({ logger: options.logger ?? true });
 
   const yoga = createYoga<ServerContext>({
     schema,
     graphqlEndpoint: '/graphql',
-    context: createContextFactory({ db, services }),
+    context: createContextFactory({ db, services, flagClient }),
     // Expected domain errors reach the client with their message + code;
     // everything else is masked as a generic internal error.
     maskedErrors: {
@@ -104,6 +130,12 @@ export function buildApp(options: BuildAppOptions = {}) {
     if (ownsDb) {
       await disconnectDb(db);
     }
+    // Deliberately NOT OpenFeature.close(): the registry is process-global, so
+    // closing it here would tear down sibling apps' providers (parallel test
+    // files share the process). The DB-backed provider holds no resources of its
+    // own — the db handle it reads is disconnected above — so there is nothing
+    // app-scoped to release. A stateful provider (a polling flagd client) would
+    // instead be closed per-domain with `OpenFeature.close(flagDomain)`.
   });
 
   return { app, db, services, yoga };

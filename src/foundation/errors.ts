@@ -35,6 +35,19 @@ export class ConcurrentUpdateError extends DomainError {
   }
 }
 
+/**
+ * A feature-gated operation was invoked while its flag is off. Expected and
+ * client-safe (the caller may simply not have the feature enabled), so a
+ * DomainError — the shell maps it to a client-visible `UNAVAILABLE`. Thrown by
+ * `ctx.flags.assert.<gate>()` (see src/flags/), the flags analogue of
+ * `assertTransition`.
+ */
+export class FeatureDisabledError extends DomainError {
+  constructor(readonly flag: string) {
+    super(`Feature '${flag}' is not enabled`, 'UNAVAILABLE');
+  }
+}
+
 export function isDomainError(error: unknown): error is DomainError {
   return (
     typeof error === 'object' &&

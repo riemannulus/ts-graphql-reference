@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
 
 ```
@@ -26,10 +26,13 @@ schema ──→ service ──→ repo ──→ prisma
 these are not just guidelines: the core cannot import Prisma/GraphQL/repos,
 services and repos cannot import the builder or Pothos, schema files cannot
 import the db handles, the core/repo/schema layers cannot import
-`uow`/`locks`/`lock-registry` (only a service opens a transaction or takes a
-lock), `builder.ts` cannot import
-feature modules, and `import/no-cycle` keeps the graph acyclic. Two rules the
-linter cannot see, reviewed by hand:
+`uow`/`locks`/`lock-registry` or the flag facade
+(`flags`/`flag-registry`/`flag-reader`) — only a service opens a transaction or
+takes a lock, and only the delivery/service layer is handed a flag reader (a core
+receives a flag value as passed-in data). A service may import the `FlagReader`
+*type* but not the OpenFeature SDK or the reader factory; `builder.ts` cannot
+import feature modules, and `import/no-cycle` keeps the graph acyclic. Two rules
+the linter cannot see, reviewed by hand:
 
 - **A business `if` in a service or repo is a leaked decision** — move it to
   the core. The only branching allowed in the execute phase is the mechanical
@@ -331,3 +334,75 @@ migration any environment has already applied; ship a new one.
    property tests for the core's laws (generators in `<name>.arbitraries.ts`),
    an integration test for the shell including the lost-race path, and a
    model-based test if the shell is stateful. Update the SDL snapshot.
+
+## 9. Feature flags
+
+Feature switches go through [OpenFeature](https://openfeature.dev). The code
+depends only on the vendor-neutral SDK; a **provider** plugs in behind it, so the
+backend (a DB table today, flagd/Unleash/LaunchDarkly later) is swappable with no
+call-site edits. This is the same port/adapter shape as `GoogleOAuthClient` and
+`PostSearchIndex` — the seam is OpenFeature's `Provider` interface.
+
+**The read facade mirrors the locks split** (`db/locks.ts` + `db/lock-registry.ts`),
+one machinery file and one growing registry, both pure and lint-enforced free of
+I/O:
+
+- `flags/flags.ts` — machinery: the flag spec kinds, `defineFlags`, and the derived
+  `FlagReader` type. Imports nothing (not even the SDK).
+- `flags/flag-registry.ts` — the ONE place that says WHAT is flag-gated (`FLAGS`):
+  each flag's kind, its default, and its JSDoc. Add a flag here; the machinery is
+  fixed.
+- `flags/flag-reader.ts` — the `uow.ts` analogue: the I/O shell that binds the
+  registry to the OpenFeature client per request. The only facade file that imports
+  the SDK. Reads are **memoized per request**, so a flag read in a resolver and
+  again in the service it calls can't disagree — the reader-level version of
+  `uow.snapshot`'s single-consistent-world guarantee.
+
+`ctx.flags` is that per-request reader (built in the context factory beside the
+`ctx.db` routing). A gate's default is its **safe fallback**, single-sourced in the
+registry — for a crepe-backed gate that is `false` (INACTIVE), so a missing or
+misconfigured backend fails every gate closed.
+
+**Where a flag branch lives — the rule that keeps `if`-sprawl out of services:**
+
+| Flag use | Cost in the service | Where the branch lives |
+| --- | --- | --- |
+| Kill / rollout gate | one `flags.assert.x()` line | machinery (throws `FeatureDisabledError` → `UNAVAILABLE`) |
+| Rule change (a limit, a cutoff) | one read in the read phase, passed as data | the pure **core** (a property test then covers both sides for free) |
+| Implementation swap | a typed `Record<Variant, Impl>` lookup | the **type** (exhaustiveness), never an `if`-chain |
+
+All three modes ship as worked examples:
+
+- **Mode 2 (gate):** `point.transfer` calls `flags.assert.pointTransfer()` as its
+  first line — in the **service**, not the resolver, because the service is the
+  choke point every caller passes through (a future job or route is gated too).
+- **Mode 1 (rule change):** the same `transfer` reads `flags.pointTransferPreferFree()`
+  and passes the boolean into `planSpend` (core), which branches on it — no `if` in
+  the shell, and a property test covers both spend orderings.
+- **Mode 3 (variant):** `onboarding.register` reads `flags.welcomeVariant()` and the
+  onboarding core picks the welcome-post builder from an exhaustive
+  `Record<WelcomeVariant, …>` (a new variant without a builder is a compile error).
+
+The reader always arrives as a per-call argument (`ctx.flags`), exactly as `ctx.db`
+reaches a repo — a singleton service never stores request state. A business flag
+`if` appearing in a service body is the same smell as any leaked decision: push the
+branch to the core (as data) or to the gate.
+
+**Enforcement** (lint, like the locks layer): the core, repo, and schema layers
+cannot import the facade at all (`flags`/`flag-registry`/`flag-reader` — all three
+globs, because `**/flags*` does NOT match `flag-registry`/`flag-reader`); a service
+may import the `FlagReader` *type* from the registry but not the SDK or the reader
+factory; a `*.provider.ts` may read via `db` + a repo and speak its SDK but knows
+no schema, transport, or transaction.
+
+**The provider adapter** (`modules/feature-flag/`) is the crepe model: a
+`FeatureFlag` row is active only for the deploy `STAGE`, inside its
+`[enableAfter, disableAfter]` window, and while not soft-deleted. That rule is the
+pure predicate `isActive` (the provider fetches the row and supplies `now` — a
+business `if` in the provider would be a leaked decision), backed by DB CHECK
+constraints on the stage value set and window ordering, and a partial unique index
+(`name` WHERE `deletedAt IS NULL`) for one-live-row-per-name. The provider is a
+**class** (the sanctioned exception to the factory-function norm — it implements the
+SDK's `Provider` interface, like the SDK's own `InMemoryProvider`). Writing flags is
+the module's admin service; a staff-gated delivery (route or authorized mutation) is
+a future addition, blocked today only by the absence of an authorization layer.

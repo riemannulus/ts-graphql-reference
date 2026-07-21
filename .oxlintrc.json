@@ -53,10 +53,13 @@
                   "**/uow*",
                   "**/locks*",
                   "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself."
               }
             ]
           }
@@ -92,6 +95,67 @@
       }
     },
     {
+      "files": ["src/flags/flags.ts", "src/flags/flag-registry.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/*",
+                  "fastify",
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "@openfeature/*",
+                  "**/builder*",
+                  "**/prisma*",
+                  "**/db*",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flag-reader*",
+                  "**/*.repo*",
+                  "**/*.service*"
+                ],
+                "message": "The feature-flag catalog (flags.ts machinery + flag-registry.ts) must stay pure: no I/O, no OpenFeature SDK, no framework deps. The registry may import the machinery (flag-registry → flags); binding to a client lives in flag-reader.ts (the uow.ts analogue), the one facade file that imports the SDK."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/**/modules/**/*.provider.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "fastify",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "**/*.service*"
+                ],
+                "message": "A provider (*.provider.ts) is an external-port adapter: it may read via db + a repo and speak its SDK, but it must not know the schema, the transport, transactions, a service, or the flag facade — it sits BELOW the flag reader (which delegates to it), never reaching up into it. The DB feature-flag provider reads the FeatureFlag rows and decides with the pure core predicate."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/**/modules/**/*.service.ts"],
       "rules": {
         "no-restricted-imports": [
@@ -99,8 +163,8 @@
           {
             "patterns": [
               {
-                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify"],
-                "message": "Use-cases (*.service.ts) speak the domain language only: no GraphQL/transport imports. The schema layer calls the service, never the other way round."
+                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify", "@openfeature/*", "**/flag-reader*"],
+                "message": "Use-cases (*.service.ts) speak the domain language only: no GraphQL/transport imports, and no OpenFeature SDK or flag-reader factory. A service receives the FlagReader as a per-call argument (the FlagReader TYPE from flag-registry is fine — like importing uow / lock-registry types); the schema layer or context factory builds the reader. The schema layer calls the service, never the other way round."
               }
             ]
           }
@@ -123,9 +187,12 @@
                   "fastify",
                   "**/uow*",
                   "**/locks*",
-                  "**/lock-registry*"
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*"
                 ],
-                "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, or transactions. It receives a DbClient (rw/ro/tx — the caller's choice, who also opens the transaction and takes the locks) and returns rows."
+                "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, transactions, or feature flags. It receives a DbClient (rw/ro/tx — the caller's choice, who also opens the transaction and takes the locks) and returns rows."
               }
             ]
           }
@@ -140,8 +207,8 @@
           {
             "patterns": [
               {
-                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*", "**/lock-registry*"],
-                "message": "Schema files resolve through ctx (the routed selection client + services) and repo read functions — they never construct or import database handles, open transactions, or take locks (that is the service's job)."
+                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*", "**/lock-registry*", "**/flags*", "**/flag-registry*", "**/flag-reader*", "@openfeature/*"],
+                "message": "Schema files resolve through ctx (the routed selection client + services + ctx.flags) and repo read functions — they never construct or import database handles, open transactions, take locks, or build a flag reader (that is the service's / context factory's job). Gate exposure with ctx.flags."
               }
             ]
           }

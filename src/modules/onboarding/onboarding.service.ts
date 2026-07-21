@@ -1,6 +1,7 @@
 import type { User } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { uow } from '../../db/uow.js';
+import type { FlagReader } from '../../flags/flag-registry.js';
 import * as postRepo from '../post/post.repo.js';
 import type { CreateUserInput } from '../user/user.service.js';
 import * as userRepo from '../user/user.repo.js';
@@ -28,14 +29,19 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
   const createPost = deps.createPost ?? postRepo.createPost;
   return {
     /**
-     * Creates a user and their default welcome post atomically: if the welcome
-     * post fails, the user is rolled back too.
+     * Creates a user and their welcome post atomically: if the welcome post fails,
+     * the user is rolled back too. The welcome copy is an "implementation swap"
+     * flag (mode 3): the `welcomeVariant` value is read here (as data, before the
+     * transaction) and handed to the core, which selects the builder from an
+     * exhaustive record — the selection stays in the core, not the shell.
      */
-    register(input: CreateUserInput): Promise<User> {
+    // `async` so `parseEmail`'s synchronous rejection surfaces as a rejected promise.
+    async register(input: CreateUserInput, flags: FlagReader): Promise<User> {
       const email = parseEmail(input.email); // decide (parse at the boundary)
+      const variant = await flags.welcomeVariant(); // read the flag as data
       return uow.run(deps.db, async (tx) => {
         const user = await userRepo.createUser(tx, { email, name: input.name ?? null });
-        const { title, content } = buildWelcomePost(user); // decide
+        const { title, content } = buildWelcomePost(user, variant); // decide
         await createPost(tx, { authorId: user.id, title, content });
         return user;
       });

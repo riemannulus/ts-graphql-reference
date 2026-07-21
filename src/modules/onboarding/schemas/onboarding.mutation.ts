@@ -14,10 +14,13 @@ export function registerOnboardingMutations(): void {
       type: 'User',
       args: { input: t.arg({ type: SignUpInput, required: true }) },
       resolve: async (query, _root, args, ctx) => {
-        const user = await ctx.services.onboarding.register({
-          email: args.input.email,
-          name: args.input.name,
-        });
+        const user = await ctx.services.onboarding.register(
+          {
+            email: args.input.email,
+            name: args.input.name,
+          },
+          ctx.flags,
+        );
         // Re-fetch with the selection AFTER the use-case's transaction
         // committed (on the primary — mutations route to rw), so a
         // `signUp { posts { ... } }` selection sees the welcome post.

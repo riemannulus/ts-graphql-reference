@@ -2,6 +2,7 @@ import type { PointCharge, PointSpend } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
+import type { FlagReader } from '../../flags/flag-registry.js';
 import { planCharge, planSpend, planTransfer } from './point.core.js';
 import * as pointRepo from './point.write.repo.js';
 
@@ -63,18 +64,33 @@ export function createPointService(db: Db) {
      * `spend`/`charge` still comes from the reused optimistic guards, and the
      * `snapshot` flag keeps the sender's world read consistent against them.
      * Returns the sender's spend record (the movement's authoritative entry).
+     *
+     * Two feature-flag modes, side by side (both read BEFORE the transaction, as
+     * data, from the per-request `ctx.flags` — the singleton service never stores
+     * request state, exactly as `ctx.db` reaches a repo):
+     *
+     * - `pointTransfer` (mode 2, kill/rollout gate) — `assert` throws
+     *   `FeatureDisabledError` (→ client code `UNAVAILABLE`) before any lock or
+     *   read. Checked in the use-case, not the resolver, so a future non-GraphQL
+     *   caller (a job, a route) is gated too — the service is the one choke point.
+     * - `pointTransferPreferFree` (mode 1, rule change) — its boolean flows into
+     *   the pure core (`planTransfer` → `planSpend`) as DATA; the ordering branch
+     *   lives there, not here, so there is no business `if` in the shell.
      */
     async transfer(
       fromUserId: number,
       toUserId: number,
       input: TransferPointInput,
+      flags: FlagReader,
     ): Promise<PointSpend> {
+      await flags.assert.pointTransfer();
+      const preferFree = await flags.pointTransferPreferFree();
       const { spend } = await uow.serialized(
         db,
         [lockKey.pointBalance(fromUserId), lockKey.pointBalance(toUserId)],
         async (tx) => {
           const world = await pointRepo.loadSpendWorld(tx, fromUserId); // read
-          const plan = planTransfer(fromUserId, toUserId, world, input.amount); // decide
+          const plan = planTransfer(fromUserId, toUserId, world, input.amount, { preferFree }); // decide
           return pointRepo.applyTransferPlan(tx, fromUserId, toUserId, plan); // execute
         },
         { snapshot: true },

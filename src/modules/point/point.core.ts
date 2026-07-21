@@ -167,7 +167,11 @@ export function planCharge(input: { paidAmount: number; freeAmount: number }): C
  * throws.
  *
  * Policies encoded here (each guarded by a property test):
- * 1. Paid-first: paid points are consumed before free points.
+ * 1. Paid-first by default: paid points are consumed before free points — unless
+ *    `opts.preferFree` (a feature-flag value the shell passes in as DATA) flips it
+ *    to free-first. This is the reference's "rule change" flag example: the switch
+ *    is a plain input, so the branch stays in the core and a property test covers
+ *    both orderings for free.
  * 2. FIFO: charges are consumed in the given order.
  * 3. A charge whose remainder hits zero is depleted (→ CONSUMED).
  * 4. Conservation: allocations sum exactly to the requested amount, split
@@ -182,15 +186,25 @@ export function planSpend(
   snapshot: PointSnapshot,
   charges: readonly ChargeBalance[],
   amount: number,
+  opts: { preferFree?: boolean } = {},
 ): SpendPlan {
   assertValidAmount(amount);
   if (snapshot.totalAmount < amount) {
     throw new InsufficientPointError(snapshot.totalAmount, amount);
   }
 
-  // Policy 1 — paid-first split of the requested amount.
-  const paidUsage = Math.min(amount, snapshot.paidAmount);
-  const freeUsage = amount - paidUsage;
+  // Policy 1 — which balance to drain first. Default paid-first; `preferFree`
+  // flips it to free-first. Either way the two usages sum to `amount`, so the
+  // per-charge FIFO loop and the conservation check below are unaffected.
+  let paidUsage: number;
+  let freeUsage: number;
+  if (opts.preferFree) {
+    freeUsage = Math.min(amount, snapshot.freeAmount);
+    paidUsage = amount - freeUsage;
+  } else {
+    paidUsage = Math.min(amount, snapshot.paidAmount);
+    freeUsage = amount - paidUsage;
+  }
 
   // Policy 2/3 — FIFO allocation across charges.
   const allocations: SpendAllocation[] = [];
@@ -265,11 +279,12 @@ export function planTransfer(
   toUserId: number,
   senderWorld: { snapshot: PointSnapshot; charges: readonly ChargeBalance[] },
   amount: number,
+  opts: { preferFree?: boolean } = {},
 ): TransferPlan {
   if (fromUserId === toUserId) {
     throw new PointTransferToSelfError(fromUserId);
   }
-  const spend = planSpend(senderWorld.snapshot, senderWorld.charges, amount);
+  const spend = planSpend(senderWorld.snapshot, senderWorld.charges, amount, opts);
   const charge = planCharge({ paidAmount: spend.paidUsage, freeAmount: spend.freeUsage });
   return { spend, charge };
 }

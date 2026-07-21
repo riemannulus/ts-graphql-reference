@@ -11,7 +11,14 @@ import { writer } from '../../graphql/context.js';
  */
 function fakeContext(operation: Context['operation']): Context {
   const db = { marker: 'routed-client' } as unknown as Context['db'];
-  return { db, operation, services: {} as never, req: {} as never, reply: {} as never };
+  return {
+    db,
+    operation,
+    services: {} as never,
+    flags: {} as never,
+    req: {} as never,
+    reply: {} as never,
+  };
 }
 
 describe('writer(ctx) — the guarded write path', () => {

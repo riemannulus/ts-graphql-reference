@@ -1,6 +1,7 @@
 import type { Db } from './db/db.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
+import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
 import {
@@ -54,7 +55,8 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   const postSearch = createPostSearchService({
     index: options.postSearchIndex ?? stubPostSearchIndex,
   });
-  return { user, point, auth, onboarding, postSearch };
+  const featureFlag = createFeatureFlagService(db);
+  return { user, point, auth, onboarding, postSearch, featureFlag };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */

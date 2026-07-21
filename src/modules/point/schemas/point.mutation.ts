@@ -75,6 +75,7 @@ export function registerPointMutations(): void {
           args.input.fromUserId,
           args.input.toUserId,
           { amount: args.input.amount },
+          ctx.flags,
         );
         return pointRepo.getSpendById(ctx.db, spend.id, query);
       },
