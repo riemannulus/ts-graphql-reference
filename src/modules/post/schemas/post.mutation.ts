@@ -1,4 +1,5 @@
 import { builder } from '../../../graphql/builder.js';
+import { writer } from '../../../graphql/context.js';
 import * as postRepo from '../post.repo.js';
 
 /**
@@ -7,6 +8,11 @@ import * as postRepo from '../post.repo.js';
  * no re-fetch is needed (the write itself returns the selection). Compare the
  * point module, where writes go through a use-case that never sees `query`
  * and the resolver re-fetches.
+ *
+ * The write client comes from `writer(ctx)`: `ctx.db` is read-only by type, so
+ * `writer` is the explicit (and runtime-guarded) widening to a `DbClient` — it
+ * both satisfies the repo's write signature and marks "this is a tier-1 direct
+ * write" at the call site.
  */
 export function registerPostMutations(): void {
   const CreatePostInput = builder.inputType('CreatePostInput', {
@@ -23,7 +29,7 @@ export function registerPostMutations(): void {
       args: { input: t.arg({ type: CreatePostInput, required: true }) },
       resolve: (query, _root, args, ctx) =>
         postRepo.createPost(
-          ctx.write,
+          writer(ctx),
           {
             title: args.input.title,
             content: args.input.content,
@@ -38,7 +44,7 @@ export function registerPostMutations(): void {
     t.prismaField({
       type: 'Post',
       args: { id: t.arg.int({ required: true }) },
-      resolve: (query, _root, args, ctx) => postRepo.publishPost(ctx.write, args.id, query),
+      resolve: (query, _root, args, ctx) => postRepo.publishPost(writer(ctx), args.id, query),
     }),
   );
 }

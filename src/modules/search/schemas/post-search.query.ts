@@ -14,7 +14,7 @@ import * as postRepo from '../../post/post.repo.js';
  *      the wrapper's `hits` field into the same Prisma-shaped `query` a
  *      prismaField would receive — this is the one place the schema layer builds
  *      a `query` by hand, and it still STOPS at the repo (services never see it);
- *   3. `postRepo.findByIds` hydrates on `ctx.read`, preserving the index's rank
+ *   3. `postRepo.findByIds` hydrates on `ctx.db`, preserving the index's rank
  *      order. The same `queryFromInfo({ path })` handles a payload/union wrapper
  *      too (e.g. a `...Response` mutation result), not just search.
  */
@@ -53,7 +53,7 @@ export function registerPostSearchQueries(): void {
         });
         // The Post selection lives under `hits`, so build its query by hand.
         const query = queryFromInfo({ context: ctx, info, path: ['hits'], typeName: 'Post' });
-        const hits = await postRepo.findByIds(ctx.read, ids, query);
+        const hits = await postRepo.findByIds(ctx.db, ids, query);
         return { total, hits };
       },
     }),

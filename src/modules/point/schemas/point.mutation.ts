@@ -5,9 +5,9 @@ import * as pointRepo from '../point.read.repo.js';
  * Mutation path: the write goes through the use-case (which never sees the
  * GraphQL selection), then the resolver RE-FETCHES the result by id with the
  * Pothos `query` so the client's selection set — including relations — is
- * loaded optimally. `ctx.read` is the PRIMARY during mutations (see
- * selectReadClient), so the re-fetch reads-its-own-write even when a
- * replica is configured.
+ * loaded optimally. `ctx.db` is the PRIMARY during mutations (see `routeClient`
+ * in context.ts), so the re-fetch reads-its-own-write even when a replica is
+ * configured.
  */
 export function registerPointMutations(): void {
   const ChargePointInput = builder.inputType('ChargePointInput', {
@@ -44,7 +44,7 @@ export function registerPointMutations(): void {
           paidAmount: args.input.paidAmount,
           freeAmount: args.input.freeAmount,
         });
-        return pointRepo.getChargeById(ctx.read, charge.id, query);
+        return pointRepo.getChargeById(ctx.db, charge.id, query);
       },
     }),
   );
@@ -59,7 +59,7 @@ export function registerPointMutations(): void {
           amount: args.input.amount,
           reason: args.input.reason,
         });
-        return pointRepo.getSpendById(ctx.read, spend.id, query);
+        return pointRepo.getSpendById(ctx.db, spend.id, query);
       },
     }),
   );
@@ -76,7 +76,7 @@ export function registerPointMutations(): void {
           args.input.toUserId,
           { amount: args.input.amount },
         );
-        return pointRepo.getSpendById(ctx.read, spend.id, query);
+        return pointRepo.getSpendById(ctx.db, spend.id, query);
       },
     }),
   );

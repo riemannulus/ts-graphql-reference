@@ -41,7 +41,7 @@ type ReadMethod =
 /**
  * The read-projection subset of `DbClient`: every model delegate, but only its
  * read methods — no writes, no `$`-methods (raw SQL can write), no
- * transactions. This is what the query path provides (`ctx.read`) and what repo
+ * transactions. This is what the query path provides (`ctx.db`) and what repo
  * READ functions accept, so "the query path never writes" is a compile-time
  * fact, not a convention: a repo write function cannot even be called with a
  * `ReadDbClient`.

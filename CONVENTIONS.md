@@ -117,7 +117,7 @@ transaction's (and the lock's) protection.
 Layers are added when their first real content appears, **not before**:
 
 - No decisions (plain CRUD/projections) → `repo + schema` only. `post/` stops
-  here; its mutations call repo write functions directly on `ctx.write` (they
+  here; its mutations call repo write functions directly on `writer(ctx)` (they
   accept the Pothos `query`, so no re-fetch is needed).
 - No decision but an external dependency → `provider + service` (no core). The
   service is thin: it exists to hold the injected port in the container and give
@@ -135,16 +135,21 @@ Layers are added when their first real content appears, **not before**:
 - **The Pothos `query` object stops at the repo.** It is Prisma-shaped data (a
   translated selection set), so repo read functions accept and spread it —
   and nothing above the repo ever sees it. Service signatures stay pure domain.
-- **Query operations** resolve through repo read functions on `ctx.read`, the
-  per-operation routed read client (replica for queries, primary for mutations
-  — see README "RWDB / RODB routing"). Its type, `ReadDbClient`, carries only
-  the model read methods — no writes, no raw SQL, no transactions — so "the
-  query path never writes" is a compile-time fact.
+- **A resolver has ONE database handle, `ctx.db`** — the per-operation routed
+  client (replica for queries, primary for mutations — see README "RWDB / RODB
+  routing"). Its type, `ReadDbClient`, carries only the model read methods — no
+  writes, no raw SQL, no transactions — so "a resolver cannot write through
+  `ctx.db`" is a compile-time fact, uniform across queries and mutations. One
+  name, not a read/write pair the author has to choose between.
+- **Query operations** resolve through repo read functions on `ctx.db`.
 - **Mutations** call the use-case, then re-fetch the result by id with `query`
-  on `ctx.read` (the primary during mutations → read-your-writes). A tier-1
-  module (no service) executes its single-statement repo write on `ctx.write`
-  instead — always the primary, typed `DbClient`, so a resolver cannot open a
-  transaction through it (multi-statement writes belong to a use-case + `uow`).
+  on `ctx.db` (the primary during mutations → read-your-writes). A tier-1
+  module (no service) executes its single-statement repo write through
+  `writer(ctx)` — the ONE widening of the routed client back to a full
+  `DbClient`. It is runtime-guarded (throws outside a mutation) and honest
+  (during a mutation `ctx.db` already IS the primary); a resolver still cannot
+  open a transaction through it, so multi-statement writes stay with a use-case
+  + `uow`. `writer(ctx)` at a call site reads as "tier-1 direct write here".
 - **Use-cases read and write `db.rw` only.** Deciding on replica-lagged state
   is a correctness bug, not a performance tradeoff.
 - **Repos never pick a client** — it is always the caller's first argument:

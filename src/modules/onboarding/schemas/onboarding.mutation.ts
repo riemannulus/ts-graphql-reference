@@ -21,7 +21,7 @@ export function registerOnboardingMutations(): void {
         // Re-fetch with the selection AFTER the use-case's transaction
         // committed (on the primary — mutations route to rw), so a
         // `signUp { posts { ... } }` selection sees the welcome post.
-        return userRepo.getById(ctx.read, user.id, query);
+        return userRepo.getById(ctx.db, user.id, query);
       },
     }),
   );

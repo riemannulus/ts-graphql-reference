@@ -3,27 +3,53 @@ import { getOperationAST, OperationTypeNode, parse } from 'graphql';
 import type { Db, DbClient, ReadDbClient } from '../db/db.js';
 import type { Services } from '../services.js';
 
+/** What kind of GraphQL operation this request is — decided once, per request. */
+export type OperationKind = 'query' | 'mutation' | 'other';
+
 /** Per-request GraphQL context handed to every resolver. */
 export interface Context {
   /**
-   * The READ client: what the Pothos Prisma plugin (relations, `query`
-   * spreads) and repo read calls in resolvers run on. Routed per operation —
-   * `ro` for queries, `rw` for mutations (so a mutation's re-fetch
-   * reads-its-own-writes) — see `selectReadClient`. The type has no write
-   * methods: a resolver cannot write through it, by construction.
+   * The routed database client — the ONE handle a resolver touches, whatever
+   * the operation. Typed as `ReadDbClient` (no write methods), so a resolver
+   * cannot write through it *by construction* — that compile-time floor is the
+   * whole reason there is a single name instead of a read/write pair. Routed
+   * per operation: `ro` for queries (replica lag is fine for plain reads), `rw`
+   * for mutations (so a mutation's re-fetch reads-its-own-writes) — see
+   * `routeClient`.
+   *
+   * A tier-1 mutation that must write directly widens this same handle through
+   * `writer(ctx)` (below) — the one sanctioned, and runtime-guarded, write path
+   * out of a resolver.
    */
-  read: ReadDbClient;
+  db: ReadDbClient;
   /**
-   * The WRITE client: always the primary. For tier-1 modules only, whose
-   * mutations execute a single atomic repo write directly (see `post/`);
-   * graduated modules write through `ctx.services.*` instead. Typed as
-   * `DbClient`, so a resolver cannot open a transaction through it either —
-   * multi-statement writes belong to a use-case and `uow`.
+   * The operation kind, decided once by the factory. Its only consumer is
+   * `writer()`, which reads it to refuse write access outside a mutation;
+   * resolvers should not branch on it.
    */
-  write: DbClient;
+  operation: OperationKind;
   services: Services;
   req: FastifyRequest;
   reply: FastifyReply;
+}
+
+/**
+ * Widens the routed client to a full `DbClient` for a tier-1 mutation's direct
+ * write (see `post/`). This is the codebase's single write path from a
+ * resolver, and it is honest: during a mutation `ctx.db` IS `db.rw` (the
+ * factory routes it there), so the cast reveals a capability the object already
+ * has — it does not fabricate one. The runtime guard makes the type safe: call
+ * it from a query resolver (where `ctx.db` is the read-only replica) and it
+ * throws instead of handing back a client that cannot write.
+ *
+ * Graduated modules never call this — their mutations write through
+ * `ctx.services.*`, which owns transactions and the concurrency ladder.
+ */
+export function writer(ctx: Context): DbClient {
+  if (ctx.operation !== 'mutation') {
+    throw new Error('writer(ctx) is mutation-only: a query resolver has no write path');
+  }
+  return ctx.db as DbClient;
 }
 
 /** Long-lived dependencies created once in the composition root (app.ts). */
@@ -41,48 +67,60 @@ export interface ContextRequest {
 }
 
 /**
- * Routes the request's READ client between the primary and the replica by
- * operation type:
+ * Classifies the request's operation type by parsing the document once.
  *
- * - `query`    → `ro`. Plain reads are projections; replica lag is acceptable.
- * - `mutation` → `rw`. The re-fetch that fills a mutation's selection set
- *   (plus any `t.relation` under it) must read-your-writes — a replica may not
- *   have the row yet.
- * - anything unparseable → `rw`. Correctness over replica offload; an invalid
- *   document fails in Yoga's own validation right after.
- *
- * The document is parsed once more here (Yoga parses it again later). A
+ * The document is parsed here even though Yoga parses it again later; a
  * production app would hoist this into an envelop plugin to reuse Yoga's parse
- * result; the reference keeps it inline so the routing rule is visible in one
- * place.
+ * result. The reference keeps it inline so the routing rule stays in one place.
+ * Anything unparseable is `other` — Yoga's own validation rejects it right
+ * after, so the resolver never runs.
  */
-export function selectReadClient(
-  db: Db,
-  params?: { query?: string | null; operationName?: string | null },
-): ReadDbClient {
-  if (db.ro === db.rw || !params?.query) return db.rw;
+function classifyOperation(params?: {
+  query?: string | null;
+  operationName?: string | null;
+}): OperationKind {
+  if (!params?.query) return 'other';
   try {
     const operation = getOperationAST(parse(params.query), params.operationName ?? undefined);
-    return operation?.operation === OperationTypeNode.QUERY ? db.ro : db.rw;
+    if (operation?.operation === OperationTypeNode.QUERY) return 'query';
+    if (operation?.operation === OperationTypeNode.MUTATION) return 'mutation';
+    return 'other';
   } catch {
-    return db.rw;
+    return 'other';
   }
+}
+
+/**
+ * Routes the request's client between the primary and the replica by operation:
+ *
+ * - `query`             → `ro`. Plain reads are projections; replica lag is fine.
+ * - `mutation` / `other`→ `rw`. A mutation's re-fetch (plus any `t.relation`
+ *   under it) must read-your-writes, and correctness beats replica offload for
+ *   anything we could not classify.
+ *
+ * With no replica configured (`db.ro === db.rw`) everything is the primary.
+ */
+function routeClient(db: Db, operation: OperationKind): ReadDbClient {
+  return operation === 'query' ? db.ro : db.rw;
 }
 
 /**
  * Builds the per-request context factory.
  *
  * The expensive, long-lived dependencies (db, services) are created once and
- * closed over here; only request-scoped values (req/reply, the routed read
- * client) are computed per call. This is the single place where dependencies
- * enter the GraphQL layer.
+ * closed over here; only request-scoped values (req/reply, the routed client,
+ * the operation kind) are computed per call. This is the single place where
+ * dependencies enter the GraphQL layer.
  */
 export function createContextFactory(deps: ContextDeps) {
-  return ({ req, reply, params }: ContextRequest): Context => ({
-    read: selectReadClient(deps.db, params),
-    write: deps.db.rw,
-    services: deps.services,
-    req,
-    reply,
-  });
+  return ({ req, reply, params }: ContextRequest): Context => {
+    const operation = classifyOperation(params);
+    return {
+      db: routeClient(deps.db, operation),
+      operation,
+      services: deps.services,
+      req,
+      reply,
+    };
+  };
 }
