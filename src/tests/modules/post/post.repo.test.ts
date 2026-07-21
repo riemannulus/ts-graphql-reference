@@ -91,7 +91,7 @@ describe('post repo', () => {
       const a = await postRepo.createPost(prisma, { title: 'a', authorId: author.id });
       const b = await postRepo.createPost(prisma, { title: 'b', authorId: author.id });
 
-      // Mimic a queryFromInfo result that selected only `title` (no id).
+      // Mimic a Pothos `query` that selected only `title` (no id).
       const rows = await postRepo.findByIds(prisma, [b.id, a.id], { select: { title: true } });
       expect(rows.map((r) => r.title)).toEqual(['b', 'a']);
     });

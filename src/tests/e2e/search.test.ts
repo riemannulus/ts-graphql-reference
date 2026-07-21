@@ -5,9 +5,9 @@ import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
 /**
  * A fake index injected via buildApp: it does no real matching, it just returns
- * canned ids in a chosen rank order, which is enough to prove the wiring —
- * queryFromInfo maps the nested `hits` selection, and findByIds hydrates in that
- * order (including relations). `ranked` is reset per test.
+ * canned ids in a chosen rank order, which is enough to prove the wiring — the
+ * `hits` prismaField receives the nested selection, and findByIds hydrates in
+ * that order (including relations). `ranked` is reset per test.
  */
 let ranked: number[] = [];
 let reportedTotal = 0;
@@ -58,7 +58,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('searchPosts (external-key hydration via queryFromInfo)', () => {
+describe('searchPosts (external-key hydration via the hits prismaField)', () => {
   it('returns hits in the index rank order with the reported total', async () => {
     const [alpha, bravo, charlie] = await seed();
     ranked = [charlie!, alpha!, bravo!]; // index ranking, not DB order
@@ -76,12 +76,12 @@ describe('searchPosts (external-key hydration via queryFromInfo)', () => {
     ]);
   });
 
-  it('loads a nested relation under hits — the reason queryFromInfo is needed', async () => {
+  it('loads a nested relation under hits — the selection reaches the field query', async () => {
     const [alpha] = await seed();
     ranked = [alpha!];
     reportedTotal = 1;
 
-    // The `author` relation under `hits` must be loaded by the by-hand query.
+    // The `author` relation under `hits` must ride the query Pothos hands the field.
     const res = await gql(
       'query { searchPosts(term: "x") { hits { title author { email } } } }',
     );

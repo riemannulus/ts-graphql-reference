@@ -24,8 +24,9 @@ export interface PostSearchIndex {
 /**
  * Production binding — intentionally left UNIMPLEMENTED, like the OAuth stub.
  * Wiring it up means pointing `search` at your Elasticsearch/OpenSearch client;
- * everything around it (the service seam, `queryFromInfo` selection mapping, and
- * order-preserving hydration) is complete and tested with a fake index.
+ * everything around it (the service seam, the `hits` prismaField's selection
+ * mapping, and order-preserving hydration) is complete and tested with a fake
+ * index.
  */
 export const stubPostSearchIndex: PostSearchIndex = {
   search() {
