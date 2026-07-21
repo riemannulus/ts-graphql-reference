@@ -1,10 +1,20 @@
+import { InMemoryProvider } from '@openfeature/server-sdk';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../app.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 
-// Inject a test-DB-backed client; buildApp uses it as both rw and ro.
+// Inject a test-DB-backed client; buildApp uses it as both rw and ro. The
+// transfer flow is gated by the pointTransfer flag, so inject an OpenFeature
+// InMemoryProvider that turns it on — the feature-flag mechanism itself (crepe
+// DB provider, gate-off path) is proven in e2e/feature-flag.test.ts.
 const prisma = await makeTestPrisma();
-const { app } = buildApp({ prisma, logger: false });
+const { app } = buildApp({
+  prisma,
+  logger: false,
+  flagProvider: new InMemoryProvider({
+    pointTransfer: { variants: { on: true, off: false }, defaultVariant: 'on', disabled: false },
+  }),
+});
 
 interface GqlResult {
   data?: Record<string, any>;

@@ -103,6 +103,12 @@ src/
                          #   orderLocks (global order); acquire SQL lives in uow.ts
     lock-registry.ts     # the one place that says WHAT is lockable (lockKey);
                          #   add an entity here — the machinery in locks.ts is fixed
+  flags/                 # feature flags (OpenFeature) — the read facade, mirrors db/locks
+    flags.ts             # pure machinery: the gate spec + defineFlags + FlagReader type
+    flag-registry.ts     # the one place that says WHAT is flag-gated (FLAGS);
+                         #   add a flag here — the machinery in flags.ts is fixed
+    flag-reader.ts       # binds FLAGS to the OpenFeature client per request
+                         #   (memoized); the uow.ts-style I/O shell over the machinery
   graphql/               # GraphQL layer assembly
     builder.ts           # Pothos builder (plugins). Imports NO feature modules, so
                          #   modules can import it without a cycle. Pulls the client
@@ -148,6 +154,11 @@ src/
       oauth.service.ts   # use-case: provisions a user via the user service
       routes/            # HTTP delivery layer (the peer of schemas/)
         oauth.route.ts   # registerGoogleOAuth(app, svc)
+    feature-flag/      # the crepe flag store, adapted to OpenFeature (no schema —
+      feature-flag.core.ts     #   pure: STAGES + parseStage + isActive (the crepe rule)
+      feature-flag.repo.ts     #   Prisma: live-row lookup + admin writes
+      feature-flag.service.ts  #   admin use-cases (upsert / soft-delete)
+      feature-flag.provider.ts #   the DB-backed OpenFeature Provider (the adapter)
     onboarding/        # cross-module use-case (one tx across user + post)
       onboarding.content.ts
       onboarding.service.ts
@@ -252,6 +263,41 @@ exactly one service from the container built in the composition root; it never
 sees the `Db` handles or the GraphQL per-request context. The provider HTTP
 itself is left unimplemented behind the `GoogleOAuthClient` port; everything
 around it is complete and tested end-to-end with a fake.
+
+### Feature flags (OpenFeature)
+
+Feature switches go through [OpenFeature](https://openfeature.dev): the code depends
+on the vendor-neutral SDK, and a **provider** plugs in behind it — so swapping the
+backend (flagd, Unleash, LaunchDarkly) later is a provider change with no call-site
+edits. The reference ships one provider, `DbFeatureFlagProvider`
+(`modules/feature-flag/`), which adapts the **crepe** flag model: a flag is active
+only for the deploy `STAGE`, inside its `[enableAfter, disableAfter]` window, and
+while not soft-deleted — safe-default **off** (a missing backend fails every gate
+closed). Tests inject the SDK's `InMemoryProvider` instead (`buildApp({ flagProvider })`).
+
+Reading mirrors the locks split (`db/locks.ts` + `db/lock-registry.ts`):
+
+- `flags/flags.ts` — pure machinery (`defineFlags`, the `FlagReader` type).
+- `flags/flag-registry.ts` — the one growing file: WHAT is flag-gated (`FLAGS`),
+  each flag's default, and its JSDoc.
+- `flags/flag-reader.ts` — binds the registry to the OpenFeature client per request
+  (the `uow.ts`-style I/O shell); reads are memoized so a flag can't flip mid-request.
+
+`ctx.flags` is the per-request reader, and the three flag-use modes each ship as a
+one-line-in-the-service example (no `if`-sprawl):
+
+- **gate / kill switch** — `point.transfer` calls `flags.assert.pointTransfer()`
+  (throws `FeatureDisabledError` → client code `UNAVAILABLE` when off);
+- **rule change** — the same transfer reads `flags.pointTransferPreferFree()` and
+  passes the boolean into the pure core (`planSpend`), which owns the branch;
+- **implementation swap** — `onboarding.register` reads `flags.welcomeVariant()` and
+  the core selects the welcome-post builder from an exhaustive `Record<Variant, …>`.
+
+Layers that must NOT read a flag — core, repo, schema — are lint-blocked from
+importing the facade (a core receives a flag value as DATA); a service may import the
+`FlagReader` *type* but not the SDK or the reader factory. Writing flags is the
+module's admin service (`ctx.services.featureFlag`); a staff-gated delivery is a
+future addition (gannet has no authorization layer yet).
 
 ### Error handling
 

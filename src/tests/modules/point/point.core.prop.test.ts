@@ -57,6 +57,20 @@ test.prop([arbLedger, arbSpendAmount])(
 );
 
 test.prop([arbLedger, arbSpendAmount])(
+  'preferFree (rule-change flag): free points are drained first, still conserving the amount',
+  (ledger, amount) => {
+    fc.pre(sufficient(ledger, amount));
+    const plan = planSpend(ledger.snapshot, ledger.charges, amount, { preferFree: true });
+    // Free is consumed first; paid covers only the remainder.
+    expect(plan.freeUsage).toBe(Math.min(amount, ledger.snapshot.freeAmount));
+    expect(plan.paidUsage + plan.freeUsage).toBe(amount);
+    if (plan.paidUsage > 0) {
+      expect(plan.freeUsage).toBe(ledger.snapshot.freeAmount);
+    }
+  },
+);
+
+test.prop([arbLedger, arbSpendAmount])(
   'FIFO: allocations are an in-order subsequence of the charges',
   (ledger, amount) => {
     fc.pre(sufficient(ledger, amount));

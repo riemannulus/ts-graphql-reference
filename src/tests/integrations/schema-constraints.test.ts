@@ -68,4 +68,52 @@ describe('database CHECK constraints', () => {
         VALUES (${userId}, 10, 5, 14, 'inconsistent')`,
     ).rejects.toThrow(/PointSpend_totalAmount_check/);
   });
+
+  it('rejects an out-of-set feature-flag stage (in sync with STAGES)', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "updatedAt")
+        VALUES ('f', 'STAGING', CURRENT_TIMESTAMP)`,
+    ).rejects.toThrow(/FeatureFlag_stage_check/);
+  });
+
+  it('accepts a NULL stage and every known stage', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "updatedAt")
+        VALUES ('none', NULL, CURRENT_TIMESTAMP)`,
+    ).resolves.toBe(1);
+    await Promise.all(
+      ['LOCAL', 'DEV', 'QA', 'STG', 'PROD'].map((stage) =>
+        expect(
+          prisma.$executeRawUnsafe(
+            `INSERT INTO "FeatureFlag" ("name", "stage", "updatedAt") VALUES ('flag_${stage}', '${stage}', CURRENT_TIMESTAMP)`,
+          ),
+        ).resolves.toBe(1),
+      ),
+    );
+  });
+
+  it('rejects a feature-flag window that ends before it starts', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "enableAfter", "disableAfter", "updatedAt")
+        VALUES ('f', 'PROD', '2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z', CURRENT_TIMESTAMP)`,
+    ).rejects.toThrow(/FeatureFlag_window_check/);
+  });
+
+  it('accepts an equal-bounds feature-flag window (the bound is inclusive)', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "enableAfter", "disableAfter", "updatedAt")
+        VALUES ('eq', 'PROD', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', CURRENT_TIMESTAMP)`,
+    ).resolves.toBe(1);
+  });
+
+  it('rejects a second LIVE row of the same name (one live flag per name)', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "updatedAt")
+        VALUES ('dup', 'PROD', CURRENT_TIMESTAMP)`,
+    ).resolves.toBe(1);
+    await expect(
+      prisma.$executeRaw`INSERT INTO "FeatureFlag" ("name", "stage", "updatedAt")
+        VALUES ('dup', 'DEV', CURRENT_TIMESTAMP)`,
+    ).rejects.toThrow(/FeatureFlag_name_live_key/);
+  });
 });

@@ -1,6 +1,9 @@
+import type { Client, EvaluationContext } from '@openfeature/server-sdk';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getOperationAST, OperationTypeNode, parse } from 'graphql';
 import type { Db, DbClient, ReadDbClient } from '../db/db.js';
+import { createFlagReader } from '../flags/flag-reader.js';
+import { FLAGS, type FlagReader } from '../flags/flag-registry.js';
 import type { Services } from '../services.js';
 
 /** What kind of GraphQL operation this request is — decided once, per request. */
@@ -29,6 +32,14 @@ export interface Context {
    */
   operation: OperationKind;
   services: Services;
+  /**
+   * The per-request feature-flag reader, bound to the app's OpenFeature client
+   * and this request's evaluation context. Reads are memoized per request, so a
+   * flag read here and in the service it calls always agree (see `flag-reader.ts`).
+   * A resolver gates exposure with `ctx.flags.assert.<gate>()` or passes the
+   * reader to a use-case that owns the decision (see `point.transfer`).
+   */
+  flags: FlagReader;
   req: FastifyRequest;
   reply: FastifyReply;
 }
@@ -56,6 +67,24 @@ export function writer(ctx: Context): DbClient {
 export interface ContextDeps {
   db: Db;
   services: Services;
+  /**
+   * The app's OpenFeature client (bound to the DB-backed provider in app.ts).
+   * One client, closed over here; a fresh per-request reader is built from it.
+   */
+  flagClient: Client;
+}
+
+/**
+ * The per-request OpenFeature evaluation context — the targeting seam. Empty
+ * today: gannet has no authenticated principal on the GraphQL context (auth is a
+ * separate OAuth REST flow that provisions users out of band). When a principal
+ * lands, set `targetingKey` (the user id) here; every flag read already forwards
+ * this context to the provider, so per-user targeting becomes a provider change
+ * with no call-site edits. The crepe DB provider is stage + time-window only, so
+ * it ignores the context regardless.
+ */
+function buildEvalContext(_req: FastifyRequest): EvaluationContext {
+  return {};
 }
 
 /** The per-request values Yoga hands the context factory. */
@@ -119,6 +148,7 @@ export function createContextFactory(deps: ContextDeps) {
       db: routeClient(deps.db, operation),
       operation,
       services: deps.services,
+      flags: createFlagReader(FLAGS, deps.flagClient, buildEvalContext(req)),
       req,
       reply,
     };

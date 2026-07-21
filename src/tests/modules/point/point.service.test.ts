@@ -7,8 +7,13 @@ import {
   PointTransferToSelfError,
 } from '../../../modules/point/point.core.js';
 import * as pointRepo from '../../../modules/point/point.write.repo.js';
-import { ConcurrentUpdateError } from '../../../foundation/errors.js';
+import { ConcurrentUpdateError, FeatureDisabledError } from '../../../foundation/errors.js';
+import { fakeFlagReader } from '../../support/flag-reader-fake.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
+
+// transfer is gated by the pointTransfer flag; these tests inject a fake reader
+// (default ON) so the transfer path runs, and one case flips it OFF.
+const enabled = fakeFlagReader({ pointTransfer: true });
 
 const prisma = await makeTestPrisma();
 const points = createPointService({ rw: prisma, ro: prisma });
@@ -127,7 +132,7 @@ describe('PointService.transfer', () => {
     const { from, to } = await makePair();
     await points.charge(from.id, { paidAmount: 100, freeAmount: 50 });
 
-    const spend = await points.transfer(from.id, to.id, { amount: 120 });
+    const spend = await points.transfer(from.id, to.id, { amount: 120 }, enabled);
     // Sender spends paid-first: 100 paid + 20 free.
     expect(spend).toMatchObject({ userId: from.id, paidAmount: 100, freeAmount: 20 });
 
@@ -141,11 +146,31 @@ describe('PointService.transfer', () => {
     expect(toCharge).toMatchObject({ state: 'USABLE', unspentPaidAmount: 100, unspentFreeAmount: 20 });
   });
 
+  it('spends free points first when the pointTransferPreferFree flag is on (rule change)', async () => {
+    const { from, to } = await makePair();
+    await points.charge(from.id, { paidAmount: 100, freeAmount: 50 });
+
+    const spend = await points.transfer(
+      from.id,
+      to.id,
+      { amount: 120 },
+      fakeFlagReader({ pointTransfer: true, pointTransferPreferFree: true }),
+    );
+    // Free-first: all 50 free before any paid, then 70 paid.
+    expect(spend).toMatchObject({ paidAmount: 70, freeAmount: 50 });
+
+    const fromBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: from.id } });
+    expect(fromBalance).toMatchObject({ paidAmount: 30, freeAmount: 0, totalAmount: 30 });
+    // The receiver is credited with the same paid/free split.
+    const toBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: to.id } });
+    expect(toBalance).toMatchObject({ paidAmount: 70, freeAmount: 50, totalAmount: 120 });
+  });
+
   it('rejects a transfer beyond the sender balance, writing nothing', async () => {
     const { from, to } = await makePair();
     await points.charge(from.id, { paidAmount: 10, freeAmount: 0 });
 
-    await expect(points.transfer(from.id, to.id, { amount: 11 })).rejects.toBeInstanceOf(
+    await expect(points.transfer(from.id, to.id, { amount: 11 }, enabled)).rejects.toBeInstanceOf(
       InsufficientPointError,
     );
     const fromBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: from.id } });
@@ -158,11 +183,26 @@ describe('PointService.transfer', () => {
     const user = await makeUser('self@example.com');
     await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
 
-    await expect(points.transfer(user.id, user.id, { amount: 10 })).rejects.toBeInstanceOf(
+    await expect(points.transfer(user.id, user.id, { amount: 10 }, enabled)).rejects.toBeInstanceOf(
       PointTransferToSelfError,
     );
     const balance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: user.id } });
     expect(balance.totalAmount).toBe(100); // untouched
+    expect(await prisma.pointSpend.count()).toBe(0);
+  });
+
+  it('refuses the transfer when the pointTransfer flag is off, writing nothing', async () => {
+    const { from, to } = await makePair();
+    await points.charge(from.id, { paidAmount: 100, freeAmount: 0 });
+
+    const disabled = fakeFlagReader({ pointTransfer: false });
+    await expect(points.transfer(from.id, to.id, { amount: 60 }, disabled)).rejects.toBeInstanceOf(
+      FeatureDisabledError,
+    );
+    // The gate throws before any lock or write, so nothing moved.
+    const fromBalance = await prisma.pointBalance.findUniqueOrThrow({ where: { userId: from.id } });
+    expect(fromBalance.totalAmount).toBe(100);
+    expect(await prisma.pointCharge.count({ where: { userId: to.id } })).toBe(0);
     expect(await prisma.pointSpend.count()).toBe(0);
   });
 });
