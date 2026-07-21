@@ -33,8 +33,7 @@
         "src/**/*.state.ts",
         "src/**/*.value.ts",
         "src/**/*.core.ts",
-        "src/**/*.content.ts",
-        "src/db/locks.ts"
+        "src/**/*.content.ts"
       ],
       "rules": {
         "no-restricted-imports": [
@@ -53,10 +52,39 @@
                   "**/db*",
                   "**/uow*",
                   "**/locks*",
+                  "**/lock-registry*",
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts, and locks.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/db/locks.ts", "src/db/lock-registry.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/*",
+                  "fastify",
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "**/prisma*",
+                  "**/db*",
+                  "**/uow*",
+                  "**/*.repo*",
+                  "**/*.service*"
+                ],
+                "message": "The advisory-lock key policy (locks.ts machinery + lock-registry.ts) must stay pure: no I/O, transactions, or framework deps. The two may reference each other (registry → machinery), but nothing in the repo/service/db shell."
               }
             ]
           }
@@ -94,7 +122,8 @@
                   "**/builder*",
                   "fastify",
                   "**/uow*",
-                  "**/locks*"
+                  "**/locks*",
+                  "**/lock-registry*"
                 ],
                 "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, or transactions. It receives a DbClient (rw/ro/tx — the caller's choice, who also opens the transaction and takes the locks) and returns rows."
               }
@@ -111,7 +140,7 @@
           {
             "patterns": [
               {
-                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*"],
+                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*", "**/lock-registry*"],
                 "message": "Schema files resolve through ctx (the routed selection client + services) and repo read functions — they never construct or import database handles, open transactions, or take locks (that is the service's job)."
               }
             ]
@@ -135,7 +164,8 @@
                   "**/prisma.js",
                   "**/db.js",
                   "**/uow*",
-                  "**/locks*"
+                  "**/locks*",
+                  "**/lock-registry*"
                 ],
                 "message": "Route files are the HTTP delivery layer (the peer of schemas/): they register on Fastify and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, or locks — the service owns those."
               }

@@ -99,8 +99,10 @@ src/
     prisma-errors.ts     # pure Prisma error-code predicates (P2002 / P2025 / P2034)
     uow.ts               # unit of work: run / snapshot / serialized / trySerialized
                          #   — the concurrency ladder, the only way to open a tx
-    locks.ts             # pure advisory-lock key policy: registry + global order
-                         #   (orderLocks); the acquire SQL itself lives in uow.ts
+    locks.ts             # pure advisory-lock machinery: LockKey + defineLocks +
+                         #   orderLocks (global order); acquire SQL lives in uow.ts
+    lock-registry.ts     # the one place that says WHAT is lockable (lockKey);
+                         #   add an entity here — the machinery in locks.ts is fixed
   graphql/               # GraphQL layer assembly
     builder.ts           # Pothos builder (plugins). Imports NO feature modules, so
                          #   modules can import it without a cycle. Pulls the client

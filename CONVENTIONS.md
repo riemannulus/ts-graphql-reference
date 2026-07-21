@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `locks.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
 
 ```
@@ -25,8 +25,9 @@ schema ──→ service ──→ repo ──→ prisma
 **Enforced by oxlint** (`.oxlintrc.json` `no-restricted-imports` per layer), so
 these are not just guidelines: the core cannot import Prisma/GraphQL/repos,
 services and repos cannot import the builder or Pothos, schema files cannot
-import the db handles, the core/repo/schema layers cannot import `uow`/`locks`
-(only a service opens a transaction or takes a lock), `builder.ts` cannot import
+import the db handles, the core/repo/schema layers cannot import
+`uow`/`locks`/`lock-registry` (only a service opens a transaction or takes a
+lock), `builder.ts` cannot import
 feature modules, and `import/no-cycle` keeps the graph acyclic. Two rules the
 linter cannot see, reviewed by hand:
 
@@ -93,9 +94,9 @@ spends and charges with optimistic guards (levels 0–3) and never locks;
 `point.transfer` is the one `uow.serialized` example, and even it keeps the
 guards. Three rules keep locking safe:
 
-- **Keys come from one registry (`locks.ts`), acquired in one global order.**
-  Two transactions locking an overlapping set cannot deadlock because every
-  caller sorts the keys the same way (`orderLocks` — pure, property-tested).
+- **Keys come from one registry (`lock-registry.ts`), acquired in one global
+  order.** Two transactions locking an overlapping set cannot deadlock because
+  every caller sorts the keys the same way (`orderLocks` — pure, property-tested).
   Append a new namespace at the END; never reorder.
 - **A lock only serializes writers that take the SAME key.** Mixing a locked
   writer with a lock-free one that touches the same rows protects nothing — so a
@@ -105,8 +106,9 @@ guards. Three rules keep locking safe:
   non-blocking variant for periodic jobs that must yield rather than queue.
 - **Raw lock SQL lives only in `uow.ts`** (beside its `SET TRANSACTION`),
   reached through `uow.serialized` — never from a service or repo directly.
-  `locks.ts` stays pure — the key registry and the `orderLocks` law, lint-enforced
-  free of I/O — so the deadlock-freedom guarantee is a property, not a side effect.
+  `lock-registry.ts` (the key registry) and `locks.ts` (the `orderLocks` law and
+  the `defineLocks` builder) stay pure, lint-enforced free of I/O — so the
+  deadlock-freedom guarantee is a property, not a side effect.
 
 Reads inside a locked or snapshot section run on the `tx` handle the rung passes
 in — never `db.ro` or a module-level client, which would read outside the
