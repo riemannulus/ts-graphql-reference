@@ -94,5 +94,73 @@ export default {
     // NodeNext ESM (`.js` specifiers resolving to `.ts` sources) is handled by
     // dependency-cruiser's resolver out of the box, keyed off this tsconfig.
     tsConfig: { fileName: 'tsconfig.json' },
+    // Presentation only — styles the `dot` reporter behind `pnpm graph:modules`
+    // (the SVGs in src/modules/README.md). Does NOT touch the `err` reporter
+    // that `pnpm check:graph` uses, so it cannot change what CI enforces.
+    reporterOptions: {
+      dot: {
+        theme: {
+          replace: true,
+          graph: {
+            bgcolor: 'transparent',
+            rankdir: 'LR',
+            splines: 'spline',
+            fontname: 'Helvetica',
+            fontsize: '13',
+            nodesep: '0.32',
+            ranksep: '0.65',
+            pad: '0.25',
+            color: '#e2e8f0',
+            fontcolor: '#94a3b8',
+            fillcolor: '#f8fafc80',
+            style: 'rounded,filled',
+          },
+          node: {
+            shape: 'box',
+            style: 'rounded,filled',
+            height: '0.4',
+            margin: '0.22,0.09',
+            fontname: 'Helvetica',
+            fontsize: '12',
+            color: '#cbd5e1',
+            fillcolor: '#ffffff',
+            fontcolor: '#0f172a',
+            penwidth: '1.4',
+          },
+          edge: {
+            color: '#94a3b8',
+            penwidth: '1.6',
+            arrowhead: 'normal',
+            arrowsize: '0.75',
+          },
+          // Each module gets its own soft fill + matching border so both the
+          // collapsed overview and the file-level graph read at a glance.
+          modules: [
+            { criteria: { source: '^src/modules/user' }, attributes: { fillcolor: '#eff6ff', color: '#3b82f6' } },
+            { criteria: { source: '^src/modules/post' }, attributes: { fillcolor: '#f0fdf4', color: '#22c55e' } },
+            { criteria: { source: '^src/modules/point' }, attributes: { fillcolor: '#fff7ed', color: '#f97316' } },
+            { criteria: { source: '^src/modules/feature-flag' }, attributes: { fillcolor: '#faf5ff', color: '#a855f7' } },
+            { criteria: { source: '^src/modules/search' }, attributes: { fillcolor: '#ecfeff', color: '#06b6d4' } },
+            { criteria: { source: '^src/modules/auth' }, attributes: { fillcolor: '#fdf2f8', color: '#ec4899' } },
+            { criteria: { source: '^src/modules/onboarding' }, attributes: { fillcolor: '#fefce8', color: '#eab308' } },
+          ],
+          // Edges tinted by their target module; the type-only edge (auth→user)
+          // stays dashed with a hollow head so the erased seam is unmistakable.
+          dependencies: [
+            { criteria: { resolved: '^src/modules/user' }, attributes: { color: '#3b82f6' } },
+            { criteria: { resolved: '^src/modules/post' }, attributes: { color: '#22c55e' } },
+            { criteria: { resolved: '^src/modules/point' }, attributes: { color: '#f97316' } },
+            { criteria: { resolved: '^src/modules/feature-flag' }, attributes: { color: '#a855f7' } },
+            { criteria: { resolved: '^src/modules/search' }, attributes: { color: '#06b6d4' } },
+            { criteria: { resolved: '^src/modules/auth' }, attributes: { color: '#ec4899' } },
+            { criteria: { resolved: '^src/modules/onboarding' }, attributes: { color: '#eab308' } },
+            {
+              criteria: { dependencyTypes: 'type-only' },
+              attributes: { style: 'dashed', arrowhead: 'onormal', penwidth: '1.3' },
+            },
+          ],
+        },
+      },
+    },
   },
 };
