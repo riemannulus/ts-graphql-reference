@@ -177,6 +177,49 @@ Layers are added when their first real content appears, **not before**:
   does). See `modules/search/`. The same `queryFromInfo({ path })` maps a
   payload/union `...Response` mutation result, not just search.
 
+### Per-parent reads and aggregates (the no-N+1 rules)
+
+A field that needs data *per parent node* — the author of each post, how many
+posts each user has — is resolved by riding the PARENT's one query, never by a
+repo call inside the field resolver. That call is the N+1 smell; and "fixing"
+it by importing another module's repo from a repo is the coupling these rules
+exist to prevent. Pick the first rung that fits:
+
+| Per-parent need | Tool | Worked example |
+| --- | --- | --- |
+| follow a relation | `t.relation` (+ the `query` spread in the root resolver) | `Post.author`, `User.posts` |
+| count a relation (optionally filtered) | `t.relationCount` | `User.postCount` / `publishedPostCount` (post module) |
+| an aggregate with domain meaning (a balance, a total) | materialize it as an owned row, kept consistent by the owning module's plan executors; expose with `t.relation` | `PointBalance` |
+| an aggregate over the page, not the node | a wrapper-type field computed once per request | `SearchPostsResult.total` |
+| rows for ids from OUTSIDE the database | repo `findByIds` + `queryFromInfo` | `search/` |
+
+The first two rungs compile into the parent's single Prisma query (`include` /
+`_count` sub-selects), so a list of N parents resolves in one statement — the
+query-merging equivalent of a DataLoader with none of the per-request
+machinery. Even off the happy path (a prisma object reached without a `query`,
+e.g. under a hand-built wrapper) the plugin falls back to Prisma's fluent API,
+whose same-tick `findUnique` batching still collapses N lookups into one `IN`
+query. `tests/e2e/query-batching.test.ts` pins the law that matters: the SQL
+statement count is FLAT in the row count (per level, never per row).
+
+Two structural rules fall out:
+
+- **Repos never import another module's repo.** Cross-module READ composition
+  is *declared*, not called: the relation lives in `schema.prisma`, and the
+  module that owns the aggregated rows attaches the field to the other
+  module's object with `builder.prismaObjectField` (see the post counts on
+  `User`, registered in `post/schemas/post.type.ts`) — the schema-layer
+  analogue of onboarding's service-level WRITE composition. Neither module's
+  repo learns about the other; a filtered count's `where` is declarative
+  plugin config, not a filter smuggled through a repo signature.
+- **A DataLoader is earned, not default** (the graduation rule again). It
+  enters only with the first per-parent source Prisma cannot see — an external
+  port fanned out per node. When that day comes, the batch function is a repo
+  projection (`findByIds` is already loader-shaped: ids in, order restored,
+  drift skipped) and the loader itself is per-request state on the context,
+  beside `ctx.flags`' memoization — services never see it. Until then, a
+  loader would re-implement what the query merge already guarantees.
+
 ## 3. Invariants as code (and as constraints)
 
 - **Total functions over partial ones.** A core function must be defined for

@@ -22,11 +22,25 @@ const SCHEMA_DDL = migrationSql();
  * committed migrations applied. Same dialect as production Postgres, but with no
  * server and no Docker — and isolated per call, so each test file gets its own
  * throwaway database. Requires `prisma generate` (provider = postgresql) first.
+ *
+ * `onQuery` (optional) receives every SQL statement the client emits, so a test
+ * can assert on query COUNT — the seam behind the no-N+1 law in
+ * e2e/query-batching.test.ts.
  */
-export async function makeTestPrisma(): Promise<PrismaClient> {
+export async function makeTestPrisma(
+  opts: { onQuery?: (sql: string) => void } = {},
+): Promise<PrismaClient> {
   const pglite = new PGlite();
   await pglite.exec(SCHEMA_DDL);
-  return new PrismaClient({ adapter: new PrismaPGlite(pglite) });
+  const { onQuery } = opts;
+  if (!onQuery) return new PrismaClient({ adapter: new PrismaPGlite(pglite) });
+
+  const client = new PrismaClient({
+    adapter: new PrismaPGlite(pglite),
+    log: [{ emit: 'event', level: 'query' }],
+  });
+  client.$on('query', (event) => onQuery(event.query));
+  return client;
 }
 
 /**
