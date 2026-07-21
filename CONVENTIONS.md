@@ -31,7 +31,26 @@ import the db handles, the core/repo/schema layers cannot import
 takes a lock, and only the delivery/service layer is handed a flag reader (a core
 receives a flag value as passed-in data). A service may import the `FlagReader`
 *type* but not the OpenFeature SDK or the reader factory; `builder.ts` cannot
-import feature modules, and `import/no-cycle` keeps the graph acyclic. Two rules
+import feature modules, and `import/no-cycle` keeps the file graph acyclic.
+
+The **shape** of the module graph is checked separately by dependency-cruiser
+(`pnpm check:graph`, rules in `.dependency-cruiser.mjs`), which sees what
+per-file lint cannot:
+
+- **No cycles of value imports.** `import type` is erased at compile time and
+  is the sanctioned cycle breaker (`builder.ts` → `context.ts`,
+  `context.ts` → `services.ts`), so only value edges count.
+- **Cross-module dependencies come from an explicit allowlist** — today
+  `onboarding → {user, post}`, `search → post`, and `auth → user` (types
+  only; the service arrives injected). Two modules can entangle with no
+  file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
+  which `import/no-cycle` cannot see — the allowlist can, and since its
+  sanctioned edges form a DAG by construction, module-level acyclicity holds
+  unless the allowlist itself is edited, which is the review point.
+- **The composition root stays at the top**: nothing below `app.ts` /
+  `services.ts` / `server.ts` may import them as values.
+
+Two rules
 the linter cannot see, reviewed by hand:
 
 - **A business `if` in a service or repo is a leaked decision** — move it to
@@ -236,7 +255,9 @@ stays Prisma-free.
   function parameters (`OnboardingServiceDeps.createPost`).
 - **Cross-module use-cases** (onboarding) open ONE `db.rw.$transaction` and
   compose the other modules' repo write functions inside it; decisions still
-  come from each owning module's core. Module services depend one way only.
+  come from each owning module's core. Module services depend one way only —
+  enforced by the cross-module allowlist in `.dependency-cruiser.mjs`
+  (`pnpm check:graph`).
 - The schema is assembled from **one register function per module** —
   `registerXxxModule()` in that module's `schemas/index.ts`, called once in
   `schema.ts`. No side-effect imports, no import-order contract beyond

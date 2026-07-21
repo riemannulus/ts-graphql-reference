@@ -77,6 +77,7 @@ query {
 | `pnpm start`           | Run the compiled server                           |
 | `pnpm typecheck`       | `tsc --noEmit` (includes tests)                   |
 | `pnpm lint`            | Lint with oxlint (`lint:fix` to auto-fix)         |
+| `pnpm check:graph`     | Module-graph rules via dependency-cruiser (cycles, cross-module allowlist) |
 | `pnpm test`            | Run the Vitest suite                              |
 | `pnpm test:watch`      | Vitest in watch mode                              |
 | `pnpm prisma:generate` | Regenerate the Prisma client + Pothos types       |
@@ -175,7 +176,10 @@ src/
 
 > Layer rules, the plan pattern, and the module "graduation rule" are
 > documented in [CONVENTIONS.md](./CONVENTIONS.md) — and enforced by oxlint
-> `no-restricted-imports` per layer, so they are not just guidelines.
+> `no-restricted-imports` per layer, so they are not just guidelines. The
+> shape of the module graph is enforced separately by dependency-cruiser
+> (`pnpm check:graph`): no runtime import cycles, and cross-module
+> dependencies only from the explicit allowlist in `.dependency-cruiser.mjs`.
 
 ### The layers in one request
 
