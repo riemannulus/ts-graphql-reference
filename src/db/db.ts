@@ -56,6 +56,25 @@ export type ReadDbClient = {
     : never]: Pick<DbClient[K], Extract<keyof DbClient[K], ReadMethod>>;
 };
 
+/** The generated args type for a model, looked up by model NAME — so callers
+ * of `Selection` never touch Prisma's generated type names. */
+type ModelArgs<Model extends Prisma.ModelName> =
+  Prisma.TypeMap['model'][Model]['operations']['findUnique']['args'];
+
+/**
+ * The Pothos-translated GraphQL selection (`select`/`include`) — the one
+ * shape a repo function accepts as its trailing `query` parameter, keyed by
+ * model name: `Selection<'Post'>`, `Selection<'PointBalance'>`. Deliberately
+ * narrower than Prisma's full args types: `where`/`orderBy`/pagination cannot
+ * ride in through the selection channel — filters and ordering enter a repo
+ * function as named parameters (see post.repo `findMany`'s `opts`).
+ * Non-resolver callers (services, tests) simply omit it; it defaults to `{}`.
+ */
+export type Selection<Model extends Prisma.ModelName> = Pick<
+  ModelArgs<Model>,
+  Extract<keyof ModelArgs<Model>, 'select' | 'include'>
+>;
+
 export function createDb(): Db {
   const rwUrl = process.env.DATABASE_URL;
   const roUrl = process.env.READONLY_DATABASE_URL;

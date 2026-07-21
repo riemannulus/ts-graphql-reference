@@ -1,5 +1,5 @@
-import type { Post, Prisma } from '@prisma/client';
-import type { DbClient, ReadDbClient } from '../../db/db.js';
+import type { Post } from '@prisma/client';
+import type { DbClient, ReadDbClient, Selection } from '../../db/db.js';
 
 /**
  * Post persistence. The post module carries no domain decisions (no state
@@ -18,14 +18,14 @@ export interface CreatePostInput {
 export function findById(
   db: ReadDbClient,
   id: number,
-  query: Prisma.PostDefaultArgs = {},
+  query: Selection<'Post'> = {},
 ): Promise<Post | null> {
   return db.post.findUnique({ ...query, where: { id } });
 }
 
 export function findMany(
   db: ReadDbClient,
-  query: Prisma.PostFindManyArgs = {},
+  query: Selection<'Post'> = {},
   opts: { onlyPublished?: boolean } = {},
 ): Promise<Post[]> {
   return db.post.findMany({
@@ -50,7 +50,7 @@ export function findMany(
 export async function findByIds(
   db: ReadDbClient,
   ids: number[],
-  query: Prisma.PostDefaultArgs = {},
+  query: Selection<'Post'> = {},
 ): Promise<Post[]> {
   // A `select` projection may omit `id` (the client didn't ask for it), but the
   // reorder below needs it; `include` keeps all scalars, so id is already there.
@@ -63,7 +63,7 @@ export async function findByIds(
 export function createPost(
   db: DbClient,
   input: CreatePostInput,
-  query: Prisma.PostDefaultArgs = {},
+  query: Selection<'Post'> = {},
 ): Promise<Post> {
   return db.post.create({
     ...query,
@@ -78,7 +78,7 @@ export function createPost(
 export function publishPost(
   db: DbClient,
   id: number,
-  query: Prisma.PostDefaultArgs = {},
+  query: Selection<'Post'> = {},
 ): Promise<Post> {
   return db.post.update({ ...query, where: { id }, data: { published: true } });
 }

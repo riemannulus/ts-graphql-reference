@@ -1,5 +1,4 @@
-import type { Prisma } from '@prisma/client';
-import type { ReadDbClient } from '../../db/db.js';
+import type { ReadDbClient, Selection } from '../../db/db.js';
 
 /**
  * Point persistence, read path — projections for the GraphQL query layer.
@@ -18,7 +17,7 @@ import type { ReadDbClient } from '../../db/db.js';
 export function findBalance(
   db: ReadDbClient,
   userId: number,
-  query: Prisma.PointBalanceDefaultArgs = {},
+  query: Selection<'PointBalance'> = {},
 ) {
   return db.pointBalance.findUnique({ ...query, where: { userId } });
 }
@@ -26,7 +25,7 @@ export function findBalance(
 export function findCharges(
   db: ReadDbClient,
   userId: number,
-  query: Prisma.PointChargeFindManyArgs = {},
+  query: Selection<'PointCharge'> = {},
 ) {
   return db.pointCharge.findMany({
     orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
@@ -38,7 +37,7 @@ export function findCharges(
 export function findSpends(
   db: ReadDbClient,
   userId: number,
-  query: Prisma.PointSpendFindManyArgs = {},
+  query: Selection<'PointSpend'> = {},
 ) {
   return db.pointSpend.findMany({
     orderBy: { createdAt: 'desc' },
@@ -50,11 +49,15 @@ export function findSpends(
 export function getChargeById(
   db: ReadDbClient,
   id: number,
-  query: Prisma.PointChargeDefaultArgs = {},
+  query: Selection<'PointCharge'> = {},
 ) {
   return db.pointCharge.findUniqueOrThrow({ ...query, where: { id } });
 }
 
-export function getSpendById(db: ReadDbClient, id: number, query: Prisma.PointSpendDefaultArgs = {}) {
+export function getSpendById(
+  db: ReadDbClient,
+  id: number,
+  query: Selection<'PointSpend'> = {},
+) {
   return db.pointSpend.findUniqueOrThrow({ ...query, where: { id } });
 }

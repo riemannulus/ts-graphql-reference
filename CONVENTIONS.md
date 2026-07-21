@@ -11,7 +11,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Layer            | Files                                | Speaks                          | May import                                   | Tested with                |
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
-| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
+| Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
 
@@ -140,6 +140,13 @@ Layers are added when their first real content appears, **not before**:
 - **The Pothos `query` object stops at the repo.** It is Prisma-shaped data (a
   translated selection set), so repo read functions accept and spread it —
   and nothing above the repo ever sees it. Service signatures stay pure domain.
+- **The `query` parameter is always typed `Selection<'Model'>`** (from
+  `db.ts`, keyed by model name: `Selection<'Post'>`) — `select`/`include`
+  only, never a Prisma `...Args` type. There is one answer to "what goes
+  here": the Pothos `query` from a resolver, nothing from anywhere else (it
+  defaults to `{}`). `where`/`orderBy`/pagination cannot ride in through the
+  selection channel; filters and ordering enter as named parameters
+  (`findMany(db, query, { onlyPublished })`).
 - **A resolver has ONE database handle, `ctx.db`** — the per-operation routed
   client (replica for queries, primary for mutations — see README "RWDB / RODB
   routing"). Its type, `ReadDbClient`, carries only the model read methods — no
