@@ -1,8 +1,9 @@
 /**
- * Advisory-lock key registry and global ordering — the PURE key policy of the
- * concurrency ladder (see CONVENTIONS "Concurrency: the ladder"). No imports, no
- * I/O: this module only says what is lockable and in what order, and is
- * lint-enforced free of transactions and framework deps. The raw acquisition SQL
+ * Advisory-lock MACHINERY — the pure key type, the registry builder, and the
+ * global acquisition order (see CONVENTIONS "Concurrency: the ladder"). No
+ * imports, no I/O: this module is lint-enforced free of transactions and
+ * framework deps. WHAT is lockable lives in `lock-registry.ts` (the one place
+ * that grows); this is the stable machinery behind it. The raw acquisition SQL
  * lives in `uow.ts` (beside its `SET TRANSACTION`); a service reaches locks only
  * through `uow.serialized` / `uow.trySerialized`.
  *
@@ -29,16 +30,14 @@ export interface LockKey {
 }
 
 /**
- * Builds the lock-key registry from ONE declaration — the single place to touch
- * when a new entity needs serializing. Each entry is a lockable entity: its key
- * is the namespace, its value maps the entity's identifier(s) to an int4
- * `objid`. The namespace ordinal (`classid`) is the entry's position, so
- * DECLARATION ORDER == acquisition order ACROSS namespaces: append new entries
- * at the END, never reorder — one global order over all keys is what makes
- * multi-key acquisition deadlock-free (see `orderLocks`). Insertion order is
- * preserved because every namespace is a non-numeric string key.
+ * Builds a lock-key registry from one declaration — see `lock-registry.ts` for
+ * the sole call and the append-only ordering rule. Each entry's KEY is a
+ * namespace and its VALUE maps the entity's identifier(s) to an int4 `objid`;
+ * the namespace ordinal (`classid`) is the entry's position, so declaration
+ * order becomes the global acquisition order. Insertion order is preserved
+ * because every namespace is a non-numeric string key.
  */
-function defineLocks<T extends Record<string, (...args: never[]) => number>>(
+export function defineLocks<T extends Record<string, (...args: never[]) => number>>(
   entities: T,
 ): { readonly [K in keyof T]: (...args: Parameters<T[K]>) => LockKey } {
   const registry: Record<string, (...args: never[]) => LockKey> = {};
@@ -51,19 +50,6 @@ function defineLocks<T extends Record<string, (...args: never[]) => number>>(
   });
   return registry as unknown as { readonly [K in keyof T]: (...args: Parameters<T[K]>) => LockKey };
 }
-
-/**
- * The ONLY way to construct a lock key, and the ONE place to register a lockable
- * entity: add an entry (namespace → id-to-`objid` mapper) here — nothing else in
- * this module changes. See `defineLocks` for the ordering rule.
- */
-export const lockKey = defineLocks({
-  /** Serializes all point movement for one user (balance + charge ledger). */
-  pointBalance: (userId: number) => userId,
-});
-
-/** The registered lock namespaces, derived from the registry. */
-export type LockNamespace = keyof typeof lockKey;
 
 /**
  * Global acquisition order: sort by `(namespace, id)` and drop duplicates.

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { lockKey } from '../../db/locks.js';
+import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
 

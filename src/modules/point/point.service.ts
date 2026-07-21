@@ -1,6 +1,6 @@
 import type { PointCharge, PointSpend } from '@prisma/client';
 import type { Db } from '../../db/db.js';
-import { lockKey } from '../../db/locks.js';
+import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
 import { planCharge, planSpend, planTransfer } from './point.core.js';
 import * as pointRepo from './point.write.repo.js';
