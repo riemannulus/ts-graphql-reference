@@ -52,6 +52,7 @@ type PointCharge {
 """Lifecycle state of a point charge."""
 enum PointChargeState {
   CONSUMED
+  EXPIRED
   USABLE
 }
 

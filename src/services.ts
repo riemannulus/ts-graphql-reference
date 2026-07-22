@@ -1,4 +1,5 @@
 import type { Db } from './db/db.js';
+import { type Clock, systemClock } from './foundation/clock.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
@@ -23,6 +24,13 @@ export interface CreateServicesOptions {
    * fake in-memory index. The search service depends on the port.
    */
   postSearchIndex?: PostSearchIndex;
+  /**
+   * The clock use-cases read "now" from (see foundation/clock.ts). Production
+   * uses `systemClock`; tests inject a fixed clock (src/tests/support/clock.ts)
+   * so time-sensitive use-cases (point expiry, the flag window) are
+   * deterministic. Bound once here and shared by every service that reads time.
+   */
+  clock?: Clock;
 }
 
 /**
@@ -45,8 +53,9 @@ export interface CreateServicesOptions {
  * (schema → repo), not use-cases.
  */
 export function createServices(db: Db, options: CreateServicesOptions = {}) {
+  const clock = options.clock ?? systemClock;
   const user = createUserService(db);
-  const point = createPointService(db);
+  const point = createPointService(db, clock);
   const auth = createOAuthService({
     users: user,
     google: options.googleOAuth ?? stubGoogleOAuthClient,
@@ -55,7 +64,7 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   const postSearch = createPostSearchService({
     index: options.postSearchIndex ?? stubPostSearchIndex,
   });
-  const featureFlag = createFeatureFlagService(db);
+  const featureFlag = createFeatureFlagService(db, clock);
   return { user, point, auth, onboarding, postSearch, featureFlag };
 }
 

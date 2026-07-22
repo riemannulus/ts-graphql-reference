@@ -25,7 +25,14 @@
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error",
-    "typescript/no-unsafe-type-assertion": "off"
+    "typescript/no-unsafe-type-assertion": "off",
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "Date",
+        "message": "Reading the wall clock (new Date() / Date.now()) is I/O and belongs to ONE seam: foundation/clock.ts (systemClock). Everywhere else, take `now` from the injected Clock (services/providers) or as a parameter (cores), and do calendar math via foundation/time.ts. This fences the clock repo-wide the way dependency-cruiser fences dayjs to time.ts. (The Date TYPE in annotations is fine — this bans the global as a VALUE.)"
+      }
+    ]
   },
   "overrides": [
     {
@@ -56,14 +63,57 @@
                   "**/flags*",
                   "**/flag-registry*",
                   "**/flag-reader*",
+                  "**/clock*",
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself, and it never reads the clock: `now` arrives as a parameter (foundation/clock.ts is the shell's seam). Calendar math over that instant is allowed via the pure foundation/time.ts."
+              }
+            ]
+          }
+        ],
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Date",
+            "message": "A core file must not read the clock: new Date() / Date.now() are I/O. Receive `now: Date` as a parameter (the shell mints it from the injected clock) and do any calendar math via foundation/time.ts. This is the time analogue of 'await never appears in a core file'. (The Date TYPE in annotations is fine — this bans the global as a VALUE.)"
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/foundation/time.ts", "src/foundation/clock.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/*",
+                  "fastify",
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "@openfeature/*",
+                  "**/builder*",
+                  "**/prisma*",
+                  "**/db*",
+                  "**/uow*",
+                  "**/*.repo*",
+                  "**/*.service*"
+                ],
+                "message": "foundation/time.ts (the pure calendar module) and foundation/clock.ts (the now seam) must stay free of I/O, transactions, and framework deps — like locks.ts. time.ts is the ONLY file allowed to import a date library (dependency-cruiser's dayjs-lives-in-time-only enforces the dayjs side); clock.ts holds the single sanctioned new Date()."
               }
             ]
           }
         ]
+      }
+    },
+    {
+      "files": ["src/foundation/clock.ts"],
+      "rules": {
+        "no-restricted-globals": "off"
       }
     },
     {
@@ -261,7 +311,8 @@
       "files": ["src/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
-        "no-console": "off"
+        "no-console": "off",
+        "no-restricted-globals": "off"
       }
     }
   ],

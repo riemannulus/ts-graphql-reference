@@ -7,6 +7,7 @@ import {
   PointTransferToSelfError,
 } from '../../../modules/point/point.core.js';
 import * as pointRepo from '../../../modules/point/point.write.repo.js';
+import { systemClock } from '../../../foundation/clock.js';
 import { ConcurrentUpdateError, FeatureDisabledError } from '../../../foundation/errors.js';
 import { fakeFlagReader } from '../../support/flag-reader-fake.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
@@ -16,7 +17,7 @@ import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 const enabled = fakeFlagReader({ pointTransfer: true });
 
 const prisma = await makeTestPrisma();
-const points = createPointService({ rw: prisma, ro: prisma });
+const points = createPointService({ rw: prisma, ro: prisma }, systemClock);
 
 async function makeUser(email = 'points@example.com') {
   return prisma.user.create({ data: { email } });

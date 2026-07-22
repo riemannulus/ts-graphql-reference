@@ -1,4 +1,5 @@
 import { DomainError } from '../../foundation/errors.js';
+import { addDays, kstEndOfDay } from '../../foundation/time.js';
 
 /**
  * Point domain — the pure core.
@@ -16,7 +17,7 @@ import { DomainError } from '../../foundation/errors.js';
  * never learns where they came from.
  */
 
-export const POINT_CHARGE_STATES = ['USABLE', 'CONSUMED'] as const;
+export const POINT_CHARGE_STATES = ['USABLE', 'CONSUMED', 'EXPIRED'] as const;
 export type PointChargeState = (typeof POINT_CHARGE_STATES)[number];
 
 /** A user's denormalized point balance — what the spend decision is made against. */
@@ -137,6 +138,14 @@ export interface ChargePlan {
   paidAmount: number;
   freeAmount: number;
   totalAmount: number;
+  /**
+   * When the charge happened — stamped from the app clock by this decision, NOT
+   * left to the DB's `@default(now())`. `chargedAt` is decision-relevant: the
+   * expiry decision reads it back and compares it against the app-clock `now`
+   * (`planExpiry`), so per CONVENTIONS §10 it is app-stamped, keeping both sides
+   * of that comparison on one clock (the DB default remains only as a backstop).
+   */
+  chargedAt: Date;
 }
 
 const isValidChargeSide = (n: number) => Number.isInteger(n) && n >= 0;
@@ -144,9 +153,10 @@ const isValidChargeSide = (n: number) => Number.isInteger(n) && n >= 0;
 /**
  * Decides a charge (top-up). Trivial today, but the rule "at least one side
  * positive, neither negative, both integers" still lives here rather than in
- * the shell.
+ * the shell. `now` is passed in by the shell (the injected clock) and recorded
+ * as `chargedAt` — the core never reads a clock.
  */
-export function planCharge(input: { paidAmount: number; freeAmount: number }): ChargePlan {
+export function planCharge(input: { paidAmount: number; freeAmount: number }, now: Date): ChargePlan {
   const { paidAmount, freeAmount } = input;
   // Report the side that is actually at fault, not the (misleading) sum.
   if (!isValidChargeSide(paidAmount)) {
@@ -158,7 +168,7 @@ export function planCharge(input: { paidAmount: number; freeAmount: number }): C
   if (paidAmount + freeAmount === 0) {
     throw new PointAmountNotPositiveError(0);
   }
-  return { paidAmount, freeAmount, totalAmount: paidAmount + freeAmount };
+  return { paidAmount, freeAmount, totalAmount: paidAmount + freeAmount, chargedAt: now };
 }
 
 /**
@@ -279,12 +289,116 @@ export function planTransfer(
   toUserId: number,
   senderWorld: { snapshot: PointSnapshot; charges: readonly ChargeBalance[] },
   amount: number,
+  now: Date,
   opts: { preferFree?: boolean } = {},
 ): TransferPlan {
   if (fromUserId === toUserId) {
     throw new PointTransferToSelfError(fromUserId);
   }
   const spend = planSpend(senderWorld.snapshot, senderWorld.charges, amount, opts);
-  const charge = planCharge({ paidAmount: spend.paidUsage, freeAmount: spend.freeUsage });
+  const charge = planCharge({ paidAmount: spend.paidUsage, freeAmount: spend.freeUsage }, now);
   return { spend, charge };
+}
+
+/**
+ * How long a charge stays usable: it expires at the END of the KST day
+ * `EXPIRE_AFTER_DAYS` after it was charged. A domain constant, not config — a
+ * flag-driven window would arrive as passed-in DATA (the "rule change" flag
+ * pattern, CONVENTIONS §9), never as a clock read inside this module.
+ */
+export const EXPIRE_AFTER_DAYS = 365;
+
+/**
+ * One USABLE charge as the expiry decision sees it: its spendable remainder and
+ * when it was charged (the input to its deadline). Narrow and structural — a
+ * Prisma row maps into it in the repo, and the core stays Prisma-free.
+ */
+export interface ExpirableCharge {
+  id: number;
+  unspentPaid: number;
+  unspentFree: number;
+  chargedAt: Date;
+}
+
+/** Everything `planExpiry` needs, read in one place (inside the expiry tx). */
+export interface ExpiryWorld {
+  snapshot: PointSnapshot;
+  charges: readonly ExpirableCharge[];
+}
+
+/**
+ * What expiring one charge writes: zero its remainder, mark it EXPIRED, and the
+ * guard values the UPDATE must still match (optimistic concurrency).
+ */
+export interface ChargeExpiration {
+  chargeId: number;
+  /** The remainder removed from the balance — what the charge still held. */
+  expiredPaid: number;
+  expiredFree: number;
+  /** The unspent amounts the plan ASSUMED — the shell's optimistic guard. */
+  assumed: { unspentPaid: number; unspentFree: number };
+}
+
+/**
+ * The complete, not-yet-executed description of an expiry sweep for one user.
+ * Pure data — nothing has happened to the database when a value of this exists.
+ */
+export interface ExpiryPlan {
+  /** The charges to expire, in the given order. Empty ⇒ an inert plan (no writes). */
+  expirations: ChargeExpiration[];
+  /**
+   * The instant to stamp on every expired charge — the decision's `now`, NOT a
+   * DB `@default(now())`. A domain timestamp is written by the decision that
+   * causes it, so it is testable and single-clocked (CONVENTIONS §10); the DB
+   * clock is reserved for audit columns a decision never reads.
+   */
+  expiredAt: Date;
+  /** The balance the plan assumed — the shell's guard for the balance UPDATE. */
+  assumedBalance: PointSnapshot;
+  /** The balance after every expired remainder is removed. */
+  balanceAfter: PointSnapshot;
+}
+
+/**
+ * Decides which of a user's USABLE charges have expired as of `now`, and the
+ * balance left once their unspent remainders are removed.
+ *
+ * `now` is DATA, supplied by the shell — from the injected clock on the
+ * scheduled path, or an explicit instant on a backfill/re-run. The core never
+ * reads a clock (lint-enforced: no `new Date()` in a core file). A charge is
+ * expired once `now` is at or past the end of the KST day `EXPIRE_AFTER_DAYS`
+ * after it was charged (`kstEndOfDay` — the one calendar computation, in the
+ * pure `time.ts` module).
+ *
+ * Total: for every world and every `now` it returns a plan (possibly empty) and
+ * never throws. Unlike `planSpend` there is no corruption path — the plan only
+ * ever removes what a charge actually holds, so `balanceAfter` is the snapshot
+ * minus exactly those remainders by construction (conservation).
+ */
+export function planExpiry(world: ExpiryWorld, now: Date): ExpiryPlan {
+  const expirations: ChargeExpiration[] = [];
+  let paidRemoved = 0;
+  let freeRemoved = 0;
+  for (const charge of world.charges) {
+    const deadline = kstEndOfDay(addDays(charge.chargedAt, EXPIRE_AFTER_DAYS));
+    if (deadline.getTime() > now.getTime()) continue; // still within its day — not due
+    expirations.push({
+      chargeId: charge.id,
+      expiredPaid: charge.unspentPaid,
+      expiredFree: charge.unspentFree,
+      assumed: { unspentPaid: charge.unspentPaid, unspentFree: charge.unspentFree },
+    });
+    paidRemoved += charge.unspentPaid;
+    freeRemoved += charge.unspentFree;
+  }
+  return {
+    expirations,
+    expiredAt: now,
+    assumedBalance: world.snapshot,
+    balanceAfter: {
+      paidAmount: world.snapshot.paidAmount - paidRemoved,
+      freeAmount: world.snapshot.freeAmount - freeRemoved,
+      totalAmount: world.snapshot.totalAmount - paidRemoved - freeRemoved,
+    },
+  };
 }

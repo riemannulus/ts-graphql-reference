@@ -30,8 +30,8 @@ model User {
   pointBalance PointBalance?
   pointCharges PointCharge[]
   pointSpends  PointSpend[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
 }
 
 model Post {
@@ -41,8 +41,8 @@ model Post {
   published Boolean  @default(false)
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   authorId  Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   @@index([authorId])
 }
@@ -56,22 +56,33 @@ model PointBalance {
   paidAmount  Int      @default(0)
   freeAmount  Int      @default(0)
   totalAmount Int      @default(0)
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 }
 
-/// One charge (top-up) of points. `state` is USABLE | CONSUMED, enforced by a
-/// DB CHECK constraint; the unspent columns carry non-negative CHECKs so an
-/// overdraft can never be persisted even by buggy application code.
+/// One charge (top-up) of points. `state` is USABLE | CONSUMED | EXPIRED,
+/// enforced by a DB CHECK constraint; the unspent columns carry non-negative
+/// CHECKs so an overdraft can never be persisted even by buggy application code.
+/// A charge EXPIRES at the end of the KST day `EXPIRE_AFTER_DAYS` after
+/// `chargedAt` (the rule lives in point.core.ts `planExpiry`); `expiredAt` is
+/// stamped by that decision (the plan's `now`), never a DB default — see
+/// CONVENTIONS §10 "Time".
 model PointCharge {
-  id                Int      @id @default(autoincrement())
+  id                Int       @id @default(autoincrement())
   userId            Int
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  state             String   @default("USABLE")
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state             String    @default("USABLE")
   paidAmount        Int
   freeAmount        Int
   unspentPaidAmount Int
   unspentFreeAmount Int
-  chargedAt         DateTime @default(now())
+  /// When the charge happened. Stamped by the charge use-case from the app clock
+  /// (planCharge carries it) because the expiry decision reads it back against
+  /// `now` — CONVENTIONS §10. `@default(now())` stays only as a backstop for a
+  /// raw insert that bypasses the use-case.
+  chargedAt         DateTime  @default(now()) @db.Timestamptz(6)
+  /// When this charge was expired (its remainder swept to zero); NULL until then.
+  /// A domain timestamp, written by the expiry use-case, not `@default(now())`.
+  expiredAt         DateTime? @db.Timestamptz(6)
 
   @@index([userId, state, chargedAt])
 }
@@ -97,11 +108,11 @@ model FeatureFlag {
   /// This extends the crepe model, which is boolean-only, so the DB provider can
   /// back OpenFeature string/variant resolution over the same table.
   value        String?
-  enableAfter  DateTime?
-  disableAfter DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  deletedAt    DateTime?
+  enableAfter  DateTime? @db.Timestamptz(6)
+  disableAfter DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
 
   @@index([name])
 }
@@ -115,7 +126,7 @@ model PointSpend {
   freeAmount  Int
   totalAmount Int
   reason      String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt])
 }

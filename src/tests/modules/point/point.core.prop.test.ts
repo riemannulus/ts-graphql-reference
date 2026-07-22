@@ -1,15 +1,18 @@
 import { fc, test } from '@fast-check/vitest';
 import { expect } from 'vitest';
 import {
+  EXPIRE_AFTER_DAYS,
   InsufficientPointError,
   isValidPointAmount,
+  planExpiry,
   planSpend,
   planTransfer,
   PointAmountNotPositiveError,
   PointTransferToSelfError,
   type SpendPlan,
 } from '../../../modules/point/point.core.js';
-import { arbLedger, arbSpendAmount } from './point.arbitraries.js';
+import { addDays, kstEndOfDay } from '../../../foundation/time.js';
+import { arbExpiryWorld, arbLedger, arbSpendAmount, EXPIRY_NOW } from './point.arbitraries.js';
 
 // The laws of the spend decision. Each property runs against hundreds of
 // random consistent ledgers — no database involved (that is the point of
@@ -137,10 +140,11 @@ test.prop([arbLedger, arbSpendAmount])(
   'conservation: what the sender loses equals what the receiver gains, kind for kind',
   (ledger, amount) => {
     fc.pre(sufficient(ledger, amount));
-    const { spend, charge } = planTransfer(1, 2, ledger, amount);
+    const { spend, charge } = planTransfer(1, 2, ledger, amount, EXPIRY_NOW);
     expect(charge.paidAmount).toBe(spend.paidUsage);
     expect(charge.freeAmount).toBe(spend.freeUsage);
     expect(charge.totalAmount).toBe(amount);
+    expect(charge.chargedAt).toBe(EXPIRY_NOW);
   },
 );
 
@@ -148,7 +152,7 @@ test.prop([arbLedger, arbSpendAmount, fc.integer({ min: 1, max: 1_000 })])(
   'the sender side IS planSpend: a transfer plan carries exactly the spend planSpend would',
   (ledger, amount, userId) => {
     fc.pre(sufficient(ledger, amount));
-    const { spend } = planTransfer(userId, userId + 1, ledger, amount);
+    const { spend } = planTransfer(userId, userId + 1, ledger, amount, EXPIRY_NOW);
     expect(spend).toEqual(planSpend(ledger.snapshot, ledger.charges, amount));
   },
 );
@@ -156,6 +160,60 @@ test.prop([arbLedger, arbSpendAmount, fc.integer({ min: 1, max: 1_000 })])(
 test.prop([arbLedger, arbSpendAmount, fc.integer({ min: 1, max: 1_000 })])(
   'a transfer to self is rejected before any spend is even decided',
   (ledger, amount, userId) => {
-    expect(() => planTransfer(userId, userId, ledger, amount)).toThrow(PointTransferToSelfError);
+    expect(() => planTransfer(userId, userId, ledger, amount, EXPIRY_NOW)).toThrow(PointTransferToSelfError);
   },
 );
+
+// The laws of the expiry decision. `now` is DATA the shell passes in, so a
+// property can throw arbitrary instants at it with no clock and no database —
+// the whole reason the decision is pure. `EXPIRY_NOW` is a fixed reference; the
+// charges' dates straddle the EXPIRE_AFTER_DAYS deadline either way.
+
+const isDue = (chargedAt: Date, now: Date): boolean =>
+  kstEndOfDay(addDays(chargedAt, EXPIRE_AFTER_DAYS)).getTime() <= now.getTime();
+
+test.prop([arbExpiryWorld])(
+  'agreement: a charge is expired iff now is at/after the end of its KST deadline day',
+  (world) => {
+    const plan = planExpiry(world, EXPIRY_NOW);
+    const expired = new Set(plan.expirations.map((e) => e.chargeId));
+    for (const charge of world.charges) {
+      expect(expired.has(charge.id)).toBe(isDue(charge.chargedAt, EXPIRY_NOW));
+    }
+  },
+);
+
+test.prop([arbExpiryWorld])(
+  'conservation: balanceAfter is the snapshot minus exactly the removed remainders',
+  (world) => {
+    const plan = planExpiry(world, EXPIRY_NOW);
+    const paid = plan.expirations.reduce((sum, e) => sum + e.expiredPaid, 0);
+    const free = plan.expirations.reduce((sum, e) => sum + e.expiredFree, 0);
+    expect(plan.assumedBalance).toEqual(world.snapshot);
+    expect(plan.balanceAfter).toEqual({
+      paidAmount: world.snapshot.paidAmount - paid,
+      freeAmount: world.snapshot.freeAmount - free,
+      totalAmount: world.snapshot.totalAmount - paid - free,
+    });
+  },
+);
+
+test.prop([arbExpiryWorld])(
+  'the guard mirrors the charge: each expiration assumes exactly what it removes',
+  (world) => {
+    const plan = planExpiry(world, EXPIRY_NOW);
+    for (const expiration of plan.expirations) {
+      expect(expiration.assumed.unspentPaid).toBe(expiration.expiredPaid);
+      expect(expiration.assumed.unspentFree).toBe(expiration.expiredFree);
+    }
+  },
+);
+
+test.prop([
+  arbExpiryWorld,
+  fc.integer({ min: -3650, max: 3650 }).map((d) => new Date(EXPIRY_NOW.getTime() + d * 86_400_000)),
+])('totality: returns a plan and never throws, stamping expiredAt with the given now', (world, now) => {
+  const plan = planExpiry(world, now);
+  expect(plan.expiredAt).toBe(now);
+  expect(Array.isArray(plan.expirations)).toBe(true);
+});

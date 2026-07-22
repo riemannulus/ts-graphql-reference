@@ -2,8 +2,9 @@ import type { PointCharge, PointSpend } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
+import type { Clock } from '../../foundation/clock.js';
 import type { FlagReader } from '../../flags/flag-registry.js';
-import { planCharge, planSpend, planTransfer } from './point.core.js';
+import { planCharge, planExpiry, planSpend, planTransfer } from './point.core.js';
 import * as pointRepo from './point.write.repo.js';
 
 export interface ChargePointInput {
@@ -18,6 +19,12 @@ export interface SpendPointInput {
 
 export interface TransferPointInput {
   amount: number;
+}
+
+/** Options for `expire`: an explicit `now` for a backfill / re-run; omitted on
+ * the scheduled path so the injected clock supplies it. */
+export interface ExpirePointsOptions {
+  now?: Date;
 }
 
 /**
@@ -35,13 +42,19 @@ export interface TransferPointInput {
  *
  * `db.ro` is never touched — a use-case decides on the state it will write, and
  * a replica may lag.
+ *
+ * `clock` is the injected `now` seam. Time-sensitive use-cases (`expire`) read it
+ * ONCE, at the top of the read phase, and pass the instant to the core as data —
+ * the service never reads a clock deeper in, and the core never reads one at all.
+ * Production binds `systemClock` in the composition root; tests inject a fixed
+ * clock so behavior is deterministic (CONVENTIONS §10 "Time").
  */
-export function createPointService(db: Db) {
+export function createPointService(db: Db, clock: Clock) {
   return {
     /** Tops up a user's points with a new USABLE charge. */
     // `async` so a synchronous core rejection surfaces as a rejected promise.
     async charge(userId: number, input: ChargePointInput): Promise<PointCharge> {
-      const plan = planCharge(input); // decide
+      const plan = planCharge(input, clock.now()); // decide (chargedAt stamped from the clock)
       return uow.run(db, (tx) => pointRepo.applyChargePlan(tx, userId, plan)); // execute
     },
 
@@ -51,6 +64,32 @@ export function createPointService(db: Db) {
         const world = await pointRepo.loadSpendWorld(tx, userId); // read
         const plan = planSpend(world.snapshot, world.charges, input.amount); // decide
         return pointRepo.applySpendPlan(tx, userId, input.reason, plan); // execute
+      });
+    },
+
+    /**
+     * Expires a user's USABLE charges past their deadline, removing each
+     * remainder from the balance in one snapshot-isolated transaction.
+     *
+     * `now` is read ONCE here — from `opts.now` (a backfill / re-run passing an
+     * explicit instant) or the injected clock (the scheduled path) — and handed to
+     * the pure core as data; nothing deeper reads a clock. This is the codebase's
+     * two sanctioned "now" shapes side by side: a request/job reads the clock, a
+     * replay passes the instant in.
+     *
+     * `uow.snapshot` for the SAME reason as `spend`: the balance and the charges
+     * must describe one world, and the plan's optimistic guards turn a lost race
+     * (a concurrent spend on the same ledger) into a retryable `CONFLICT`. A
+     * scheduled job would call this per user id returned by an index scan for
+     * due charges; the reference exposes the per-user unit and leaves the sweep
+     * driver (a cron/route) to a future delivery, as `feature-flag` does.
+     */
+    async expire(userId: number, opts: ExpirePointsOptions = {}): Promise<{ expiredCount: number }> {
+      const now = opts.now ?? clock.now();
+      return uow.snapshot(db, async (tx) => {
+        const world = await pointRepo.loadExpiryWorld(tx, userId); // read
+        const plan = planExpiry(world, now); // decide
+        return pointRepo.applyExpiryPlan(tx, userId, plan); // execute
       });
     },
 
@@ -85,12 +124,13 @@ export function createPointService(db: Db) {
     ): Promise<PointSpend> {
       await flags.assert.pointTransfer();
       const preferFree = await flags.pointTransferPreferFree();
+      const now = clock.now(); // the receiver charge's chargedAt (stamped, not @default)
       const { spend } = await uow.serialized(
         db,
         [lockKey.pointBalance(fromUserId), lockKey.pointBalance(toUserId)],
         async (tx) => {
           const world = await pointRepo.loadSpendWorld(tx, fromUserId); // read
-          const plan = planTransfer(fromUserId, toUserId, world, input.amount, { preferFree }); // decide
+          const plan = planTransfer(fromUserId, toUserId, world, input.amount, now, { preferFree }); // decide
           return pointRepo.applyTransferPlan(tx, fromUserId, toUserId, plan); // execute
         },
         { snapshot: true },

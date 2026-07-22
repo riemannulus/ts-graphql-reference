@@ -56,7 +56,9 @@ the linter cannot see, reviewed by hand:
 - **A business `if` in a service or repo is a leaked decision** — move it to
   the core. The only branching allowed in the execute phase is the mechanical
   mapping of plan fields (`a.depleted ? 'CONSUMED' : undefined`).
-- **`await` never appears in a core file.**
+- **`await` never appears in a core file.** Its time-analogue —
+  `new Date()` / `Date.now()` never appears in a core either (reading the clock is
+  I/O; `now` arrives as a parameter) — IS lint-enforced; see §10 "Time".
 
 ### The plan pattern
 
@@ -500,3 +502,119 @@ constraints on the stage value set and window ordering, and a partial unique ind
 SDK's `Provider` interface, like the SDK's own `InMemoryProvider`). Writing flags is
 the module's admin service; a staff-gated delivery (route or authorized mutation) is
 a future addition, blocked today only by the absence of an authorization layer.
+
+## 10. Time
+
+Reading the current time is **I/O**, and it enters the domain exactly as the
+database and the flag reader do — through a seam, as passed-in data — never as an
+ambient `new Date()` buried in a decision. Two seams, two files:
+
+- **`foundation/clock.ts`** — the `Clock` port (`{ now(): Date }`) that MINTS the
+  instant. Production binds `systemClock` (the one sanctioned `new Date()`); tests
+  inject a fixed clock (`src/tests/support/clock.ts`). Bound once in the
+  composition root (`createServices` / `buildApp`) and shared by every service and
+  provider that reads time.
+- **`foundation/time.ts`** — the pure calendar module, and the codebase's SINGLE
+  date-library seam. Instant→calendar reasoning (KST day boundaries, `addDays`,
+  later formatting/durations) lives behind pure functions here; a `Dayjs` value
+  never crosses its interface, exactly as a Prisma row never crosses a repo's.
+
+Minting and calendar math are **different seams**. crepe conflates them in a
+single `dayjs()` call in ~80 files (and monkey-patches the `Dayjs` prototype in
+`lib/dayjs.ts`); the refactor splits them — `clock.now()` for the instant,
+`time.ts` for the reasoning — which is what makes time both injectable and
+library-swappable.
+
+### now is a field of the world snapshot
+
+`now` belongs to the **read** phase of read → decide → execute, mixed with the
+rest of the world, and it is minted **once**:
+
+| Layer | Rule | Worked example |
+| --- | --- | --- |
+| core (`*.core.ts`) | takes `now: Date` as a parameter; never mints it. Calendar math via `time.ts`. | `planExpiry(world, now)`, `isActive(row, stage, now)` |
+| service (`*.service.ts`) | reads `clock.now()` ONCE at the top of the read phase (or takes an explicit `now` for a backfill) and passes it to the core | `point.expire` |
+| repo (`*.repo.ts`) | never mints a decision time; a domain instant is passed in | `feature-flag.softDelete(tx, id, deletedAt)` |
+| provider (`*.provider.ts`) | reads the injected clock, not `new Date()` | `DbFeatureFlagProvider` window eval |
+| policy cutoff | a `Date` constant in the core, shared with tests | (crepe's `FEEDBACK_DUE_AT_5D_CUTOFF`) |
+
+Reading `now` twice inside one decision is the same bug as reading the DB twice
+without a snapshot: a midnight (or month-end) boundary can fall between the two
+reads and the decision sees an impossible world. One mint per request/job fixes
+it; the request is then a deterministic function of `(state, input, now)`.
+
+### The two clocks
+
+There are two clocks — the app clock (`clock.now()`) and the DB clock
+(`@default(now())`, `@updatedAt`). A decision that compares an injected `now`
+against a DB-written timestamp straddles both. In production the skew is
+milliseconds against day-granular rules, so it is harmless; in tests it is a
+trap (a fixed clock at 2026-01-01 vs PGlite's real `now()` on `@default` rows).
+Three rules keep a time decision single-clocked and deterministic:
+
+1. **A decision-relevant timestamp is stamped by the plan, from the app clock —
+   not `@default(now())`.** `ExpiryPlan.expiredAt` carries the decision's `now`;
+   `applyExpiryPlan` writes it. The DB default is a backstop, never the value a
+   decision reads back.
+2. **A decision never reads a raw audit column** (`createdAt` / `updatedAt`). The
+   moment a rule needs a timestamp, that timestamp is a *domain* fact and pays the
+   **promotion cost**: (a) the write is owned by the decision path (stamped
+   explicitly, not left to the DB), (b) it gets a domain name (`chargedAt`,
+   `expiredAt`, `deletedAt` — never a reused `createdAt`), and (c) tests set it
+   explicitly. `updatedAt` especially is off-limits as an input — it means "any
+   write touched this row", so an unrelated update silently moves it.
+3. **Tests inject a fixed clock and arrange explicit timestamps** — never
+   `vi.useFakeTimers` (it freezes only the app clock; the DB clock keeps running,
+   so the two diverge) and never real-time offsets like `new Date(Date.now() ±
+   n)` (flaky at boundaries). See `point.expiry.test.ts` (fixed clock + backdated
+   `chargedAt`) and `feature-flag.provider.test.ts` (a fixed `NOW`, window bounds
+   relative to it).
+
+Comparing two *stored* timestamps is safe — one clock, no `now` (the FIFO spend
+sorts `chargedAt` values, it does not read `now`). Only a comparison against
+"now" needs the rules above.
+
+The decision is evaluated **at the snapshot's `now`**: a plan valid when the world
+(including `now`) was read is valid, even if a boundary passes before it commits —
+the same contract `uow.snapshot` gives for row reads. When "still valid at write
+time" is itself the invariant, put the time predicate in the SQL `WHERE` (an
+optimistic guard), which unifies that decision on the DB clock; treat it as a last
+rung, like the advisory lock, because a DB `now()` cannot be pinned in tests.
+
+### Storage
+
+Instants are stored as `timestamptz(6)` (a JS `Date` is an instant), not
+`timestamp without time zone` — matching crepe and keeping `AT TIME ZONE` / KST
+math honest.
+
+### Enforcement
+
+- **`new Date()` / `Date.now()` anywhere but `foundation/clock.ts`** → oxlint
+  `no-restricted-globals` bans the `Date` global as a VALUE repo-wide (cores get a
+  stricter message; `clock.ts` and tests are excepted), fencing the clock the way
+  the rule below fences the date library. The `Date` *type* in annotations is
+  fine. In a core it is the time analogue of the hand-reviewed "no `await` in a
+  core".
+- **A core importing `clock.ts`** → the core `no-restricted-imports` group (beside
+  the db/flag bans). A core may import `time.ts` (pure).
+- **Any file but `time.ts` importing a date library** → dependency-cruiser
+  `date-lib-lives-in-time-only` (matches dayjs/luxon/moment/date-fns/@js-joda by
+  name, so a newly-added lib is fenced immediately), keeping the swap seam across
+  the whole tree, shell included. A Temporal migration would target a global, so
+  it would instead be fenced by a `no-restricted-globals` entry.
+
+The KST day-boundary math itself is fixed-offset (UTC+9) arithmetic, deliberately
+NOT `dayjs.tz('Asia/Seoul').endOf('day')`: dayjs's tz/`endOf` consults the server
+zone and is off by an hour when the process TZ is mid its OWN DST transition, so
+the boundary must not depend on `process.env.TZ`. `time.test.ts` pins this against
+a pure-arithmetic oracle; run CI under a non-UTC `TZ` to lock it in.
+
+### crepe migration map
+
+| crepe today | gannet blueprint |
+| --- | --- |
+| `dayjs()` / `new Date()` ambient in services, resolvers, repos | `clock.now()` once in the service read phase; `now` passed as data |
+| `now: dayjs.Dayjs` across interfaces; `dayjs` imported in ~80 files | `now: Date` across interfaces; `dayjs` only in `foundation/time.ts` |
+| `dayjs().kst().startOf('day')` inline; `lib/dayjs.ts` prototype patches | pure `time.ts` functions (`kstEndOfDay`, `addDays`) returning `Date` |
+| cron `reflectX(now = dayjs().kst())` default arg | service takes explicit `now` (backfill) or the injected clock (scheduled) |
+| `vi.useFakeTimers({ toFake: ['Date'] })` | `fixedClock(instant)` injected via `createServices` / `buildApp` |
