@@ -1,26 +1,30 @@
-import { getRefFromModel, queryFromInfo } from '@pothos/plugin-prisma';
-import type { Post } from '@prisma/client';
 import { builder } from '../../../graphql/builder.js';
 import * as postRepo from '../../post/post.repo.js';
 
 /**
  * A search resolver where the ids come from OUTSIDE the database (the search
  * index port) and the Post selection is nested under a wrapper type, so the
- * Pothos Prisma plugin cannot hand the resolver a `query` the way
- * `t.prismaField` does. The three steps:
+ * root resolver is never handed a Post `query`. Rather than building one by
+ * hand at the root, the wrapper field that OWNS the Post selection is itself
+ * a `t.prismaField` — Pothos hands it a `query`, created exactly where it is
+ * consumed. The three steps:
  *
- *   1. the service calls the index and returns ranked ids (domain data);
- *   2. `queryFromInfo({ path: ['hits'] })` translates the GraphQL selection under
- *      the wrapper's `hits` field into the same Prisma-shaped `query` a
- *      prismaField would receive — this is the one place the schema layer builds
- *      a `query` by hand, and it still STOPS at the repo (services never see it);
+ *   1. the root resolver calls the index and returns domain data only
+ *      (ranked ids + total) — it never touches a `query`;
+ *   2. Pothos gives the `hits` prismaField the Prisma-shaped `query` for the
+ *      selection under it, the same object a root prismaField receives — and
+ *      it still STOPS at the repo (services never see it);
  *   3. `postRepo.findByIds` hydrates on `ctx.db`, preserving the index's rank
- *      order. The same `queryFromInfo({ path })` handles a payload/union wrapper
- *      too (e.g. a `...Response` mutation result), not just search.
+ *      order. A client selecting only `total` skips hydration entirely.
+ *
+ * When a field CANNOT be a prismaField — its type is a union of several
+ * models (a `...Response` payload, a mixed feed) — build the per-member
+ * query by hand with `queryFromInfo({ path })` instead (see CONVENTIONS.md
+ * "Where GraphQL meets the database").
  */
 interface PostSearchPage {
   total: number;
-  hits: Post[];
+  ids: number[];
 }
 
 export function registerPostSearchQueries(): void {
@@ -29,12 +33,10 @@ export function registerPostSearchQueries(): void {
     description: 'A page of posts matching a search term, plus the total match count.',
     fields: (t) => ({
       total: t.exposeInt('total', { description: 'Total posts matching the term.' }),
-      hits: t.field({
-        // A prisma object's string ref (`'Post'`) is only usable in prismaField;
-        // on a plain object field, take the model's ref explicitly.
-        type: [getRefFromModel('Post', builder)],
+      hits: t.prismaField({
+        type: ['Post'],
         description: "The matching posts, in the index's rank order.",
-        resolve: (page) => page.hits,
+        resolve: (query, page, _args, ctx) => postRepo.findByIds(ctx.db, page.ids, query),
       }),
     }),
   });
@@ -47,14 +49,11 @@ export function registerPostSearchQueries(): void {
         term: t.arg.string({ required: true }),
         limit: t.arg.int({ required: false }),
       },
-      resolve: async (_root, args, ctx, info) => {
+      resolve: async (_root, args, ctx) => {
         const { total, ids } = await ctx.services.postSearch.search(args.term, {
           limit: args.limit ?? 10,
         });
-        // The Post selection lives under `hits`, so build its query by hand.
-        const query = queryFromInfo({ context: ctx, info, path: ['hits'], typeName: 'Post' });
-        const hits = await postRepo.findByIds(ctx.db, ids, query);
-        return { total, hits };
+        return { total, ids };
       },
     }),
   );

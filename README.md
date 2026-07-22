@@ -148,7 +148,7 @@ src/
       post-search.provider.ts  # port: PostSearchIndex (+ unimplemented stub)
       post-search.service.ts   # thin — holds the port (no decision → no core)
       schemas/
-        post-search.query.ts   # searchPosts: queryFromInfo({ path: ['hits'] })
+        post-search.query.ts   # searchPosts: hits is its own prismaField
     auth/              # a module delivered over HTTP, not GraphQL (no schema)
       oauth.value.ts     # pure core: parse the callback query
       oauth.provider.ts  # port: GoogleOAuthClient (function record) + stub
@@ -391,8 +391,8 @@ The test *layer* is the filename suffix, the test *module* is the folder:
 - **`e2e/graphql.test.ts`**, **`e2e/oauth.test.ts`** — whole-app flows through
   `app.inject`, including domain-error mapping and the point charge→spend flow.
 - **`e2e/search.test.ts`** — the external-key pattern end to end: a fake index
-  feeds ranked ids, `queryFromInfo` maps the nested `hits` selection, and the
-  hits come back in rank order with their relations loaded.
+  feeds ranked ids, the `hits` prismaField receives the nested selection, and
+  the hits come back in rank order with their relations loaded.
 
 ## Notes on version-specific choices
 

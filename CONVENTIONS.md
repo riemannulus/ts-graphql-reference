@@ -186,15 +186,18 @@ Layers are added when their first real content appears, **not before**:
 - **Repos never pick a client** — it is always the caller's first argument:
   `ReadDbClient` for read projections (rw, ro, and tx handles all satisfy it),
   `DbClient` for writes and plan executors.
-- **When Pothos cannot hand you a `query`** — the selection is nested under a
-  wrapper type, or the ids come from OUTSIDE the database (a search index) —
-  the schema layer builds it by hand with `queryFromInfo({ path: [...] })`. That
-  is the ONE place a `query` is constructed rather than received from
-  `t.prismaField`; its output is the same Prisma-shaped object and still STOPS
-  at the repo. A repo `findByIds(ids, query)` then hydrates, restoring the
+- **When the root resolver is not handed a `query`** — the model selection is
+  nested under a wrapper type, or the ids come from OUTSIDE the database (a
+  search index) — make the wrapper field that owns the selection a
+  `t.prismaField` of its own: the root resolver returns domain data (ids,
+  totals), and Pothos hands THAT field its `query`, created exactly where it
+  is consumed. A repo `findByIds(ids, query)` then hydrates, restoring the
   external order and skipping drift (ids the index has but the DB no longer
-  does). See `modules/search/`. The same `queryFromInfo({ path })` maps a
-  payload/union `...Response` mutation result, not just search.
+  does). See `modules/search/`. Only when a field cannot be a prismaField —
+  its type is a union of several models (a `...Response` payload, a mixed
+  feed) — does the schema layer build the per-member query by hand with
+  `queryFromInfo({ path: [...] })`; its output is the same Prisma-shaped
+  object and still STOPS at the repo.
 
 ## 3. Invariants as code (and as constraints)
 
