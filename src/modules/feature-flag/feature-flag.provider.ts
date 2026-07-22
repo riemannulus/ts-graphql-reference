@@ -6,6 +6,7 @@ import {
   StandardResolutionReasons,
 } from '@openfeature/server-sdk';
 import type { ReadDbClient } from '../../db/db.js';
+import type { Clock } from '../../foundation/clock.js';
 import { isActive, type Stage } from './feature-flag.core.js';
 import * as flagRepo from './feature-flag.repo.js';
 
@@ -39,6 +40,11 @@ import * as flagRepo from './feature-flag.repo.js';
  * root), and the DB handle is `ReadDbClient` — the provider only reads. It reads
  * the PRIMARY: a flag gate is a DECISION (whether to allow an operation), and
  * gannet decides on primary state, never a lagging replica.
+ *
+ * `now` comes from the injected `Clock`, not an ambient `new Date()` — the same
+ * discipline the rest of the codebase follows (CONVENTIONS §10): the window
+ * evaluation is a time-sensitive decision, so its clock is a seam a test can pin,
+ * making "does this flag's window contain now" deterministic.
  */
 export class DbFeatureFlagProvider implements Provider {
   readonly runsOn = 'server' as const;
@@ -47,6 +53,7 @@ export class DbFeatureFlagProvider implements Provider {
   constructor(
     private readonly db: ReadDbClient,
     private readonly stage: Stage | null,
+    private readonly clock: Clock,
   ) {}
 
   async resolveBooleanEvaluation(
@@ -65,7 +72,7 @@ export class DbFeatureFlagProvider implements Provider {
     if (row === null) {
       return { value: defaultValue, reason: StandardResolutionReasons.DEFAULT };
     }
-    const on = isActive(row, this.stage, new Date());
+    const on = isActive(row, this.stage, this.clock.now());
     return {
       value: on,
       reason: on ? StandardResolutionReasons.TARGETING_MATCH : StandardResolutionReasons.DISABLED,
@@ -85,7 +92,7 @@ export class DbFeatureFlagProvider implements Provider {
       };
     }
     const row = await flagRepo.findLiveByName(this.db, flagKey);
-    if (row !== null && row.value !== null && isActive(row, this.stage, new Date())) {
+    if (row !== null && row.value !== null && isActive(row, this.stage, this.clock.now())) {
       return { value: row.value, reason: StandardResolutionReasons.TARGETING_MATCH };
     }
     return { value: defaultValue, reason: StandardResolutionReasons.DEFAULT };

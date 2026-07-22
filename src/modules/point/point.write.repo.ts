@@ -4,6 +4,8 @@ import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import type {
   ChargeBalance,
   ChargePlan,
+  ExpiryPlan,
+  ExpiryWorld,
   PointSnapshot,
   SpendPlan,
   TransferPlan,
@@ -145,6 +147,89 @@ export async function applyTransferPlan(
   return { spend, charge };
 }
 
+/**
+ * Everything `planExpiry` needs, read in one place (run this inside the expiry
+ * tx). Like `loadSpendWorld` this reads two rows that must describe ONE world —
+ * so the service runs it at REPEATABLE READ (`uow.snapshot`); it lives here, not
+ * in the read repo, because it feeds a WRITE decision, not a GraphQL projection.
+ */
+export async function loadExpiryWorld(db: ReadDbClient, userId: number): Promise<ExpiryWorld> {
+  const balance = await db.pointBalance.findUnique({ where: { userId } });
+  const charges = await db.pointCharge.findMany({
+    where: { userId, state: 'USABLE' },
+    orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
+  });
+  return {
+    snapshot: balance ?? ZERO_SNAPSHOT,
+    charges: charges.map((c) => ({
+      id: c.id,
+      unspentPaid: c.unspentPaidAmount,
+      unspentFree: c.unspentFreeAmount,
+      chargedAt: c.chargedAt,
+    })),
+  };
+}
+
+/**
+ * Executes an `ExpiryPlan`: marks each due charge EXPIRED (zeroing its remainder
+ * and stamping the plan's `expiredAt`), then decrements the balance by the total
+ * removed. Purely mechanical — every decision, including which charges and the
+ * guard values, already lives in the plan.
+ *
+ * Same optimistic-concurrency shape as `applySpendPlan`: each write is guarded by
+ * the plan's assumptions, so a charge consumed (or a balance moved) by a
+ * concurrent spend after the world was read makes the guarded write miss, and the
+ * thrown `ConcurrentUpdateError` rolls the transaction back rather than
+ * double-counting. An empty plan writes nothing.
+ */
+export async function applyExpiryPlan(
+  db: DbClient,
+  userId: number,
+  plan: ExpiryPlan,
+): Promise<{ expiredCount: number }> {
+  if (plan.expirations.length === 0) return { expiredCount: 0 };
+
+  for (const expiration of plan.expirations) {
+    // eslint-disable-next-line no-await-in-loop
+    const { count } = await db.pointCharge.updateMany({
+      where: {
+        id: expiration.chargeId,
+        state: 'USABLE',
+        unspentPaidAmount: expiration.assumed.unspentPaid,
+        unspentFreeAmount: expiration.assumed.unspentFree,
+      },
+      data: {
+        state: 'EXPIRED',
+        unspentPaidAmount: 0,
+        unspentFreeAmount: 0,
+        expiredAt: plan.expiredAt,
+      },
+    });
+    if (count !== 1) {
+      throw new ConcurrentUpdateError(`point charge ${expiration.chargeId}`);
+    }
+  }
+
+  const { count } = await db.pointBalance.updateMany({
+    where: {
+      userId,
+      paidAmount: plan.assumedBalance.paidAmount,
+      freeAmount: plan.assumedBalance.freeAmount,
+      totalAmount: plan.assumedBalance.totalAmount,
+    },
+    data: {
+      paidAmount: plan.balanceAfter.paidAmount,
+      freeAmount: plan.balanceAfter.freeAmount,
+      totalAmount: plan.balanceAfter.totalAmount,
+    },
+  });
+  if (count !== 1) {
+    throw new ConcurrentUpdateError(`point balance of user ${userId}`);
+  }
+
+  return { expiredCount: plan.expirations.length };
+}
+
 /** Executes a `ChargePlan`: creates the charge and upserts the balance increments. */
 export async function applyChargePlan(
   db: DbClient,
@@ -158,6 +243,9 @@ export async function applyChargePlan(
       freeAmount: plan.freeAmount,
       unspentPaidAmount: plan.paidAmount,
       unspentFreeAmount: plan.freeAmount,
+      // Stamped from the plan (app clock), not left to @default(now()) — chargedAt
+      // is read back by the expiry decision, so it is single-clocked (§10).
+      chargedAt: plan.chargedAt,
     },
   });
   await db.pointBalance.upsert({

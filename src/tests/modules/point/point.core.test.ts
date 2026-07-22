@@ -80,23 +80,27 @@ describe('planSpend', () => {
   });
 });
 
+// `now` is passed into the charge/transfer decisions and recorded as chargedAt.
+const NOW = new Date('2026-01-01T00:00:00.000Z');
+
 describe('planCharge', () => {
-  it('accepts a one-sided top-up and totals it', () => {
-    expect(planCharge({ paidAmount: 100, freeAmount: 0 })).toEqual({
+  it('accepts a one-sided top-up and totals it, stamping chargedAt from now', () => {
+    expect(planCharge({ paidAmount: 100, freeAmount: 0 }, NOW)).toEqual({
       paidAmount: 100,
       freeAmount: 0,
       totalAmount: 100,
+      chargedAt: NOW,
     });
   });
 
   it('rejects zero, negative, and fractional inputs', () => {
-    expect(() => planCharge({ paidAmount: 0, freeAmount: 0 })).toThrow(
+    expect(() => planCharge({ paidAmount: 0, freeAmount: 0 }, NOW)).toThrow(
       PointAmountNotPositiveError,
     );
-    expect(() => planCharge({ paidAmount: -1, freeAmount: 5 })).toThrow(
+    expect(() => planCharge({ paidAmount: -1, freeAmount: 5 }, NOW)).toThrow(
       PointAmountNotPositiveError,
     );
-    expect(() => planCharge({ paidAmount: 0.5, freeAmount: 0.5 })).toThrow(
+    expect(() => planCharge({ paidAmount: 0.5, freeAmount: 0.5 }, NOW)).toThrow(
       PointAmountNotPositiveError,
     );
   });
@@ -109,15 +113,16 @@ describe('planTransfer', () => {
       2,
       { snapshot: snapshot(150, 100), charges: [{ id: 1, unspentPaid: 150, unspentFree: 100 }] },
       200,
+      NOW,
     );
     expect(plan.spend.paidUsage).toBe(150);
     expect(plan.spend.freeUsage).toBe(50);
-    expect(plan.charge).toEqual({ paidAmount: 150, freeAmount: 50, totalAmount: 200 });
+    expect(plan.charge).toEqual({ paidAmount: 150, freeAmount: 50, totalAmount: 200, chargedAt: NOW });
   });
 
   it('rejects a transfer to the same user before deciding the spend', () => {
     expect(() =>
-      planTransfer(7, 7, { snapshot: snapshot(100, 0), charges: [] }, 10),
+      planTransfer(7, 7, { snapshot: snapshot(100, 0), charges: [] }, 10, NOW),
     ).toThrow(PointTransferToSelfError);
   });
 
@@ -128,6 +133,7 @@ describe('planTransfer', () => {
         2,
         { snapshot: snapshot(5, 0), charges: [{ id: 1, unspentPaid: 5, unspentFree: 0 }] },
         11,
+        NOW,
       ),
     ).toThrow(InsufficientPointError);
   });
@@ -137,6 +143,7 @@ describe('parsePointChargeState', () => {
   it('accepts the known states and rejects anything else', () => {
     expect(parsePointChargeState('USABLE')).toBe('USABLE');
     expect(parsePointChargeState('CONSUMED')).toBe('CONSUMED');
-    expect(() => parsePointChargeState('EXPIRED')).toThrow(UnknownPointChargeStateError);
+    expect(parsePointChargeState('EXPIRED')).toBe('EXPIRED');
+    expect(() => parsePointChargeState('REFUNDED')).toThrow(UnknownPointChargeStateError);
   });
 });

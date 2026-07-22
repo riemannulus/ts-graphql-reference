@@ -4,13 +4,14 @@ import {
   UnknownFlagStageError,
 } from '../../../modules/feature-flag/feature-flag.core.js';
 import { createFeatureFlagService } from '../../../modules/feature-flag/feature-flag.service.js';
+import { systemClock } from '../../../foundation/clock.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 // The admin write side against the test DB: create, in-place update (one live row
 // per name), recreate-by-name after a soft delete, soft delete, and the core's
 // validation surfacing as domain errors that write nothing.
 const prisma = await makeTestPrisma();
-const flags = createFeatureFlagService({ rw: prisma, ro: prisma });
+const flags = createFeatureFlagService({ rw: prisma, ro: prisma }, systemClock);
 
 beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());

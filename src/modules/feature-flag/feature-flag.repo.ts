@@ -41,7 +41,11 @@ export function update(db: DbClient, id: number, data: FlagWrite): Promise<Featu
   return db.featureFlag.update({ where: { id }, data });
 }
 
-/** Soft-deletes a flag (records `deletedAt`) — the crepe kill; the name is then reusable. */
-export function softDelete(db: DbClient, id: number): Promise<FeatureFlag> {
-  return db.featureFlag.update({ where: { id }, data: { deletedAt: new Date() } });
+/**
+ * Soft-deletes a flag (records `deletedAt`) — the crepe kill; the name is then
+ * reusable. The kill instant is passed IN (the service reads it from the clock),
+ * not minted here with `new Date()`: the repo executes, it does not read time.
+ */
+export function softDelete(db: DbClient, id: number, deletedAt: Date): Promise<FeatureFlag> {
+  return db.featureFlag.update({ where: { id }, data: { deletedAt } });
 }

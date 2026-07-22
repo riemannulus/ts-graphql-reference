@@ -29,8 +29,17 @@ describe('database CHECK constraints', () => {
     await expect(
       prisma.$executeRaw`INSERT INTO "PointCharge"
         ("userId", "state", "paidAmount", "freeAmount", "unspentPaidAmount", "unspentFreeAmount")
-        VALUES (${userId}, 'EXPIRED', 10, 0, 10, 0)`,
+        VALUES (${userId}, 'REFUNDED', 10, 0, 10, 0)`,
     ).rejects.toThrow(/PointCharge_state_check/);
+  });
+
+  it('accepts the EXPIRED charge state (added to POINT_CHARGE_STATES for point expiry)', async () => {
+    const userId = await makeUser();
+    await expect(
+      prisma.$executeRaw`INSERT INTO "PointCharge"
+        ("userId", "state", "paidAmount", "freeAmount", "unspentPaidAmount", "unspentFreeAmount", "expiredAt")
+        VALUES (${userId}, 'EXPIRED', 10, 0, 0, 0, CURRENT_TIMESTAMP)`,
+    ).resolves.toBe(1);
   });
 
   it('rejects a negative unspent amount on a charge (no persistable overdraft)', async () => {

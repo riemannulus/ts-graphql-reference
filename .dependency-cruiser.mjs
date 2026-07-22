@@ -83,6 +83,22 @@ export default {
       from: { path: '^src/(modules|db|flags|foundation|graphql)/' },
       to: { path: '^src/(app|services|server)\\.ts$', dependencyTypesNot: ['type-only'] },
     },
+    {
+      name: 'date-lib-lives-in-time-only',
+      comment:
+        'A date library is wrapped in ONE place (foundation/time.ts) so a swap ' +
+        '(dayjs → Temporal) is a one-file change and no call site knows which ' +
+        'library computed a calendar answer. crepe imports dayjs in ~80 files ' +
+        'and monkey-patches its prototype; the refactor collapses that to this ' +
+        'seam. The layer lint keeps date libs out of cores/repos/etc.; this rule ' +
+        'keeps them out of the SHELL too (services, schema, providers) — only ' +
+        'foundation/time.ts may reach one. Matched by name so a NEW date lib ' +
+        '(not just dayjs) is fenced the moment it is added; a Temporal migration ' +
+        'targets a global, which would instead need a no-restricted-globals entry.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: '^src/foundation/time\\.ts$' },
+      to: { path: 'node_modules/(dayjs|luxon|moment|date-fns|@js-joda)' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

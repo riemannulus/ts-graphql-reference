@@ -1,6 +1,7 @@
 import type { FeatureFlag } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { uow } from '../../db/uow.js';
+import type { Clock } from '../../foundation/clock.js';
 import { planFlagUpsert } from './feature-flag.core.js';
 import * as flagRepo from './feature-flag.repo.js';
 
@@ -24,7 +25,7 @@ export interface UpsertFlagInput {
   disableAfter?: Date | null;
 }
 
-export function createFeatureFlagService(db: Db) {
+export function createFeatureFlagService(db: Db, clock: Clock) {
   return {
     /**
      * Creates or updates the LIVE flag named `input.name`: if a live row exists it
@@ -51,9 +52,10 @@ export function createFeatureFlagService(db: Db) {
       });
     },
 
-    /** Soft-deletes the flag with `id` (the crepe kill; its name becomes reusable). */
+    /** Soft-deletes the flag with `id` (the crepe kill; its name becomes reusable).
+     * The kill instant comes from the injected clock, stamped by this use-case. */
     remove(id: number): Promise<FeatureFlag> {
-      return uow.run(db, (tx) => flagRepo.softDelete(tx, id));
+      return uow.run(db, (tx) => flagRepo.softDelete(tx, id, clock.now()));
     },
   };
 }

@@ -6,6 +6,7 @@ import { createYoga } from 'graphql-yoga';
 import { createContextFactory } from './graphql/context.js';
 import { createServices } from './services.js';
 import { createDb, disconnectDb, type Db } from './db/db.js';
+import { type Clock, systemClock } from './foundation/clock.js';
 import { isDomainError } from './foundation/errors.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/routes/oauth.route.js';
@@ -52,6 +53,12 @@ export interface BuildAppOptions {
    * `parseStage(process.env.STAGE)`). Tests pin it here instead of mutating env.
    */
   stage?: Stage | null;
+  /**
+   * Inject the clock (default: `systemClock`). One clock flows to both the
+   * services (point expiry) and the DB flag provider (its window evaluation), so
+   * a test's fixed clock makes every time-sensitive path deterministic at once.
+   */
+  clock?: Clock;
 }
 
 /**
@@ -68,9 +75,11 @@ export function buildApp(options: BuildAppOptions = {}) {
   // Only handles the app itself created are disconnected on close — an
   // injected client stays the injector's to manage (two apps may share one).
   const ownsDb = injectedDb === undefined;
+  const clock = options.clock ?? systemClock;
   const services = createServices(db, {
     googleOAuth: options.googleOAuth,
     postSearchIndex: options.postSearchIndex,
+    clock,
   });
 
   // Feature flags via OpenFeature. The DB-backed provider evaluates the crepe
@@ -79,7 +88,7 @@ export function buildApp(options: BuildAppOptions = {}) {
   // isolated providers, and read through that domain's client. `setProvider` is
   // synchronous and the provider needs no async init, so `buildApp` stays sync.
   const stage = options.stage ?? parseStage(process.env.STAGE);
-  const flagProvider = options.flagProvider ?? new DbFeatureFlagProvider(db.rw, stage);
+  const flagProvider = options.flagProvider ?? new DbFeatureFlagProvider(db.rw, stage, clock);
   const flagDomain = crypto.randomUUID();
   OpenFeature.setProvider(flagDomain, flagProvider);
   const flagClient = OpenFeature.getClient(flagDomain);
