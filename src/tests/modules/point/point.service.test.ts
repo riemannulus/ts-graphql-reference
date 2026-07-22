@@ -3,6 +3,7 @@ import { createPointService } from '../../../modules/point/point.service.js';
 import {
   InsufficientPointError,
   PointAmountNotPositiveError,
+  PointBalanceDriftError,
   planSpend,
   PointTransferToSelfError,
 } from '../../../modules/point/point.core.js';
@@ -103,7 +104,7 @@ describe('PointService.spend', () => {
     await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
 
     // Decide on a snapshot of the world…
-    const world = await pointRepo.loadSpendWorld(prisma, user.id);
+    const world = await pointRepo.loadPointWorld(prisma, user.id);
     const plan = planSpend(world.snapshot, world.charges, 60);
 
     // …then lose the race: a concurrent spend consumes points first.
@@ -205,5 +206,39 @@ describe('PointService.transfer', () => {
     expect(fromBalance.totalAmount).toBe(100);
     expect(await prisma.pointCharge.count({ where: { userId: to.id } })).toBe(0);
     expect(await prisma.pointSpend.count()).toBe(0);
+  });
+});
+
+describe('PointService.verifyBalances', () => {
+  it('passes for a ledger kept consistent by charge and spend', async () => {
+    const user = await makeUser();
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 50 });
+    await points.spend(user.id, { amount: 120, reason: 'checkout' });
+
+    const result = await points.verifyBalances();
+    expect(result.usersChecked).toBeGreaterThanOrEqual(1);
+  });
+
+  it('checks a user whose charges are all consumed (balance zero, no usable charge)', async () => {
+    const user = await makeUser();
+    await points.charge(user.id, { paidAmount: 50, freeAmount: 0 });
+    await points.spend(user.id, { amount: 50, reason: 'all' });
+
+    // Balance is now 0 and the charge is CONSUMED — still consistent, so the
+    // user (reached via the balance row) is checked and passes.
+    await expect(points.verifyBalances()).resolves.toEqual({ usersChecked: 1 });
+  });
+
+  it('throws PointBalanceDriftError when a stored balance drifts from its ledger', async () => {
+    const user = await makeUser();
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
+    // Corrupt the denormalized cache directly, bypassing the service — the kind
+    // of drift a bug elsewhere could cause and this sweep exists to catch.
+    await prisma.pointBalance.update({
+      where: { userId: user.id },
+      data: { paidAmount: 999, totalAmount: 999 },
+    });
+
+    await expect(points.verifyBalances()).rejects.toBeInstanceOf(PointBalanceDriftError);
   });
 });

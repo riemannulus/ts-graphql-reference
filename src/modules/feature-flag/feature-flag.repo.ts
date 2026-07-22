@@ -49,3 +49,16 @@ export function update(db: DbClient, id: number, data: FlagWrite): Promise<Featu
 export function softDelete(db: DbClient, id: number, deletedAt: Date): Promise<FeatureFlag> {
   return db.featureFlag.update({ where: { id }, data: { deletedAt } });
 }
+
+/**
+ * Hard-deletes every soft-deleted row whose deletion is at or before `cutoff`
+ * (the retention boundary the core computes). The `deletedAt: { not: null }`
+ * clause is redundant with `lte` at the database (a NULL never satisfies `<=`),
+ * but stated so the guarantee "a LIVE row is never purged" is visible in the
+ * WHERE rather than inferred. A single atomic statement — the invariant it must
+ * not break IS the WHERE — so no read-decide-execute is needed. Returns the
+ * removed-row count.
+ */
+export function purgeDeletedBefore(db: DbClient, cutoff: Date): Promise<{ count: number }> {
+  return db.featureFlag.deleteMany({ where: { deletedAt: { not: null, lte: cutoff } } });
+}

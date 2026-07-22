@@ -5,10 +5,15 @@ import {
   isActive,
   parseStage,
   planFlagUpsert,
+  PURGE_RETENTION_DAYS,
+  purgeCutoff,
   STAGES,
   UnknownFlagStageError,
 } from '../../../modules/feature-flag/feature-flag.core.js';
 import { arbFlagRow, arbInstant, arbStage } from './feature-flag.arbitraries.js';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const arbRetentionDays = fc.integer({ min: 0, max: 3650 });
 
 // isActive is the crepe activation rule as a pure predicate — its laws are
 // provable with no database. Each guard is NECESSARY (violate it → inactive) and
@@ -135,5 +140,40 @@ describe('planFlagUpsert', () => {
   it('allows an equal-bounds (instantaneous) window — the bound is inclusive', () => {
     const t = new Date(1_700_000_000_000);
     expect(() => planFlagUpsert({ ...base, enableAfter: t, disableAfter: t })).not.toThrow();
+  });
+});
+
+// The purge retention policy as pure arithmetic — its laws hold with no
+// database (the sweep against the DB is feature-flag.service.test.ts).
+describe('purgeCutoff', () => {
+  test.prop([arbInstant, arbRetentionDays])(
+    'is exactly retentionDays before now',
+    (now, days) => {
+      expect(purgeCutoff(now, days).getTime()).toBe(now.getTime() - days * MS_PER_DAY);
+    },
+  );
+
+  test.prop([arbInstant, arbInstant, arbRetentionDays])(
+    'is monotonic in now (a later run purges strictly more history)',
+    (a, b, days) => {
+      const [earlier, later] = a.getTime() <= b.getTime() ? [a, b] : [b, a];
+      expect(purgeCutoff(earlier, days).getTime()).toBeLessThanOrEqual(
+        purgeCutoff(later, days).getTime(),
+      );
+    },
+  );
+
+  test.prop([arbInstant, arbRetentionDays, arbRetentionDays])(
+    'a longer retention window moves the cutoff earlier (keeps more)',
+    (now, d1, d2) => {
+      const [shorter, longer] = d1 <= d2 ? [d1, d2] : [d2, d1];
+      expect(purgeCutoff(now, longer).getTime()).toBeLessThanOrEqual(
+        purgeCutoff(now, shorter).getTime(),
+      );
+    },
+  );
+
+  test.prop([arbInstant])('defaults to the PURGE_RETENTION_DAYS window', (now) => {
+    expect(purgeCutoff(now).getTime()).toBe(purgeCutoff(now, PURGE_RETENTION_DAYS).getTime());
   });
 });

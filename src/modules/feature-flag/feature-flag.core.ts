@@ -104,3 +104,24 @@ export function planFlagUpsert(input: FlagUpsert): FlagUpsert {
   }
   return input;
 }
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a soft-deleted flag is kept before the cleanup job hard-deletes it.
+ * The retention window is a domain POLICY, so it lives here (single source of
+ * truth), not as a literal in the job or the repo — the same reason the
+ * activation rule is `isActive` and not a WHERE the provider assembles inline.
+ */
+export const PURGE_RETENTION_DAYS = 30;
+
+/**
+ * The cutoff instant for a purge run: a row soft-deleted at or before this is
+ * old enough to hard-delete. Pure and total — the job supplies `now` (the shell
+ * owns the clock), and the repo turns this into a `deletedAt <= cutoff` bound.
+ * Isolating the arithmetic here keeps the retention policy property-testable
+ * (monotonic in `now`, exactly `retentionDays` behind it) with no database.
+ */
+export function purgeCutoff(now: Date, retentionDays: number = PURGE_RETENTION_DAYS): Date {
+  return new Date(now.getTime() - retentionDays * MS_PER_DAY);
+}

@@ -68,3 +68,43 @@ describe('FeatureFlagService.remove', () => {
     expect(await prisma.featureFlag.count({ where: { deletedAt: null } })).toBe(0); // …but not live
   });
 });
+
+describe('FeatureFlagService.purgeDeleted', () => {
+  // `deletedAt` is set directly here (not via remove(), which stamps `now`) so a
+  // row can be aged past the retention window deterministically.
+  const now = new Date('2026-07-01T00:00:00Z');
+
+  it('hard-deletes rows soft-deleted before the cutoff, keeping recent + live', async () => {
+    await prisma.featureFlag.create({ data: { name: 'live', stage: 'PROD', deletedAt: null } });
+    await prisma.featureFlag.create({
+      data: { name: 'recent', stage: 'PROD', deletedAt: new Date('2026-06-25T00:00:00Z') }, // ~6 days
+    });
+    await prisma.featureFlag.create({
+      data: { name: 'old', stage: 'PROD', deletedAt: new Date('2026-05-01T00:00:00Z') }, // ~61 days
+    });
+
+    const purged = await flags.purgeDeleted(now);
+
+    expect(purged).toBe(1);
+    const names = (await prisma.featureFlag.findMany({ select: { name: true } }))
+      .map((f) => f.name)
+      .toSorted();
+    expect(names).toEqual(['live', 'recent']);
+  });
+
+  it('never purges a live row, even with a zero-day retention window', async () => {
+    await prisma.featureFlag.create({ data: { name: 'live', stage: 'PROD', deletedAt: null } });
+
+    expect(await flags.purgeDeleted(now, { retentionDays: 0 })).toBe(0);
+    expect(await prisma.featureFlag.count()).toBe(1);
+  });
+
+  it('respects a custom retention window', async () => {
+    await prisma.featureFlag.create({
+      data: { name: 'x', stage: 'PROD', deletedAt: new Date('2026-06-20T00:00:00Z') }, // ~11 days
+    });
+
+    expect(await flags.purgeDeleted(now, { retentionDays: 30 })).toBe(0); // 11d < 30d → kept
+    expect(await flags.purgeDeleted(now, { retentionDays: 7 })).toBe(1); // 11d ≥ 7d → purged
+  });
+});

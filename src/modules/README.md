@@ -2,8 +2,9 @@
 
 Each feature module owns one vertical slice of the domain: its Prisma access
 (`*.repo.ts`), its pure core (`*.core.ts` / value + state files), its service
-use-cases (`*.service.ts`), and its delivery layer — GraphQL `schemas/` or, for
-`auth`, HTTP `routes/`. The per-module blueprint and the layer rules live in
+use-cases (`*.service.ts`), and its delivery layer — GraphQL `schemas/`, HTTP
+`routes/` (as in `auth`), and/or scheduled Agenda `jobs/` (as in `point` and
+`feature-flag`). The per-module blueprint and the layer rules live in
 [CONVENTIONS.md](../../CONVENTIONS.md); this file is about how the modules
 depend on **each other**.
 
