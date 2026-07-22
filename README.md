@@ -345,8 +345,9 @@ domain data and the queue.) The pieces mirror the GraphQL assembly:
   `drain()`s in-flight jobs for a graceful shutdown.
 - A module's **jobs are a delivery layer** — `jobs/*.job.ts`, the peer of
   `schemas/` (GraphQL) and `routes/` (HTTP). The registrar receives its SERVICE
-  (never a db handle) and the handler is THIN: it owns the clock and delegates
-  the decision + write to the service, exactly as an HTTP route does. It DEFINES
+  (never a db handle) and the handler is THIN: it delegates the decision + write
+  to the service — which reads `now` from the injected clock — exactly as an HTTP
+  route does. It DEFINES
   the handler and RETURNS its schedules as data, so the recurring registry is
   snapshot-testable without a running queue.
 

@@ -315,7 +315,7 @@
                   "**/flag-registry*",
                   "**/flag-reader*"
                 ],
-                "message": "Job files are the scheduled delivery layer (the peer of schemas/ and routes/): they DEFINE handlers on the shared Agenda and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, locks, or the flag facade — the service owns those. A handler is thin: own the clock and delegate the decision + write to the service."
+                "message": "Job files are the scheduled delivery layer (the peer of schemas/ and routes/): they DEFINE handlers on the shared Agenda and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, locks, or the flag facade — the service owns those. A handler is thin: it delegates the decision + write to the service, which reads `now` from the injected clock (time enters through that seam, not the handler)."
               }
             ]
           }

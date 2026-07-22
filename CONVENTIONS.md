@@ -344,8 +344,9 @@ stays Prisma-free.
   a db handle — so the domain layers (core/repo/service/provider) stay
   transport-agnostic and a module can be delivered over GraphQL, HTTP, scheduled
   jobs, any combination, or none (a pure cross-module use-case like
-  `onboarding/`). A job handler is as thin as a route: it owns the clock and
-  delegates the decision + write to the service. This is why modules are grouped
+  `onboarding/`). A job handler is as thin as a route: it delegates the decision
+  + write to the service, which reads `now` from the injected clock (§10 — time
+  enters through that seam, not the handler). This is why modules are grouped
   by **domain, not by transport**: `auth/` reuses the `user` service, so a
   GraphQL/REST split would only fragment shared logic.
 

@@ -14,7 +14,7 @@ import { fakeAgendaBackend } from '../support/agenda-backend-fake.js';
 
 /** A services container whose only real members are the two the jobs call. */
 function servicesWith(overrides: {
-  purgeDeleted?: (now: Date) => Promise<number>;
+  purgeDeleted?: (opts?: { now?: Date; retentionDays?: number }) => Promise<number>;
   verifyBalances?: () => Promise<{ usersChecked: number }>;
 }): Services {
   return {
@@ -46,8 +46,8 @@ describe('buildScheduler', () => {
     ]);
   });
 
-  it('the feature-flag purge handler delegates to the service, owning the clock', async () => {
-    const purgeDeleted = vi.fn((_now: Date) => Promise.resolve(0));
+  it('the feature-flag purge handler delegates to the service', async () => {
+    const purgeDeleted = vi.fn(() => Promise.resolve(0));
     const scheduler = buildScheduler({
       services: servicesWith({ purgeDeleted }),
       backend: fakeAgendaBackend(),
@@ -55,8 +55,9 @@ describe('buildScheduler', () => {
 
     await runJob(scheduler, FEATURE_FLAG_PURGE_JOB);
 
-    // Called once, and the handler (not the service) supplies the clock.
-    expect(purgeDeleted).toHaveBeenCalledWith(expect.any(Date));
+    // Delegates without minting a clock: the service reads `now` from the
+    // injected clock, so the handler passes no arguments.
+    expect(purgeDeleted).toHaveBeenCalledWith();
   });
 
   it('the point verify handler delegates to the service', async () => {

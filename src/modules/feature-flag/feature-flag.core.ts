@@ -1,4 +1,5 @@
 import { DomainError } from '../../foundation/errors.js';
+import { addDays } from '../../foundation/time.js';
 
 /**
  * Feature-flag domain — the pure core (the crepe model).
@@ -105,8 +106,6 @@ export function planFlagUpsert(input: FlagUpsert): FlagUpsert {
   return input;
 }
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 /**
  * How long a soft-deleted flag is kept before the cleanup job hard-deletes it.
  * The retention window is a domain POLICY, so it lives here (single source of
@@ -117,11 +116,14 @@ export const PURGE_RETENTION_DAYS = 30;
 
 /**
  * The cutoff instant for a purge run: a row soft-deleted at or before this is
- * old enough to hard-delete. Pure and total — the job supplies `now` (the shell
- * owns the clock), and the repo turns this into a `deletedAt <= cutoff` bound.
- * Isolating the arithmetic here keeps the retention policy property-testable
- * (monotonic in `now`, exactly `retentionDays` behind it) with no database.
+ * old enough to hard-delete. Pure and total — `now` arrives as DATA (the service
+ * mints it from the injected clock, or a backfill passes an explicit instant;
+ * CONVENTIONS §10), and the repo turns this into a `deletedAt <= cutoff` bound.
+ * The day arithmetic goes through the one calendar seam (`foundation/time.ts`),
+ * never an ad-hoc `new Date(now - n)`: a core reads no clock and does its
+ * date math there. Keeping the policy here leaves it property-testable (monotonic
+ * in `now`, exactly `retentionDays` behind it) with no database.
  */
 export function purgeCutoff(now: Date, retentionDays: number = PURGE_RETENTION_DAYS): Date {
-  return new Date(now.getTime() - retentionDays * MS_PER_DAY);
+  return addDays(now, -retentionDays);
 }
