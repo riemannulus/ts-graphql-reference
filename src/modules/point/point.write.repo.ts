@@ -18,12 +18,14 @@ import type {
  * the unit of work. Splitting it per model would scatter one atomic use-case
  * across files and invite reuse of a half-executor outside its plan.
  *
- * The pattern is the load/apply pair: `loadSpendWorld` reads the world the
+ * The pattern is the load/apply pair: `loadPointWorld` reads the world the
  * core decides on, then `apply*Plan` mechanically executes the plan it
  * returned. No business branching on the write side — every `if` that matters
- * happened in point.core.ts. (`loadSpendWorld` is a read, but it belongs here:
- * it feeds a plan inside the spend transaction, it is not a GraphQL
- * projection — those live in point.read.repo.ts.)
+ * happened in point.core.ts. (`loadPointWorld` and `findUserIdsWithBalanceOrUsableCharges`
+ * are reads, but they belong here: they feed a DECISION inside a transaction —
+ * a spend plan, a transfer plan, or the balance-verification comparison — not a
+ * GraphQL projection; those, which take the Pothos `query`, live in
+ * point.read.repo.ts.)
  *
  * Which client a function runs on (rw / a transaction) is ALWAYS the caller's
  * choice, passed as the first parameter.
@@ -31,19 +33,26 @@ import type {
 
 const ZERO_SNAPSHOT: PointSnapshot = { paidAmount: 0, freeAmount: 0, totalAmount: 0 };
 
-/** Everything `planSpend` needs, read in one place (run this inside the spend tx). */
-export interface SpendWorld {
+/**
+ * A user's point world: the balance snapshot plus their USABLE charges in spend
+ * (FIFO) order. The one world every point decision reads — `planSpend`,
+ * `planTransfer` (sender side), and `verifyBalances` all decide against it — so
+ * it is named for the domain, not one use-case. Read it inside the deciding
+ * transaction (see the isolation note on `loadPointWorld`).
+ */
+export interface PointWorld {
   snapshot: PointSnapshot;
   /** USABLE charges in spend (FIFO) order, mapped to the core's contract type. */
   charges: ChargeBalance[];
 }
 
-export async function loadSpendWorld(db: ReadDbClient, userId: number): Promise<SpendWorld> {
+export async function loadPointWorld(db: ReadDbClient, userId: number): Promise<PointWorld> {
   // Sequential, not Promise.all: interactive-transaction handles do not
   // support concurrent operations. The two reads only form ONE world because
-  // the spend transaction runs at REPEATABLE READ (point.service.ts) — under
-  // READ COMMITTED each statement would get its own snapshot, and a charge
-  // committing between them would make a healthy ledger look corrupt.
+  // the caller opens them at REPEATABLE READ (uow.snapshot — used by spend,
+  // transfer, and verify) — under READ COMMITTED each statement would get its
+  // own snapshot, and a charge committing between them would make a healthy
+  // ledger look corrupt.
   const balance = await db.pointBalance.findUnique({ where: { userId } });
   const charges = await db.pointCharge.findMany({
     where: { userId, state: 'USABLE' },
@@ -59,6 +68,29 @@ export async function loadSpendWorld(db: ReadDbClient, userId: number): Promise<
       unspentFree: c.unspentFreeAmount,
     })),
   };
+}
+
+/**
+ * The user ids the balance-verification sweep must check: everyone with a
+ * balance row OR any USABLE charge. Both sides matter precisely because verify
+ * looks for corruption — a user with usable charges but NO balance row is itself
+ * drift the sweep must catch, so it cannot start from balances alone. Runs on
+ * the caller's client (the primary, outside a per-user transaction), returning
+ * ids sorted for a deterministic, resumable sweep order.
+ */
+export async function findUserIdsWithBalanceOrUsableCharges(db: ReadDbClient): Promise<number[]> {
+  const [balances, charges] = await Promise.all([
+    db.pointBalance.findMany({ select: { userId: true } }),
+    db.pointCharge.findMany({
+      where: { state: 'USABLE' },
+      select: { userId: true },
+      distinct: ['userId'],
+    }),
+  ]);
+  const ids = new Set<number>();
+  for (const b of balances) ids.add(b.userId);
+  for (const c of charges) ids.add(c.userId);
+  return [...ids].toSorted((a, b) => a - b);
 }
 
 /**

@@ -1,6 +1,8 @@
 import { fc, test } from '@fast-check/vitest';
 import { expect } from 'vitest';
 import {
+  assertBalanceConsistent,
+  balancesAgree,
   EXPIRE_AFTER_DAYS,
   InsufficientPointError,
   isValidPointAmount,
@@ -8,8 +10,10 @@ import {
   planSpend,
   planTransfer,
   PointAmountNotPositiveError,
+  PointBalanceDriftError,
   PointTransferToSelfError,
   type SpendPlan,
+  sumUsableBalance,
 } from '../../../modules/point/point.core.js';
 import { addDays, kstEndOfDay } from '../../../foundation/time.js';
 import { arbExpiryWorld, arbLedger, arbSpendAmount, EXPIRY_NOW } from './point.arbitraries.js';
@@ -216,4 +220,27 @@ test.prop([
   const plan = planExpiry(world, now);
   expect(plan.expiredAt).toBe(now);
   expect(Array.isArray(plan.expirations)).toBe(true);
+});
+
+// The conservation law that the verify job checks against, and its assertion
+// wrapper. arbLedger builds the snapshot AS the sum of the charges' unspent, so
+// a consistent ledger is exactly the state a correct system reaches.
+test.prop([arbLedger])('sumUsableBalance reproduces the balance a consistent ledger implies', (ledger) => {
+  expect(sumUsableBalance(ledger.charges)).toEqual(ledger.snapshot);
+});
+
+test.prop([arbLedger])('assertBalanceConsistent accepts a consistent ledger', (ledger) => {
+  expect(() => assertBalanceConsistent(1, ledger.snapshot, ledger.charges)).not.toThrow();
+});
+
+test.prop([arbLedger, fc.integer({ min: 1, max: 1_000 })])(
+  'assertBalanceConsistent rejects a stored balance that drifts from the ledger',
+  (ledger, drift) => {
+    const drifted = { ...ledger.snapshot, paidAmount: ledger.snapshot.paidAmount + drift };
+    expect(() => assertBalanceConsistent(1, drifted, ledger.charges)).toThrow(PointBalanceDriftError);
+  },
+);
+
+test.prop([arbLedger])('balancesAgree is reflexive', (ledger) => {
+  expect(balancesAgree(ledger.snapshot, ledger.snapshot)).toBe(true);
 });

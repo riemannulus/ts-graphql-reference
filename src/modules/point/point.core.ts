@@ -122,6 +122,73 @@ export function parsePointChargeState(value: string): PointChargeState {
   return value;
 }
 
+/**
+ * The balance a set of USABLE charges MUST sum to. `PointBalance` is a
+ * denormalized cache of the charge ledger; this is the conservation law that
+ * relates them — the inverse of what `applyChargePlan` accumulates and
+ * `applySpendPlan` decrements — made an explicit, pure, property-testable
+ * function. The verify sweep (point.service.ts) recomputes it from the ledger
+ * and compares it to the stored snapshot. Total.
+ */
+export function sumUsableBalance(charges: readonly ChargeBalance[]): PointSnapshot {
+  let paidAmount = 0;
+  let freeAmount = 0;
+  for (const charge of charges) {
+    paidAmount += charge.unspentPaid;
+    freeAmount += charge.unspentFree;
+  }
+  return { paidAmount, freeAmount, totalAmount: paidAmount + freeAmount };
+}
+
+/**
+ * The stored `PointBalance` disagrees with the sum of the user's USABLE charges:
+ * the denormalized cache has drifted from the ledger it summarizes. A correct
+ * system can never produce this, so — like `PointLedgerInconsistencyError` — it
+ * is a plain, MASKED Error, never a client-visible `DomainError`. The verify job
+ * throws it so drift surfaces to operators (agenda's `fail` event) instead of
+ * being silently "corrected", which would only paper over the bug that caused it.
+ */
+export class PointBalanceDriftError extends Error {
+  constructor(
+    readonly userId: number,
+    readonly stored: PointSnapshot,
+    readonly computed: PointSnapshot,
+  ) {
+    super(
+      `Point balance drift for user ${userId}: stored ${JSON.stringify(stored)} ` +
+        `does not equal ledger ${JSON.stringify(computed)}`,
+    );
+    this.name = 'PointBalanceDriftError';
+  }
+}
+
+/** Total predicate: do two snapshots hold the same paid/free/total amounts? */
+export function balancesAgree(a: PointSnapshot, b: PointSnapshot): boolean {
+  return (
+    a.paidAmount === b.paidAmount &&
+    a.freeAmount === b.freeAmount &&
+    a.totalAmount === b.totalAmount
+  );
+}
+
+/**
+ * Asserts a user's stored balance equals the sum of their USABLE charges, or
+ * throws `PointBalanceDriftError`. The `assertTransition = canTransition + throw`
+ * shape: `balancesAgree` names the rule, this adds the throw — so the verify
+ * service stays a plain read → decide, with the decision (and its `if`) here in
+ * the core, never leaked into the shell. Total.
+ */
+export function assertBalanceConsistent(
+  userId: number,
+  stored: PointSnapshot,
+  charges: readonly ChargeBalance[],
+): void {
+  const computed = sumUsableBalance(charges);
+  if (!balancesAgree(stored, computed)) {
+    throw new PointBalanceDriftError(userId, stored, computed);
+  }
+}
+
 /** Total predicate: is `amount` a valid point amount (positive integer)? */
 export function isValidPointAmount(amount: number): boolean {
   return Number.isInteger(amount) && amount > 0;

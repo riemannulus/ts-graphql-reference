@@ -80,7 +80,7 @@ export default {
         'below them may import them as a value. The Services TYPE flowing ' +
         'down into context.ts is the sanctioned (erased) exception.',
       severity: 'error',
-      from: { path: '^src/(modules|db|flags|foundation|graphql)/' },
+      from: { path: '^src/(modules|db|flags|foundation|graphql|scheduler)/' },
       to: { path: '^src/(app|services|server)\\.ts$', dependencyTypesNot: ['type-only'] },
     },
     {

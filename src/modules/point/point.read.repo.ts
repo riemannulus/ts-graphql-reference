@@ -10,8 +10,8 @@ import type { ReadDbClient, Selection } from '../../db/db.js';
  * services never see it.
  *
  * Everything here takes `ReadDbClient` (write methods stripped at the type
- * level) — reads that feed a WRITE decision live with their executors in
- * point.write.repo.ts instead (e.g. `loadSpendWorld`).
+ * level) — reads that feed a DECISION live with their executors in
+ * point.write.repo.ts instead (e.g. `loadPointWorld`).
  */
 
 export function findBalance(

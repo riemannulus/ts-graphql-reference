@@ -32,11 +32,13 @@
   "license": "ISC",
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
+    "@agendajs/postgres-backend": "3.0.6",
     "@openfeature/server-sdk": "1.22.0",
     "@pothos/core": "^4.13.0",
     "@pothos/plugin-prisma": "^4.14.3",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "agenda": "6.2.6",
     "dayjs": "^1.11.21",
     "fastify": "^5.8.5",
     "graphql": "^16.14.2",

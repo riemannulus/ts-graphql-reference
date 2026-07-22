@@ -13,7 +13,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
-| Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP) | GraphQL types + `ctx`, or Fastify req/reply | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`) |
+| Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP); `jobs/*.job.ts` (Agenda) | GraphQL types + `ctx`, Fastify req/reply, or an Agenda job | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`), job-registry + service tests |
 
 ```
 schema ──→ service ──→ repo ──→ prisma
@@ -337,13 +337,18 @@ stays Prisma-free.
   SDL snapshot guards the result.
 - A module's outermost layer is its **delivery**, and it lives in a named place:
   GraphQL fields in `schemas/` (or a single `*.schema.ts`), an HTTP surface in
-  `routes/*.route.ts`. Both get their service from the container at registration
-  (`registerXxxModule()` from `schemas/index.ts`, called in `schema.ts`;
-  `registerXxx(app, service)` in `buildApp()`), never a db handle — so the domain layers (core/repo/service/
-  provider) stay transport-agnostic and a module can be delivered over GraphQL,
-  HTTP, both, or neither (a pure cross-module use-case like `onboarding/`). This
-  is why modules are grouped by **domain, not by transport**: `auth/` reuses the
-  `user` service, so a GraphQL/REST split would only fragment shared logic.
+  `routes/*.route.ts`, scheduled background jobs in `jobs/*.job.ts`. Each gets
+  its service from the container at registration (`registerXxxModule()` from
+  `schemas/index.ts`, called in `schema.ts`; `registerXxx(app, service)` in
+  `buildApp()`; `registerXxxJobs(agenda, service)` in `buildScheduler()`), never
+  a db handle — so the domain layers (core/repo/service/provider) stay
+  transport-agnostic and a module can be delivered over GraphQL, HTTP, scheduled
+  jobs, any combination, or none (a pure cross-module use-case like
+  `onboarding/`). A job handler is as thin as a route: it delegates the decision
+  + write to the service, which reads `now` from the injected clock (§10 — time
+  enters through that seam, not the handler). This is why modules are grouped
+  by **domain, not by transport**: `auth/` reuses the `user` service, so a
+  GraphQL/REST split would only fragment shared logic.
 
 ## 6. Property-based testing
 
@@ -390,6 +395,8 @@ src/
       <name>.mutation.ts
     routes/             # optional HTTP delivery (peer of schemas/):
       <name>.route.ts   #   registerXxx(app, service)
+    jobs/               # optional scheduled delivery (peer of schemas/):
+      <name>.job.ts     #   registerXxxJobs(agenda, service): JobSchedule[]
     <name>.provider.ts  # optional external port (function record + stub)
   tests/
     support/            # helpers.ts: in-process PGlite + introspection-driven resetDb

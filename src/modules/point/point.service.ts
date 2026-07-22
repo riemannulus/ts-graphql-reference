@@ -4,7 +4,13 @@ import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
 import type { Clock } from '../../foundation/clock.js';
 import type { FlagReader } from '../../flags/flag-registry.js';
-import { planCharge, planExpiry, planSpend, planTransfer } from './point.core.js';
+import {
+  assertBalanceConsistent,
+  planCharge,
+  planExpiry,
+  planSpend,
+  planTransfer,
+} from './point.core.js';
 import * as pointRepo from './point.write.repo.js';
 
 export interface ChargePointInput {
@@ -61,7 +67,7 @@ export function createPointService(db: Db, clock: Clock) {
     /** Spends `amount` points (paid-first, FIFO across charges). */
     async spend(userId: number, input: SpendPointInput): Promise<PointSpend> {
       return uow.snapshot(db, async (tx) => {
-        const world = await pointRepo.loadSpendWorld(tx, userId); // read
+        const world = await pointRepo.loadPointWorld(tx, userId); // read
         const plan = planSpend(world.snapshot, world.charges, input.amount); // decide
         return pointRepo.applySpendPlan(tx, userId, input.reason, plan); // execute
       });
@@ -129,13 +135,39 @@ export function createPointService(db: Db, clock: Clock) {
         db,
         [lockKey.pointBalance(fromUserId), lockKey.pointBalance(toUserId)],
         async (tx) => {
-          const world = await pointRepo.loadSpendWorld(tx, fromUserId); // read
+          const world = await pointRepo.loadPointWorld(tx, fromUserId); // read
           const plan = planTransfer(fromUserId, toUserId, world, input.amount, now, { preferFree }); // decide
           return pointRepo.applyTransferPlan(tx, fromUserId, toUserId, plan); // execute
         },
         { snapshot: true },
       );
       return spend;
+    },
+
+    /**
+     * Verifies that every user's denormalized `PointBalance` still equals the
+     * sum of their USABLE charges — the work behind the `point:balance:verify`
+     * job, the reference's read-only, defense-in-depth sweep (crepe's
+     * clairvoyance balance-check analogue). Each user is checked in its OWN
+     * `uow.snapshot`: the balance and the charges must describe ONE consistent
+     * world, so a concurrent spend landing between the two reads cannot make a
+     * healthy ledger look drifted — the very reason `spend` reads under snapshot.
+     * It is READ-ONLY, so it takes no lock and never blocks a spend; overlapping
+     * runs are harmless. On drift it throws `PointBalanceDriftError` (masked
+     * corruption, not silently corrected). Returns how many users were checked.
+     */
+    async verifyBalances(): Promise<{ usersChecked: number }> {
+      // The population to check, read on the primary (a correctness decision is
+      // made on primary state) and outside any per-user transaction.
+      const userIds = await pointRepo.findUserIdsWithBalanceOrUsableCharges(db.rw);
+      for (const userId of userIds) {
+        // eslint-disable-next-line no-await-in-loop -- bounded per-user snapshot, sequential by design
+        await uow.snapshot(db, async (tx) => {
+          const world = await pointRepo.loadPointWorld(tx, userId); // read
+          assertBalanceConsistent(userId, world.snapshot, world.charges); // decide (core)
+        });
+      }
+      return { usersChecked: userIds.length };
     },
   };
 }

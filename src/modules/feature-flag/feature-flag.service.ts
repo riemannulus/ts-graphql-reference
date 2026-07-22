@@ -2,7 +2,7 @@ import type { FeatureFlag } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { uow } from '../../db/uow.js';
 import type { Clock } from '../../foundation/clock.js';
-import { planFlagUpsert } from './feature-flag.core.js';
+import { planFlagUpsert, purgeCutoff } from './feature-flag.core.js';
 import * as flagRepo from './feature-flag.repo.js';
 
 /**
@@ -56,6 +56,24 @@ export function createFeatureFlagService(db: Db, clock: Clock) {
      * The kill instant comes from the injected clock, stamped by this use-case. */
     remove(id: number): Promise<FeatureFlag> {
       return uow.run(db, (tx) => flagRepo.softDelete(tx, id, clock.now()));
+    },
+
+    /**
+     * Hard-deletes soft-deleted flags older than the retention window — the work
+     * behind the `feature-flag:purge-deleted` job. The retention DECISION is the
+     * core's (`purgeCutoff`); the service reads `now` ONCE — from the injected
+     * clock (the scheduled path) or `opts.now` (a backfill / re-run passing an
+     * explicit instant) — turns it into that cutoff, and executes one guarded
+     * delete through `uow.run` (the weakest rung: a single atomic statement whose
+     * WHERE is the whole invariant). `now` enters through the clock seam, never an
+     * ambient `new Date()`, so the policy stays deterministic and testable — the
+     * same shape as `point.expire` (CONVENTIONS §10). Returns the number of rows
+     * purged.
+     */
+    async purgeDeleted(opts: { now?: Date; retentionDays?: number } = {}): Promise<number> {
+      const cutoff = purgeCutoff(opts.now ?? clock.now(), opts.retentionDays); // decide (core)
+      const { count } = await uow.run(db, (tx) => flagRepo.purgeDeletedBefore(tx, cutoff)); // execute
+      return count;
     },
   };
 }

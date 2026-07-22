@@ -10,6 +10,7 @@ A type-safe, modular GraphQL server reference.
 | Schema       | [Pothos](https://pothos-graphql.dev) (code-first) + Prisma plugin   |
 | ORM / DB     | [Prisma 7](https://www.prisma.io) + PostgreSQL (`@prisma/adapter-pg` driver adapter), primary + optional read replica |
 | Tests        | [Vitest](https://vitest.dev) + fast-check (PBT) on in-process Postgres ([PGlite](https://pglite.dev)) |
+| Jobs         | [Agenda](https://github.com/agenda/agenda) v6 + `@agendajs/postgres-backend` (Postgres LISTEN/NOTIFY) |
 
 The schema is built code-first with Pothos, every model is exposed through the
 Pothos **Prisma plugin** (efficient relation loading), and each feature module
@@ -117,14 +118,21 @@ src/
     schema.ts            # calls each module's registerXxxModule() → builder.toSchema()
     context.ts           # Context type + createContextFactory() + the
                          #   per-operation rw/ro read-client routing
+  scheduler/             # background jobs (Agenda v6 + Postgres) — the graphql/ analogue
+    job.ts               # machinery: the JobSchedule type + defineJob (the flags.ts-style
+                         #   fixed contract every job module speaks)
+    agenda.ts            # createAgenda(): the Agenda on a PostgresBackend + lifecycle
+                         #   event logging (crepe's tasks/agenda.ts analogue)
+    scheduler.ts         # buildScheduler(): calls each module's registerXxxJobs();
+                         #   start() applies every() + purge(orphans); stop() drains
   foundation/            # cross-cutting primitives (no I/O, no framework)
     errors.ts            # DomainError base class (client-safe business errors)
     env.ts               # loads .env (Prisma 7 / Node no longer auto-load it)
   generated/             # Pothos types (git-ignored; `prisma generate`)
   modules/
     point/             # the LAYERED module blueprint (has real decisions)
-      point.core.ts    # pure: planSpend/planCharge — every business branch
-      point.write.repo.ts # Prisma writes: use-case executors (loadSpendWorld/apply*Plan)
+      point.core.ts    # pure: planSpend/planCharge/sumUsableBalance — every branch
+      point.write.repo.ts # Prisma use-case reads + executors (loadPointWorld/apply*Plan)
       point.read.repo.ts  # Prisma reads: GraphQL projections (find*/get*ById)
       point.service.ts # use-cases: read → decide → execute, in one rw tx
       schemas/
@@ -132,6 +140,8 @@ src/
         point.type.ts      # Pothos objects (registerPointTypes)
         point.query.ts     # query fields → repo reads on ctx.db
         point.mutation.ts  # mutations → service, then re-fetch with `query`
+      jobs/                # scheduled delivery (peer of schemas/):
+        point.job.ts       #   registerPointJobs() → point:balance:verify (snapshot sweep)
     user/
       user.state.ts    # pure core: status state machine + invariants
       user.value.ts    # pure core: Email value object (parse, don't validate)
@@ -156,10 +166,12 @@ src/
       routes/            # HTTP delivery layer (the peer of schemas/)
         oauth.route.ts   # registerGoogleOAuth(app, svc)
     feature-flag/      # the crepe flag store, adapted to OpenFeature (no schema —
-      feature-flag.core.ts     #   pure: STAGES + parseStage + isActive (the crepe rule)
-      feature-flag.repo.ts     #   Prisma: live-row lookup + admin writes
-      feature-flag.service.ts  #   admin use-cases (upsert / soft-delete)
+      feature-flag.core.ts     #   pure: STAGES + parseStage + isActive + purgeCutoff
+      feature-flag.repo.ts     #   Prisma: live-row lookup + admin writes + purge
+      feature-flag.service.ts  #   admin use-cases (upsert / soft-delete / purgeDeleted)
       feature-flag.provider.ts #   the DB-backed OpenFeature Provider (the adapter)
+      jobs/                    #   scheduled delivery (peer of schemas/):
+        feature-flag.job.ts    #     registerFeatureFlagJobs() → feature-flag:purge-deleted
     onboarding/        # cross-module use-case (one tx across user + post)
       onboarding.content.ts
       onboarding.service.ts
@@ -303,6 +315,64 @@ importing the facade (a core receives a flag value as DATA); a service may impor
 module's admin service (`ctx.services.featureFlag`); a staff-gated delivery is a
 future addition (gannet has no authorization layer yet).
 
+### Background jobs (Agenda)
+
+Recurring background work runs on [Agenda](https://github.com/agenda/agenda)
+**v6** — the original library, whose rewrite made the storage backend pluggable,
+so a Postgres queue (`@agendajs/postgres-backend`, LISTEN/NOTIFY) replaces the
+MongoDB-only builds. (crepe still runs a *forked* Mongo-only Agenda; this
+reference deliberately uses upstream v6 on Postgres, one database for both the
+domain data and the queue.) The pieces mirror the GraphQL assembly:
+
+- `scheduler/agenda.ts` — `createAgenda()` builds the `Agenda` on a
+  `PostgresBackend` and wires lifecycle-event logging (crepe's `tasks/agenda.ts`).
+  agenda's `agenda_jobs` table is NOT a Prisma model (Prisma never generates or
+  migrates it) and its lowercase name cannot collide with Prisma's quoted
+  PascalCase tables. It does land in the same `public` schema by default,
+  though, so `prisma migrate dev` (development) reports it as an untracked table
+  (drift); `prisma migrate deploy` (production) does not drift-check, so prod is
+  unaffected. To silence even the dev notice, run agenda in a dedicated Postgres
+  schema Prisma is not configured to track — this project tracks only `public`,
+  so a table in an `agenda` schema is outside drift detection's scope. Point the
+  backend there with a pool whose `search_path` is that schema (create it first),
+  passed as `PostgresBackend({ pool })`; `tableName` alone cannot carry a schema
+  because the backend quotes it as a single identifier.
+- `scheduler/scheduler.ts` — `buildScheduler()` calls each module's ONE
+  `registerXxxJobs(agenda, service)` (explicit, like `schema.ts`'s
+  `registerXxxModule()`, not crepe's side-effect imports). `start()` connects,
+  applies the `every()` schedules, and `purge()`s orphaned jobs — the code-owned
+  replacement for crepe's manual `agenda.cancel({ name })` list. `stop()`
+  `drain()`s in-flight jobs for a graceful shutdown.
+- A module's **jobs are a delivery layer** — `jobs/*.job.ts`, the peer of
+  `schemas/` (GraphQL) and `routes/` (HTTP). The registrar receives its SERVICE
+  (never a db handle) and the handler is THIN: it delegates the decision + write
+  to the service — which reads `now` from the injected clock — exactly as an HTTP
+  route does. It DEFINES
+  the handler and RETURNS its schedules as data, so the recurring registry is
+  snapshot-testable without a running queue.
+
+Two worked jobs span the concurrency ladder honestly (no lock where none is
+needed — see CONVENTIONS):
+
+- **`feature-flag:purge-deleted`** — hard-deletes flags soft-deleted past a
+  retention window. The window is a core policy (`purgeCutoff`); the service runs
+  one guarded `deleteMany` through `uow.run` (rung 0).
+- **`point:balance:verify`** — a read-only, defense-in-depth sweep (crepe's
+  clairvoyance balance-check analogue): per user it reads the balance + USABLE
+  charges under ONE `uow.snapshot` (rung 3 — the two reads must agree, the same
+  reason `spend` needs it) and the core recomputes the balance the ledger implies
+  (`sumUsableBalance`). Drift throws a masked `PointBalanceDriftError`, surfacing
+  through agenda's `fail` event rather than being silently "corrected".
+
+The scheduler is built and started only in `server.ts`, behind
+`SCHEDULER_ENABLED` (default on) — the reference's counterpart to crepe's
+`STAGE=stg` / `NOT_RUN_AGENDA` guards that keep only designated processes polling
+the queue. `buildApp()` never touches it, so tests (and a web-only process) open
+no queue connection. Because the backend is an injectable port (`AgendaBackend`),
+tests build a scheduler over a fake backend to assert the job registry and the
+thin handler wiring without a real Postgres queue (PGlite cannot run agenda's
+`pg` LISTEN/NOTIFY) — the same seam as the OAuth / search stubs.
+
 ### Error handling
 
 Services and cores throw framework-agnostic `DomainError`s for expected
@@ -424,3 +494,14 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   calling `printSchema(schema)` directly: `graphql` is a dual CJS/ESM package,
   and printing a Pothos-built (CJS-realm) schema with the test file's ESM copy
   trips graphql's realm check.
+- **Agenda is pinned to v6 with the Postgres backend, not crepe's fork.** Agenda
+  v6 is ESM-only (this project already is) and made the storage backend
+  pluggable, so `@agendajs/postgres-backend` runs the queue on the SAME Postgres
+  as the domain data (via LISTEN/NOTIFY) — no MongoDB, unlike crepe's forked,
+  Mongo-only build. `@agendajs/postgres-backend` peer-depends on an EXACT agenda
+  version, so both are pinned (`agenda` `6.2.6`, backend `3.0.6`); bumping one
+  without the other breaks the peer range on install — an intentional tripwire.
+  agenda's `define()` is overloaded (a callback and a promise form) and an
+  `async` handler resolves to the callback overload, tripping
+  `no-misused-promises`; `scheduler/job.ts`'s `defineJob` centralizes that one
+  documented suppression (agenda awaits promise-style handlers at runtime).
