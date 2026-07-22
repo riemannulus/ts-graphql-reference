@@ -236,6 +236,26 @@ Downstream code receives an `Email`, not a `string`, so it never re-checks the
 invariant. The same applies to reads: DB strings become `UserStatus` /
 `PointChargeState` only through their parse functions.
 
+This is also what lets a **repo write function be composed from another module
+without leaking the ability to break its invariant.** Because the write takes
+the branded value (`createUser(tx, { email: Email })`), a caller in a different
+module — `onboarding` opening one transaction over `userRepo.createUser` +
+`postRepo.createPost` (§5) — cannot hand it un-parsed input; the type forces the
+decision back through the owning module's core. So the rule for any write that
+carries an invariant: **take a type only the core can mint** — a branded value,
+or a plan (the plan pattern, §1) — never a raw shape. Then the function can be
+reached across the allowlist without the invariant leaking with it.
+
+An invariant a single value's type *cannot* capture — a legal status transition,
+a cross-row rule — stays in the **service**, not in the write function's
+signature (`changeStatus` decides over the CAS `transitionStatus`; `spend`
+decides over `applySpendPlan`). Such a write must **not** be reached from another
+module: nothing here forces its caller back through the core, so the cross-module
+allowlist (§5, `pnpm check:graph`) is what holds that line — it guards edges at
+the file level and cannot tell one exported function from another in the same
+repo, so keeping these writes off the allowlist is a review-time rule, not a
+type-level one.
+
 Core input types are **narrow and structural** (`ChargeBalance`,
 `{ name: string | null }`): they state what the decision needs, Prisma rows
 satisfy them structurally (or via a one-line mapping in the repo), and the core
