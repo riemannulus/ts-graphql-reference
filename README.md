@@ -326,9 +326,17 @@ domain data and the queue.) The pieces mirror the GraphQL assembly:
 
 - `scheduler/agenda.ts` — `createAgenda()` builds the `Agenda` on a
   `PostgresBackend` and wires lifecycle-event logging (crepe's `tasks/agenda.ts`).
-  agenda's own tables (`agenda_jobs`) live OUTSIDE Prisma's managed schema —
-  agenda creates them on connect — so `prisma migrate` neither owns nor drifts
-  on them.
+  agenda's `agenda_jobs` table is NOT a Prisma model (Prisma never generates or
+  migrates it) and its lowercase name cannot collide with Prisma's quoted
+  PascalCase tables. It does land in the same `public` schema by default,
+  though, so `prisma migrate dev` (development) reports it as an untracked table
+  (drift); `prisma migrate deploy` (production) does not drift-check, so prod is
+  unaffected. To silence even the dev notice, run agenda in a dedicated Postgres
+  schema Prisma is not configured to track — this project tracks only `public`,
+  so a table in an `agenda` schema is outside drift detection's scope. Point the
+  backend there with a pool whose `search_path` is that schema (create it first),
+  passed as `PostgresBackend({ pool })`; `tableName` alone cannot carry a schema
+  because the backend quotes it as a single identifier.
 - `scheduler/scheduler.ts` — `buildScheduler()` calls each module's ONE
   `registerXxxJobs(agenda, service)` (explicit, like `schema.ts`'s
   `registerXxxModule()`, not crepe's side-effect imports). `start()` connects,

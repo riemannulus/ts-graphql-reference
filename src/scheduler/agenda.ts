@@ -35,11 +35,16 @@ export interface CreateAgendaOptions {
   backend?: AgendaBackend;
   /**
    * Connection string for the default `PostgresBackend`. This is agenda's OWN
-   * storage: it creates and owns its `agenda_jobs` table on connect, DELIBERATELY
-   * OUTSIDE Prisma's managed schema — Prisma never models it, so `prisma migrate`
-   * neither creates nor reports drift on it. Defaults to `DATABASE_URL` (the
-   * primary): a recurring job is written against, and decides on, primary state,
-   * never a lagging replica.
+   * storage: it creates and owns its `agenda_jobs` table (+ indexes/trigger) on
+   * connect. That table is NOT a Prisma model — Prisma never generates or
+   * migrates it — and its lowercase name cannot collide with Prisma's quoted
+   * PascalCase tables. It does, though, land in the same `public` schema by
+   * default, so `prisma migrate dev` (development) reports it as an untracked
+   * table (drift); `prisma migrate deploy` (production) does not drift-check, so
+   * prod is unaffected. To remove even the dev notice, run agenda in a dedicated
+   * Postgres schema Prisma does not track (see README "Background jobs").
+   * Defaults to `DATABASE_URL` (the primary): a recurring job is written against,
+   * and decides on, primary state, never a lagging replica.
    */
   connectionString?: string;
   /** Identifies this Agenda instance in logs and the jobs table. */
