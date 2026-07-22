@@ -127,7 +127,13 @@ type User {
   id: ID
   name: String
   pointBalance: PointBalance
+
+  """Number of posts the user has authored."""
+  postCount: Int!
   posts: [Post!]
+
+  """Number of posts the user has published."""
+  publishedPostCount: Int!
   status: UserStatus
 }
 
