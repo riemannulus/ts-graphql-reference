@@ -451,6 +451,16 @@ production binding records the exception on the active span, so errors travel th
 same OTLP pipeline as traces — an OTLP-compatible backend (Sentry included)
 consumes them with no vendor SDK or DSN in the tree.
 
+**Hard invariant — error messages carry no secrets/PII.** Clients only ever see
+masked errors, but server-side both the operation log and the trace capture the
+**pre-mask** error content (the operation-log/OTel plugins run before
+`maskError`). `@envelop/opentelemetry` records that content on the span
+unconditionally, so with OTLP export enabled it leaves the process **over the
+network** to the trace backend — not just to local logs. Recording real errors
+in your own telemetry is the point (it is how you debug), but it means a
+resolver or `DomainError` message must never embed a secret or PII. Keep the
+sensitive value in a typed field, not the message string.
+
 ### Running the telemetry backends locally
 
 Optional; the app runs without it. Bring up a collector + Jaeger + Prometheus and

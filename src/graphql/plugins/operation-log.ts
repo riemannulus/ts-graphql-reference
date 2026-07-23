@@ -114,10 +114,13 @@ export function useOperationLog(): Plugin {
             );
           }
           if (errorCount > 0) {
-            // Errors are logged server-side at warn (visible at the default
-            // level) for diagnostics — client-facing masking is Yoga's maskError,
-            // a separate concern. Unlike variables these are NOT redacted, so a
-            // resolver/domain error must never put a secret in its message.
+            // These are the PRE-mask errors (this plugin runs before Yoga's
+            // maskError), logged server-side at warn for diagnostics — client
+            // masking is a separate concern. They are NOT redacted, and the same
+            // unmasked content is also recorded on the OTel span by
+            // @envelop/opentelemetry, which exports it to the trace backend over
+            // the network when OTLP export is on. So a resolver/domain error
+            // message must never carry a secret or PII — a hard invariant.
             logger?.warn({ ...line, err: 'errors' in result ? result.errors : undefined }, 'graphql operation failed');
           } else {
             logger?.info(line, 'graphql operation');

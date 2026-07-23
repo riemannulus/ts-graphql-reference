@@ -153,8 +153,18 @@ export function buildApp(options: BuildAppOptions = {}) {
     // OpenTelemetry creates the per-operation span (root-field resolver spans are
     // added by Pothos — see builder.ts). Passing the GLOBAL tracer provider is
     // required: without it @envelop/opentelemetry registers its OWN provider and
-    // forks the pipeline. `resolvers/variables/result: false` keeps per-resolver
-    // spans (Pothos owns those) and any PII off the spans.
+    // forks the pipeline. `resolvers: false` avoids duplicate per-resolver spans
+    // (Pothos owns those); `variables/result: false` keep request variables and
+    // response payloads off the span.
+    //
+    // DATA EGRESS CAVEAT: @envelop/opentelemetry ALWAYS records GraphQL errors on
+    // the span (its markError is not gated by these options), and — like the
+    // operation-log line — it observes the PRE-mask errors (both run before Yoga's
+    // maskError). So when OTLP export is on, the raw unmasked error content is
+    // sent to the trace backend over the network. That is intended for debugging,
+    // but makes "never put a secret or PII in an error message" a HARD invariant
+    // (see graphql/plugins/operation-log.ts and the README "Observability" note),
+    // not merely a local-logging nicety.
     plugins: [
       useOperationLog(),
       useOpenTelemetry(
@@ -163,9 +173,10 @@ export function buildApp(options: BuildAppOptions = {}) {
       ),
     ],
     // Expected domain errors reach the client with their message + code;
-    // everything else is masked as a generic internal error AND reported (the
-    // one boundary where unexpected errors are captured — service code never
-    // touches the reporter).
+    // everything else is masked as a generic internal error AND reported. This is
+    // the one place service-thrown errors enter the ErrorReporter port — service
+    // code never touches it. (Tracing separately records errors on the span; see
+    // the plugins-array caveat above.)
     maskedErrors: {
       maskError(error, message) {
         // Unwrap the located GraphQLError's originalError structurally (no

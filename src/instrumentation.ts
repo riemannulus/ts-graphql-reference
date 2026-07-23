@@ -42,7 +42,8 @@ import {
 const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 const metricsEnabled = process.env.METRICS_ENABLED !== 'false';
 const parsedPort = Number(process.env.METRICS_PORT);
-const metricsPort = Number.isFinite(parsedPort) ? parsedPort : 9464;
+const metricsPort =
+  Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536 ? parsedPort : 9464;
 
 const prometheusExporter = metricsEnabled
   ? new PrometheusExporter({
