@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { type ErrorReporter, noopErrorReporter } from '../../../foundation/error-reporter.js';
 import { isDomainError } from '../../../foundation/errors.js';
 import type { OAuthService } from '../oauth.service.js';
 import { parseOAuthCallback, type OAuthCallbackQuery } from '../oauth.value.js';
@@ -14,7 +15,11 @@ import { parseOAuthCallback, type OAuthCallbackQuery } from '../oauth.value.js';
  * request-scoped context into the other. The route reads only what Fastify
  * gives it — `req.query` — and delegates everything else to the service.
  */
-export function registerGoogleOAuth(app: FastifyInstance, oauth: OAuthService): void {
+export function registerGoogleOAuth(
+  app: FastifyInstance,
+  oauth: OAuthService,
+  errorReporter: ErrorReporter = noopErrorReporter,
+): void {
   // Step 1 — begin the flow: redirect the browser to Google's consent screen.
   // With the provider left unimplemented (the stub), `startUrl` throws here and
   // Fastify maps the synchronous throw to a 500 — the same masked outcome the
@@ -44,6 +49,7 @@ export function registerGoogleOAuth(app: FastifyInstance, oauth: OAuthService): 
         return reply.status(400).send({ code: error.code, message: error.message });
       }
       req.log.error(error);
+      errorReporter.capture(error, { route: 'google-oauth-callback' });
       return reply.status(500).send({ code: 'INTERNAL', message: 'Internal Server Error' });
     }
   });

@@ -1,0 +1,33 @@
+# Minimal OpenTelemetry Collector pipeline for local development.
+# Receives OTLP traces from the app and forwards them to Jaeger. This file is
+# the single place a backend is chosen — the app stays vendor-neutral.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Traces → Jaeger (OTLP gRPC, on the compose network). Replace this exporter
+  # to send elsewhere (Tempo, Datadog, an OTLP-compatible Sentry endpoint, ...).
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      # LOCAL ONLY: plaintext to Jaeger on the compose network. A real collector
+      # must use TLS — do not copy this stanza to a non-local config.
+      insecure: true
+  # Echoes received spans to the collector log — handy while wiring things up.
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]

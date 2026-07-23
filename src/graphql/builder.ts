@@ -1,9 +1,25 @@
+import { trace } from '@opentelemetry/api';
 import SchemaBuilder from '@pothos/core';
 import PrismaPlugin from '@pothos/plugin-prisma';
+import TracingPlugin, { isRootField } from '@pothos/plugin-tracing';
+import { createOpenTelemetryWrapper } from '@pothos/tracing-opentelemetry';
 import type { PrismaClient } from '@prisma/client';
 import type { Context } from './context.js';
 import type PrismaTypes from '../generated/pothos-types.js';
 import { getDatamodel } from '../generated/pothos-types.js';
+
+// The resolver-span wrapper. The tracer is the global one the OTel SDK registers
+// (src/instrumentation.ts); with no SDK started (tests, or a bare run without
+// `--import`) it is a no-op tracer, so this adds nothing. `ignoreError` leaves
+// exception recording to the error-reporter boundary (foundation/error-reporter.ts)
+// so a thrown error is not double-recorded. Neither `includeArgs` NOR
+// `includeSource` is enabled: both would put client-supplied argument VALUES on
+// the span — `includeArgs` directly, `includeSource` by serializing the query AST
+// (which reproduces inline-literal arguments verbatim) — and neither is covered
+// by the variable redactor, which masks `variableValues`, not the query document.
+const createResolverSpan = createOpenTelemetryWrapper(trace.getTracer('gannet-graphql'), {
+  ignoreError: true,
+});
 
 /**
  * Pothos schema builder.
@@ -18,7 +34,15 @@ export const builder = new SchemaBuilder<{
   Context: Context;
   PrismaTypes: PrismaTypes;
 }>({
-  plugins: [PrismaPlugin],
+  plugins: [PrismaPlugin, TracingPlugin],
+  // Trace ROOT fields only (`isRootField`): a span per Query/Mutation entry
+  // point, not per resolved field. Tracing every field would explode span
+  // counts as O(fields × list length) with no added signal — the lesson crepe's
+  // Sentry tracing also encodes, here vendor-neutral via OpenTelemetry.
+  tracing: {
+    default: (config) => isRootField(config),
+    wrap: (resolver, options) => createResolverSpan(resolver, options),
+  },
   prisma: {
     // At runtime the plugin only READS (relation loading for `t.relation` /
     // `query` spreads), but its type wants the full client. `ctx.db` IS the

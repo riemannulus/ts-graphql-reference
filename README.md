@@ -11,6 +11,7 @@ A type-safe, modular GraphQL server reference.
 | ORM / DB     | [Prisma 7](https://www.prisma.io) + PostgreSQL (`@prisma/adapter-pg` driver adapter), primary + optional read replica |
 | Tests        | [Vitest](https://vitest.dev) + fast-check (PBT) on in-process Postgres ([PGlite](https://pglite.dev)) |
 | Jobs         | [Agenda](https://github.com/agenda/agenda) v6 + `@agendajs/postgres-backend` (Postgres LISTEN/NOTIFY) |
+| Observability | [pino](https://getpino.io) logs (via Fastify) + [OpenTelemetry](https://opentelemetry.io/docs/languages/js/) traces & metrics, correlated by trace id — see [Observability](#observability) |
 
 The schema is built code-first with Pothos, every model is exposed through the
 Pothos **Prisma plugin** (efficient relation loading), and each feature module
@@ -73,9 +74,9 @@ query {
 
 | Script                 | Description                                       |
 | ---------------------- | ------------------------------------------------- |
-| `pnpm dev`             | Hot-reloading dev server (`tsx watch`)            |
+| `pnpm dev`             | Hot-reloading dev server (`tsx watch`, OTel bootstrapped via `--import`) |
 | `pnpm build`           | Compile to `dist/` (`tsconfig.build.json`, no tests) |
-| `pnpm start`           | Run the compiled server                           |
+| `pnpm start`           | Run the compiled server (OTel bootstrapped via `--import`) |
 | `pnpm typecheck`       | `tsc --noEmit` (includes tests)                   |
 | `pnpm lint`            | Lint with oxlint (`lint:fix` to auto-fix)         |
 | `pnpm check:graph`     | Module-graph rules via dependency-cruiser (cycles, cross-module allowlist) |
@@ -383,6 +384,89 @@ else — including data-corruption errors like an out-of-set status, which the
 code *parses* rather than silently coercing — is masked as a generic internal
 error. DB CHECK constraints (status/state value sets, non-negative amounts)
 back the same invariants on the write side.
+
+## Observability
+
+Three pillars — **logs, traces, metrics** — stitched together by one **trace
+id**, on a single **vendor-neutral OpenTelemetry** pipeline. App code never
+imports a vendor SDK: it logs through a port, throws typed errors, and the
+composition root binds the concrete telemetry. Every knob is read from the
+environment once, with no secret ever hardcoded, and **everything degrades to a
+no-op when unset** — the server runs on nothing but Postgres.
+
+### Logging (pino, via Fastify)
+
+Fastify's built-in pino is the single logger; there is no second logging stack.
+
+- **Correlation.** `genReqId` mints a `randomUUID` per request (never trusts an
+  inbound header — that would be spoofable) and Fastify binds it to `req.log` as
+  `reqId`. A pino `mixin` (`foundation/logger.ts`) stamps the active span's
+  `trace_id`/`span_id` on every line, so a log and its trace share a key.
+- **Request-scoped logger.** The GraphQL `Context` carries `logger`
+  (`ctx.logger` — `req.log` bound with the operation kind); resolvers and
+  use-cases log through it, never a module-level logger. Its type is the narrow
+  structural `Logger` port, so a test can pass a fake.
+- **One line per operation.** `useOperationLog` (`graphql/plugins/operation-log.ts`)
+  logs **metadata only** — name, type, duration, error count — at `info`.
+  Variables are logged **only at `debug`, always through a recursive
+  key-name redactor**; response bodies are never logged. Fixed-shape header PII
+  (`authorization`, `cookie`, …) is redacted by pino `redact` paths.
+- **Level.** `LOG_LEVEL` (`fatal`…`trace`|`silent`); unknown/unset → `info`.
+
+### Tracing (OpenTelemetry)
+
+`src/instrumentation.ts` starts the OTel Node SDK. **Load order is load-bearing**
+— it must run before `http`/`pg` are imported — so it is pulled in with
+`--import` (`tsx watch --import` in `dev`, `node --import` in `start`), before the
+entrypoint rather than as a normal import.
+
+- **Auto spans:** HTTP server (the Fastify request) and `pg` (SQL — Prisma 7's
+  `@prisma/adapter-pg` runs on `pg`, so this captures the real queries).
+- **GraphQL spans:** `@envelop/opentelemetry` adds a per-operation span; Pothos
+  (`@pothos/tracing-opentelemetry`, `builder.ts`) adds spans for **root fields
+  only** (`isRootField`) — tracing every field would explode span counts with no
+  added signal.
+- **Export is optional.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export (unset →
+  spans are no-ops, zero overhead). Point it at the local stack below.
+
+### Metrics (OpenTelemetry → Prometheus)
+
+The same SDK exposes a Prometheus scrape endpoint on **its own port**
+(`METRICS_PORT`, default `9464`) — never the public GraphQL port, never behind an
+obscure path (both were crepe anti-patterns). HTTP instrumentation supplies RED
+metrics automatically; `useOperationLog` records one GraphQL histogram
+(`graphql.server.operation.duration`). Its labels are the **operation kind
+(`query`/`mutation`) and status — never `operationName`**, which is
+client-controlled and would blow up series cardinality. The high-cardinality name
+lives in logs/traces, where it is a field, not a label. Disable with
+`METRICS_ENABLED=false`.
+
+### Error reporting (a narrow port)
+
+`ErrorReporter` (`foundation/error-reporter.ts`) is a one-method port wired at
+exactly the **unexpected-error** boundaries — Yoga's `maskError` masked branch,
+the OAuth route's catch, the scheduler's `fail`/`error`. Expected `DomainError`s
+are never reported. The default is a no-op (errors are still logged); the
+production binding records the exception on the active span, so errors travel the
+same OTLP pipeline as traces — an OTLP-compatible backend (Sentry included)
+consumes them with no vendor SDK or DSN in the tree.
+
+### Running the telemetry backends locally
+
+Optional; the app runs without it. Bring up a collector + Jaeger + Prometheus and
+point the app at the collector:
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 pnpm dev
+# Traces  → Jaeger      http://localhost:16686
+# Metrics → Prometheus  http://localhost:9090   (or curl http://localhost:9464/metrics)
+```
+
+The OTel Collector is the vendor-neutral seam: swapping Jaeger for Tempo,
+Datadog, or an OTLP Sentry endpoint is a change to
+`observability/otel-collector-config.yaml` alone, never the app. On shutdown the
+SDK is flushed last (timeboxed) so the final spans/metrics are not dropped.
 
 ## Adding a module
 

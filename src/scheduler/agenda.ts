@@ -1,5 +1,6 @@
 import { Agenda, type AgendaBackend } from 'agenda';
 import { PostgresBackend } from '@agendajs/postgres-backend';
+import { type ErrorReporter, noopErrorReporter } from '../foundation/error-reporter.js';
 
 /**
  * The scheduler's logging sink — a structural subset of the app's Fastify/pino
@@ -51,6 +52,12 @@ export interface CreateAgendaOptions {
   name?: string;
   /** Where lifecycle events are logged (omit to stay silent). */
   logger?: SchedulerLogger;
+  /**
+   * Where a failed job / scheduler error is reported (the "forward it to its
+   * error tracker" this doc mentions). Same narrow port the GraphQL/OAuth
+   * boundaries use; defaults to a no-op, so a job failure is still logged.
+   */
+  errorReporter?: ErrorReporter;
 }
 
 /**
@@ -79,17 +86,26 @@ export function createAgenda(options: CreateAgendaOptions = {}): Agenda {
   const agenda = new Agenda({ backend, name: options.name });
 
   const { logger } = options;
+  const errorReporter = options.errorReporter ?? noopErrorReporter;
   if (logger) {
     agenda.on('ready', () => logger.info({}, 'scheduler ready'));
     agenda.on('start', (job) => logger.info({ job: eventJobName(job) }, 'job started'));
     agenda.on('success', (job) => logger.info({ job: eventJobName(job) }, 'job succeeded'));
-    agenda.on('fail', (error, job) =>
-      logger.error({ job: eventJobName(job), err: error }, 'job failed'),
-    );
-    // agenda's own constructor attaches a no-op 'error' listener so an emitted
-    // error never crashes the process; this one makes it observable.
-    agenda.on('error', (error) => logger.error({ err: error }, 'scheduler error'));
   }
+  // Failures are LOGGED (when a logger is set) and REPORTED (always). The report
+  // is independent of logging so a deploy that binds an error tracker sees job
+  // failures even if it runs the scheduler quietly.
+  agenda.on('fail', (error, job) => {
+    const name = eventJobName(job);
+    logger?.error({ job: name, err: error }, 'job failed');
+    errorReporter.capture(error, { job: name });
+  });
+  // agenda's own constructor attaches a no-op 'error' listener so an emitted
+  // error never crashes the process; this one makes it observable.
+  agenda.on('error', (error) => {
+    logger?.error({ err: error }, 'scheduler error');
+    errorReporter.capture(error, { scope: 'scheduler' });
+  });
 
   return agenda;
 }

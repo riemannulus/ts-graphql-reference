@@ -1,0 +1,11 @@
+# Local Prometheus scrape config. Metrics are PULL-based: the app exposes them
+# on its own port (default 9464, set by METRICS_PORT) and Prometheus scrapes it.
+# `host.docker.internal` is the host from inside the container (the app runs on
+# the host via `pnpm dev`, not in this compose file).
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: gannet
+    static_configs:
+      - targets: ['host.docker.internal:9464']

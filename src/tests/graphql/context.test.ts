@@ -16,6 +16,7 @@ function fakeContext(operation: Context['operation']): Context {
     operation,
     services: {} as never,
     flags: {} as never,
+    logger: {} as never,
     req: {} as never,
     reply: {} as never,
   };

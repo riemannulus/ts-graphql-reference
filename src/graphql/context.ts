@@ -4,6 +4,7 @@ import { getOperationAST, OperationTypeNode, parse } from 'graphql';
 import type { Db, DbClient, ReadDbClient } from '../db/db.js';
 import { createFlagReader } from '../flags/flag-reader.js';
 import { FLAGS, type FlagReader } from '../flags/flag-registry.js';
+import type { Logger } from '../foundation/logger.js';
 import type { Services } from '../services.js';
 
 /** What kind of GraphQL operation this request is — decided once, per request. */
@@ -40,6 +41,16 @@ export interface Context {
    * reader to a use-case that owns the decision (see `point.transfer`).
    */
   flags: FlagReader;
+  /**
+   * The request-scoped logger — Fastify's per-request child (`req.log`, already
+   * bound to this request's id) further bound with the operation kind. Every
+   * line it writes carries the request id and, once an OTel span is active, the
+   * trace id (see foundation/logger.ts `traceContextMixin`), so a resolver's
+   * logs, the operation-log line, and the request's trace all share one key.
+   * A resolver or use-case logs through this, never through `ctx.req.log` or a
+   * module-level logger.
+   */
+  logger: Logger;
   req: FastifyRequest;
   reply: FastifyReply;
 }
@@ -149,6 +160,7 @@ export function createContextFactory(deps: ContextDeps) {
       operation,
       services: deps.services,
       flags: createFlagReader(FLAGS, deps.flagClient, buildEvalContext(req)),
+      logger: req.log.child({ operation }),
       req,
       reply,
     };

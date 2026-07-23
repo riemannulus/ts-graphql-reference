@@ -1,19 +1,47 @@
+import { useOpenTelemetry } from '@envelop/opentelemetry';
+import { trace } from '@opentelemetry/api';
 import { OpenFeature, type Provider } from '@openfeature/server-sdk';
 import type { PrismaClient } from '@prisma/client';
-import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import fastify, {
+  type FastifyReply,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from 'fastify';
 import { GraphQLError } from 'graphql';
 import { createYoga } from 'graphql-yoga';
 import { createContextFactory } from './graphql/context.js';
+import { useOperationLog } from './graphql/plugins/operation-log.js';
 import { createServices } from './services.js';
 import { createDb, disconnectDb, type Db } from './db/db.js';
 import { type Clock, systemClock } from './foundation/clock.js';
+import { type ErrorReporter, noopErrorReporter } from './foundation/error-reporter.js';
 import { isDomainError } from './foundation/errors.js';
+import { LOG_REDACT_PATHS, parseLogLevel, traceContextMixin } from './foundation/logger.js';
 import type { GoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { registerGoogleOAuth } from './modules/auth/routes/oauth.route.js';
 import { parseStage, type Stage } from './modules/feature-flag/feature-flag.core.js';
 import { DbFeatureFlagProvider } from './modules/feature-flag/feature-flag.provider.js';
 import type { PostSearchIndex } from './modules/search/post-search.provider.js';
 import { schema } from './graphql/schema.js';
+
+/**
+ * Resolves the `logger` build option to a Fastify logger config. `false`
+ * disables logging (tests); a config object is passed through (advanced
+ * override); the default (`true` / omitted) builds the structured pino setup —
+ * env-driven level, fail-closed header redaction, and the OTel trace-id mixin —
+ * so every request line is queryable and correlated with its trace.
+ */
+function resolveLogger(logger: BuildAppOptions['logger']): FastifyServerOptions['logger'] {
+  if (logger === false) return false;
+  if (logger === undefined || logger === true) {
+    return {
+      level: parseLogLevel(process.env.LOG_LEVEL),
+      redact: LOG_REDACT_PATHS,
+      mixin: traceContextMixin,
+    };
+  }
+  return logger;
+}
 
 /** Context Yoga receives from Fastify per request. */
 export interface ServerContext {
@@ -30,8 +58,20 @@ export interface BuildAppOptions {
    * Ignored when `db` is given.
    */
   prisma?: PrismaClient;
-  /** Toggle Fastify request logging (default: true). */
-  logger?: boolean;
+  /**
+   * Logging control. `true`/omitted → the structured pino default (env-driven
+   * `LOG_LEVEL`, header redaction, OTel trace-id correlation — see
+   * `resolveLogger`); `false` → logging off (tests); a pino config object →
+   * used as-is for advanced overrides. Level/redaction/genReqId are injected
+   * through this one seam rather than bespoke options.
+   */
+  logger?: FastifyServerOptions['logger'];
+  /**
+   * Where unexpected (non-`DomainError`) errors are reported. Production binds
+   * `otelErrorReporter` (records the exception on the active span); the default
+   * is a no-op, so the reference and its tests need no error-tracking service.
+   */
+  errorReporter?: ErrorReporter;
   /**
    * Inject a Google OAuth client. Production omits this (an unimplemented stub
    * is used); tests pass a fake so the OAuth callback can be exercised.
@@ -76,6 +116,7 @@ export function buildApp(options: BuildAppOptions = {}) {
   // injected client stays the injector's to manage (two apps may share one).
   const ownsDb = injectedDb === undefined;
   const clock = options.clock ?? systemClock;
+  const errorReporter = options.errorReporter ?? noopErrorReporter;
   const services = createServices(db, {
     googleOAuth: options.googleOAuth,
     postSearchIndex: options.postSearchIndex,
@@ -93,14 +134,38 @@ export function buildApp(options: BuildAppOptions = {}) {
   OpenFeature.setProvider(flagDomain, flagProvider);
   const flagClient = OpenFeature.getClient(flagDomain);
 
-  const app = fastify({ logger: options.logger ?? true });
+  const app = fastify({
+    logger: resolveLogger(options.logger),
+    // Mint a fresh request id per request and surface it on every log line as
+    // `reqId` — the correlation key crepe lacked. It is minted, never read from
+    // an inbound header: honoring `x-request-id` unconditionally lets a client
+    // spoof the key, so trusting one is an explicit, proxy-gated extension.
+    genReqId: () => crypto.randomUUID(),
+    requestIdLogLabel: 'reqId',
+  });
 
   const yoga = createYoga<ServerContext>({
     schema,
     graphqlEndpoint: '/graphql',
     context: createContextFactory({ db, services, flagClient }),
+    // Envelop/Yoga cross-cutting seam. Order is load-bearing (first = outermost):
+    // the operation log wraps everything so it is the single per-request record;
+    // OpenTelemetry creates the per-operation span (root-field resolver spans are
+    // added by Pothos — see builder.ts). Passing the GLOBAL tracer provider is
+    // required: without it @envelop/opentelemetry registers its OWN provider and
+    // forks the pipeline. `resolvers/variables/result: false` keeps per-resolver
+    // spans (Pothos owns those) and any PII off the spans.
+    plugins: [
+      useOperationLog(),
+      useOpenTelemetry(
+        { resolvers: false, variables: false, result: false },
+        trace.getTracerProvider(),
+      ),
+    ],
     // Expected domain errors reach the client with their message + code;
-    // everything else is masked as a generic internal error.
+    // everything else is masked as a generic internal error AND reported (the
+    // one boundary where unexpected errors are captured — service code never
+    // touches the reporter).
     maskedErrors: {
       maskError(error, message) {
         // Unwrap the located GraphQLError's originalError structurally (no
@@ -109,6 +174,7 @@ export function buildApp(options: BuildAppOptions = {}) {
         if (isDomainError(original)) {
           return new GraphQLError(original.message, { extensions: { code: original.code } });
         }
+        errorReporter.capture(original);
         return new GraphQLError(message);
       },
     },
@@ -133,7 +199,7 @@ export function buildApp(options: BuildAppOptions = {}) {
   // dependency — services.auth, from the same container the GraphQL layer uses
   // — so the REST handler provisions users without ever seeing the database
   // handles or the GraphQL per-request context. See src/modules/auth/.
-  registerGoogleOAuth(app, services.auth);
+  registerGoogleOAuth(app, services.auth, errorReporter);
 
   app.addHook('onClose', async () => {
     if (ownsDb) {
