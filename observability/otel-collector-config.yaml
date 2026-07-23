@@ -1,0 +1,56 @@
+# Minimal OpenTelemetry Collector pipeline for local development.
+# Receives OTLP traces from the app and forwards them to Jaeger. This file is
+# the single place a backend is chosen — the app stays vendor-neutral.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Traces → Jaeger (OTLP gRPC, on the compose network). Replace this exporter
+  # to send elsewhere (Tempo, Datadog, an OTLP-compatible Sentry endpoint, ...).
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      # LOCAL ONLY: plaintext to Jaeger on the compose network. A real collector
+      # must use TLS — do not copy this stanza to a non-local config.
+      insecure: true
+  # Echoes received spans to the collector log — handy while wiring things up.
+  debug:
+    verbosity: normal
+
+  # ── Traces → Sentry (OPTIONAL) ────────────────────────────────────────────
+  # Sentry ingests OTLP TRACES (and logs), NOT metrics. The app needs no change:
+  # spans already arrive here over OTLP and this fans them out to Sentry too.
+  # To enable: uncomment this exporter AND add it to the traces pipeline below,
+  # then set the two env vars (passed through in docker-compose.observability.yml).
+  # Copy the exact endpoint + public key from Sentry:
+  #   Project Settings → Client Keys (DSN) → OpenTelemetry (OTLP).
+  # NOTE: Sentry's OTLP ingestion DROPS span events, so `span.recordException`
+  # errors do NOT become Sentry Issues here — real Issues come from the
+  # @sentry/node ErrorReporter binding (see README "Observability").
+  # otlphttp/sentry:
+  #   # traces-only URL, INCLUDING the /v1/traces suffix:
+  #   #   https://oORG.ingest.sentry.io/api/PROJECT/integration/otlp/v1/traces
+  #   traces_endpoint: ${env:SENTRY_OTLP_TRACES_ENDPOINT}
+  #   headers:
+  #     # value is "sentry sentry_key=<DSN PUBLIC KEY>" — the key BEFORE '@' in
+  #     # the DSN, NOT the whole DSN.
+  #     x-sentry-auth: "sentry sentry_key=${env:SENTRY_OTLP_PUBLIC_KEY}"
+  #   compression: gzip
+  #   encoding: proto
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      # Add otlphttp/sentry here to also ship traces to Sentry (fan-out is a list):
+      #   exporters: [otlp/jaeger, otlphttp/sentry, debug]
+      exporters: [otlp/jaeger, debug]

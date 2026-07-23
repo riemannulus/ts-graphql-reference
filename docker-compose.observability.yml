@@ -1,0 +1,52 @@
+# Optional LOCAL observability stack. It is NOT required to run the reference:
+# with none of this up, the app still logs structured JSON to stdout and serves
+# Prometheus metrics on :9464 — it simply exports no traces.
+#
+# Bring it up, then run the app pointing at the collector:
+#
+#   docker compose -f docker-compose.observability.yml up -d
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 pnpm dev
+#
+#   • Traces  → Jaeger UI      http://localhost:16686   (app → collector → Jaeger)
+#   • Metrics → Prometheus UI  http://localhost:9090    (Prometheus scrapes app :9464)
+#
+# Teardown: docker compose -f docker-compose.observability.yml down
+#
+# The collector is the vendor-neutral seam: the app speaks only OTLP and never
+# knows which backend is behind it. Swap Jaeger for Tempo/Datadog/Sentry by
+# editing observability/otel-collector-config.yaml alone — no app change.
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.0
+    command: ['--config=/etc/otel-collector-config.yaml']
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    # Passed through from the host env for the OPTIONAL Sentry traces exporter
+    # (see the commented otlphttp/sentry block in the collector config). Unset =
+    # harmless while that exporter stays commented. Never the whole DSN — the
+    # public key only, plus the per-project OTLP traces URL from Sentry.
+    environment:
+      - SENTRY_OTLP_TRACES_ENDPOINT
+      - SENTRY_OTLP_PUBLIC_KEY
+    ports:
+      - '4317:4317' # OTLP gRPC
+      - '4318:4318' # OTLP HTTP — OTEL_EXPORTER_OTLP_ENDPOINT points here
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - '16686:16686' # Jaeger UI (its OTLP :4317 stays on the compose network)
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090' # Prometheus UI
+    # Lets the container reach the app's metrics port on the host (Linux + macOS).
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
