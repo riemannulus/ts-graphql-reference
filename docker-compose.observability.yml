@@ -21,6 +21,13 @@ services:
     command: ['--config=/etc/otel-collector-config.yaml']
     volumes:
       - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    # Passed through from the host env for the OPTIONAL Sentry traces exporter
+    # (see the commented otlphttp/sentry block in the collector config). Unset =
+    # harmless while that exporter stays commented. Never the whole DSN — the
+    # public key only, plus the per-project OTLP traces URL from Sentry.
+    environment:
+      - SENTRY_OTLP_TRACES_ENDPOINT
+      - SENTRY_OTLP_PUBLIC_KEY
     ports:
       - '4317:4317' # OTLP gRPC
       - '4318:4318' # OTLP HTTP — OTEL_EXPORTER_OTLP_ENDPOINT points here

@@ -4,14 +4,60 @@ import './foundation/env.js';
 // `--import`, which starts it earlier still; this import is then a cache hit and
 // only yields the shutdown handle). See src/instrumentation.ts.
 import { shutdownTelemetry } from './instrumentation.js';
+import * as Sentry from '@sentry/node';
 import { buildApp } from './app.js';
-import { otelErrorReporter } from './foundation/error-reporter.js';
+import {
+  compositeErrorReporter,
+  otelErrorReporter,
+  sentryErrorReporter,
+} from './foundation/error-reporter.js';
 import { buildScheduler } from './scheduler/scheduler.js';
 
-// Bind the vendor-neutral error reporter once and share it across the GraphQL
-// app and the scheduler, so both report unexpected errors down the same OTLP
-// pipeline as traces (no separate error-tracking SDK / DSN).
-const errorReporter = otelErrorReporter;
+// Sentry is OPTIONAL error tracking, enabled only when SENTRY_DSN is set (from
+// env — never hardcoded). `skipOpenTelemetrySetup: true` is REQUIRED: it stops
+// Sentry registering its own tracer/context-manager on the global OTel API,
+// which would fight the app's own NodeSDK (instrumentation.ts). Sentry is then a
+// pure error sink (`captureException`); tracing stays OTel's, exported wherever
+// the collector points (Jaeger, and/or Sentry itself over OTLP — see README).
+const sentryEnabled = Boolean(process.env.SENTRY_DSN);
+if (sentryEnabled) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.SENTRY_ENVIRONMENT ?? process.env.STAGE,
+    release: process.env.SENTRY_RELEASE,
+    skipOpenTelemetrySetup: true,
+    // tracesSampleRate is OMITTED on purpose — NOT set to 0. `hasSpansEnabled` is
+    // a `!= null` check, so even `0` counts as "tracing on" and pulls in Sentry's
+    // auto-performance integrations (postgres/fastify/graphql/prisma). Those
+    // register their OWN OTel instrumentations that emit through the global
+    // provider — the app's NodeSDK — producing DUPLICATE spans in the trace
+    // backend. `getDefaultIntegrationsWithoutPerformance()` makes the no-tracing
+    // intent explicit and robust against a future tracesSampleRate.
+    sendDefaultPii: false,
+    // Report errors EXPLICITLY via captureException (with a chosen extra/tags).
+    // Drop the default integrations that auto-enrich events with data that
+    // egresses to Sentry SaaS and can carry secrets/PII: RequestData (request URL
+    // + query string — the OAuth `code`/`state`, GraphQL variables on a GET;
+    // Sentry's scrubbing is a denylist that omits `code`/`state`), and
+    // LocalVariables/ContextLines (stack-frame local VALUES + source lines at the
+    // throw site). See the README "no secrets/PII in error content" invariant.
+    defaultIntegrations: Sentry.getDefaultIntegrationsWithoutPerformance().filter(
+      (integration) => !['RequestData', 'LocalVariables', 'ContextLines'].includes(integration.name),
+    ),
+    // Name-independent backstop: strip any request context that still slips in.
+    beforeSend(event) {
+      delete event.request;
+      return event;
+    },
+  });
+}
+
+// One error reporter, shared by the GraphQL app and the scheduler. With Sentry
+// on, fan out to BOTH the OTel span (trace backends) AND Sentry Issues; with it
+// off, just the span. Neither path is reached by expected DomainErrors.
+const errorReporter = sentryEnabled
+  ? compositeErrorReporter(otelErrorReporter, sentryErrorReporter())
+  : otelErrorReporter;
 const { app, services } = buildApp({ errorReporter });
 const port = Number(process.env.PORT ?? 4000);
 
@@ -52,6 +98,9 @@ const shutdown = async () => {
   if (scheduler) await scheduler.stop();
   await app.close();
   await shutdownTelemetry();
+  // Flush + disable Sentry last (awaited, timeboxed) so queued error events are
+  // not lost on exit. close() drains then disables the client.
+  if (sentryEnabled) await Sentry.close(2000);
   process.exit(0);
 };
 

@@ -67,9 +67,10 @@ export interface BuildAppOptions {
    */
   logger?: FastifyServerOptions['logger'];
   /**
-   * Where unexpected (non-`DomainError`) errors are reported. Production binds
-   * `otelErrorReporter` (records the exception on the active span); the default
-   * is a no-op, so the reference and its tests need no error-tracking service.
+   * Where unexpected (non-`DomainError`) errors are reported. `server.ts` picks
+   * the binding from env — `otelErrorReporter` (records on the active span), or
+   * `compositeErrorReporter(otel, sentry)` when `SENTRY_DSN` is set. The default
+   * here is a no-op, so the reference and its tests need no error-tracking service.
    */
   errorReporter?: ErrorReporter;
   /**

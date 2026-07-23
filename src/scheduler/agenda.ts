@@ -65,9 +65,9 @@ export interface CreateAgendaOptions {
  * reference analogue of crepe's `tasks/agenda.ts` (which logs start/success/fail
  * and captures failures to Sentry). This uses the ORIGINAL agenda (v6), whose
  * pluggable-backend rewrite lets a `pg`-backed queue replace crepe's forked,
- * MongoDB-only build; gannet has no Sentry, so a failed job is logged here and
- * also re-surfaces through agenda's own `fail` event, where a production deploy
- * would forward it to its error tracker.
+ * MongoDB-only build. A failed job is logged here and reported through the
+ * injected `errorReporter` (a no-op by default; server.ts binds the same
+ * reporter the GraphQL app uses — OTel span, and Sentry when `SENTRY_DSN` is set).
  *
  * NOTE: constructing an `Agenda` connects the backend IMMEDIATELY (agenda's
  * constructor calls `backend.connect()`), so this is called only when the

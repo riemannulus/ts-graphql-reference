@@ -446,20 +446,29 @@ lives in logs/traces, where it is a field, not a label. Disable with
 `ErrorReporter` (`foundation/error-reporter.ts`) is a one-method port wired at
 exactly the **unexpected-error** boundaries — Yoga's `maskError` masked branch,
 the OAuth route's catch, the scheduler's `fail`/`error`. Expected `DomainError`s
-are never reported. The default is a no-op (errors are still logged); the
-production binding records the exception on the active span, so errors travel the
-same OTLP pipeline as traces — an OTLP-compatible backend (Sentry included)
-consumes them with no vendor SDK or DSN in the tree.
+are never reported. `server.ts` picks the binding from env; the default is a
+no-op (errors are still logged). Bindings: `otelErrorReporter` records the
+exception on the active span (a trace backend like Jaeger shows it),
+`sentryErrorReporter()` files a grouped Sentry Issue, and
+`compositeErrorReporter(...)` fans out to both — see "Sending telemetry to
+Sentry" below.
 
-**Hard invariant — error messages carry no secrets/PII.** Clients only ever see
+**Hard invariant — error content carries no secrets/PII.** Clients only ever see
 masked errors, but server-side both the operation log and the trace capture the
 **pre-mask** error content (the operation-log/OTel plugins run before
 `maskError`). `@envelop/opentelemetry` records that content on the span
 unconditionally, so with OTLP export enabled it leaves the process **over the
 network** to the trace backend — not just to local logs. Recording real errors
-in your own telemetry is the point (it is how you debug), but it means a
-resolver or `DomainError` message must never embed a secret or PII. Keep the
-sensitive value in a typed field, not the message string.
+in your own telemetry is the point (it is how you debug), but it means a resolver
+or `DomainError` message must never embed a secret or PII. Keep the sensitive
+value in a typed field, not the message string.
+
+This is why the Sentry SDK below is deliberately **narrowed**: its default
+integrations would widen the surface well beyond the message — attaching the
+request URL/query string (the OAuth `code`/`state`, GraphQL variables on a GET)
+and stack-frame local *values* + source lines at the throw site, all egressed to
+Sentry. That capture is dropped (see the errors bullet), so the invariant stays
+about the message/typed-fields, not ambient request/frame state.
 
 ### Running the telemetry backends locally
 
@@ -477,6 +486,41 @@ The OTel Collector is the vendor-neutral seam: swapping Jaeger for Tempo,
 Datadog, or an OTLP Sentry endpoint is a change to
 `observability/otel-collector-config.yaml` alone, never the app. On shutdown the
 SDK is flushed last (timeboxed) so the final spans/metrics are not dropped.
+
+### Sending telemetry to Sentry
+
+Sentry is optional and splits by signal — each is wired differently because
+Sentry ingests them differently:
+
+- **Errors → `@sentry/node` (app-side).** Set `SENTRY_DSN` and `server.ts` inits
+  Sentry **error-only** and binds the `ErrorReporter` to
+  `compositeErrorReporter(otelErrorReporter, sentryErrorReporter())` — errors
+  become grouped Sentry **Issues** while the app's own NodeSDK keeps owning
+  tracing. Unset `SENTRY_DSN` → the SDK is inert (no DSN in source, ever). The
+  Issue carries the OTel `trace_id` as a tag, so it links back to its trace. Two
+  init choices keep it a clean, safe error sink:
+  - `skipOpenTelemetrySetup: true` so Sentry does not register a second global
+    tracer/context-manager and fight the NodeSDK; **and `tracesSampleRate`
+    OMITTED, not `0`** — `hasSpansEnabled()` treats `0` as "on" and would pull in
+    Sentry's auto-performance integrations, which re-instrument pg/http/graphql/
+    prisma and emit **duplicate spans** into the app's own trace pipeline.
+  - default integrations narrowed
+    (`getDefaultIntegrationsWithoutPerformance()` minus `RequestData`,
+    `LocalVariables`, `ContextLines`, plus a `beforeSend` that drops
+    `event.request`) so Sentry does not egress the request URL/query or
+    stack-frame locals/source — see the invariant above.
+  > Why the SDK and not the trace pipeline: Sentry's OTLP ingestion **drops span
+  > events**, and `span.recordException` errors ARE span events — so errors sent
+  > only as traces never become Issues. The SDK path is independent of that.
+- **Traces → the Collector (no app change).** Uncomment the `otlphttp/sentry`
+  exporter in `observability/otel-collector-config.yaml`, add it to the traces
+  pipeline (it fans out alongside Jaeger), and set `SENTRY_OTLP_TRACES_ENDPOINT` +
+  `SENTRY_OTLP_PUBLIC_KEY` (from Sentry → Project Settings → Client Keys (DSN) →
+  OpenTelemetry (OTLP)). This is the vendor-neutral seam in action — a collector
+  config change, never an app change.
+- **Metrics → not supported.** Sentry ingests OTLP traces + logs only, not
+  metrics ([getsentry/sentry#103487](https://github.com/getsentry/sentry/issues/103487)).
+  Keep metrics in Prometheus and correlate to Sentry via the `trace_id`.
 
 ## Adding a module
 
