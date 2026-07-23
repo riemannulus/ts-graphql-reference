@@ -34,15 +34,24 @@ if (sentryEnabled) {
     // backend. `getDefaultIntegrationsWithoutPerformance()` makes the no-tracing
     // intent explicit and robust against a future tracesSampleRate.
     sendDefaultPii: false,
+    // Authoritative, version-independent switch: never capture stack-frame local
+    // variable VALUES. This is the control we rely on — the integration's own name
+    // changed across Node versions ('LocalVariables' → 'LocalVariablesAsync' on
+    // Node ≥ 19), so a name filter alone is not trustworthy.
+    includeLocalVariables: false,
     // Report errors EXPLICITLY via captureException (with a chosen extra/tags).
     // Drop the default integrations that auto-enrich events with data that
     // egresses to Sentry SaaS and can carry secrets/PII: RequestData (request URL
     // + query string — the OAuth `code`/`state`, GraphQL variables on a GET;
-    // Sentry's scrubbing is a denylist that omits `code`/`state`), and
-    // LocalVariables/ContextLines (stack-frame local VALUES + source lines at the
-    // throw site). See the README "no secrets/PII in error content" invariant.
+    // Sentry's scrubbing is a denylist that omits `code`/`state`), ContextLines
+    // (source lines at the throw site), and LocalVariables (frame local values;
+    // both its sync and Node≥19 async names are listed — belt to
+    // includeLocalVariables:false above).
     defaultIntegrations: Sentry.getDefaultIntegrationsWithoutPerformance().filter(
-      (integration) => !['RequestData', 'LocalVariables', 'ContextLines'].includes(integration.name),
+      (integration) =>
+        !['RequestData', 'LocalVariables', 'LocalVariablesAsync', 'ContextLines'].includes(
+          integration.name,
+        ),
     ),
     // Name-independent backstop: strip any request context that still slips in.
     beforeSend(event) {
