@@ -505,3 +505,25 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   `async` handler resolves to the callback overload, tripping
   `no-misused-promises`; `scheduler/job.ts`'s `defineJob` centralizes that one
   documented suppression (agenda awaits promise-style handlers at runtime).
+
+# 유의할점
+* 시간은 foundation/clock.ts 활용
+* Lock 의 경우
+  * rolling 배포시 공존하는 동안, 기존 advisorLock 의 lock key name 은 다르지만, 같은 row 를 lock 을 거는 경우가 생길 수 있다.
+  * timeout 기본시간의 변경(현재 600s -> 30s, PrismaClient connection timeout)
+* Transaction 주의 : 서비스 로직에서 다른 서비스의 repo 참조하는 방향
+
+# 순서
+1. 기본 Application 베이스에 공존하는 형태로 구성
+2. modules 이전
+3. 기존꺼 정리
+
+# 추가항목
+* graphql subscription 구성 추가
+* authScopes 구성 추가
+* Logger 통합
+
+# 기능개선 허용범위
+* adhoc 하게...
+
+
