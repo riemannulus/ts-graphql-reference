@@ -2,6 +2,8 @@ import type { PointCharge, PointSpend } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
+import type { AppEventPublisher } from '../../events/event-registry.js';
+import type { Outbox } from '../../events/outbox.js';
 import type { Clock } from '../../foundation/clock.js';
 import type { FlagReader } from '../../flags/flag-registry.js';
 import {
@@ -34,6 +36,17 @@ export interface ExpirePointsOptions {
 }
 
 /**
+ * The event seams. Both halves of the delivery ladder are injected because the
+ * module uses BOTH — see the `pointBalanceChanged` notes on each use-case below.
+ * A service only ever holds the WRITE half of the bus (lint-enforced): it
+ * publishes, it never subscribes.
+ */
+export interface PointServiceDeps {
+  events: AppEventPublisher;
+  outbox: Outbox;
+}
+
+/**
  * Point use-cases. Each method is the read → decide → execute assembly on the
  * PRIMARY (`db.rw`), opened through `uow` — the toolkit picks the isolation and
  * (for transfers) the locks, so the body stays pure orchestration. Each method
@@ -55,22 +68,47 @@ export interface ExpirePointsOptions {
  * Production binds `systemClock` in the composition root; tests inject a fixed
  * clock so behavior is deterministic (CONVENTIONS §10 "Time").
  */
-export function createPointService(db: Db, clock: Clock) {
+export function createPointService(db: Db, clock: Clock, deps: PointServiceDeps) {
   return {
-    /** Tops up a user's points with a new USABLE charge. */
+    /**
+     * Tops up a user's points with a new USABLE charge.
+     *
+     * The module's ONE rung-1 (outbox) path, and the reason is the money: a
+     * top-up is where value enters, so a client that never learns its balance
+     * moved reads as "I paid and got nothing" — a support ticket, not a stale
+     * pixel. The event is written INSIDE the transaction, so it commits with the
+     * charge or vanishes with it, and `notify()` afterwards is a latency
+     * optimization the scheduled drain does not depend on.
+     */
     // `async` so a synchronous core rejection surfaces as a rejected promise.
     async charge(userId: number, input: ChargePointInput): Promise<PointCharge> {
       const plan = planCharge(input, clock.now()); // decide (chargedAt stamped from the clock)
-      return uow.run(db, (tx) => pointRepo.applyChargePlan(tx, userId, plan)); // execute
+      const charge = await uow.run(db, async (tx) => {
+        const created = await pointRepo.applyChargePlan(tx, userId, plan); // execute
+        await deps.outbox.enqueue(tx, 'pointBalanceChanged', userId, { userId });
+        return created;
+      });
+      deps.outbox.notify(); // after commit — a wake-up, never the delivery guarantee
+      return charge;
     },
 
-    /** Spends `amount` points (paid-first, FIFO across charges). */
+    /**
+     * Spends `amount` points (paid-first, FIFO across charges).
+     *
+     * Rung 0: the spender is already looking at the result of their own action,
+     * so a lost event costs a redundant refetch, not correctness. Published
+     * strictly AFTER the awaited transaction — inside it, a rollback would hand
+     * subscribers an event for a write that never landed and their re-fetch
+     * would kill the subscription.
+     */
     async spend(userId: number, input: SpendPointInput): Promise<PointSpend> {
-      return uow.snapshot(db, async (tx) => {
+      const spend = await uow.snapshot(db, async (tx) => {
         const world = await pointRepo.loadPointWorld(tx, userId); // read
         const plan = planSpend(world.snapshot, world.charges, input.amount); // decide
         return pointRepo.applySpendPlan(tx, userId, input.reason, plan); // execute
       });
+      deps.events.publish('pointBalanceChanged', userId, { userId }); // after commit
+      return spend;
     },
 
     /**
@@ -92,11 +130,20 @@ export function createPointService(db: Db, clock: Clock) {
      */
     async expire(userId: number, opts: ExpirePointsOptions = {}): Promise<{ expiredCount: number }> {
       const now = opts.now ?? clock.now();
-      return uow.snapshot(db, async (tx) => {
+      const result = await uow.snapshot(db, async (tx) => {
         const world = await pointRepo.loadExpiryWorld(tx, userId); // read
         const plan = planExpiry(world, now); // decide
         return pointRepo.applyExpiryPlan(tx, userId, plan); // execute
       });
+      // Rung 0, and GATED: `applyExpiryPlan` commits a transaction that wrote
+      // nothing when there is nothing due, which is the common case for a sweep
+      // over every user. Publishing unconditionally would wake every subscriber
+      // on every pass to re-read an unchanged balance — the filtering that
+      // belongs at the publish site, not in a downstream operator.
+      if (result.expiredCount > 0) {
+        deps.events.publish('pointBalanceChanged', userId, { userId });
+      }
+      return result;
     },
 
     /**
@@ -141,6 +188,13 @@ export function createPointService(db: Db, clock: Clock) {
         },
         { snapshot: true },
       );
+      // Rung 0, TWICE: a transfer moves value between two ledgers, so BOTH
+      // balances changed and both users may be watching. Keying is per-user, so
+      // one event cannot serve both — the receiver would never be told. Missing
+      // this is the easy bug, because the transaction returns only the sender's
+      // spend record.
+      deps.events.publish('pointBalanceChanged', fromUserId, { userId: fromUserId });
+      deps.events.publish('pointBalanceChanged', toUserId, { userId: toUserId });
       return spend;
     },
 

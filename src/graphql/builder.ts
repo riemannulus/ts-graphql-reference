@@ -70,3 +70,8 @@ builder.queryType({
 });
 
 builder.mutationType({});
+// Established here for the same reason as the two above: a module's
+// `builder.subscriptionFields(...)` call needs the root type to already exist,
+// and modules import this file, so it is evaluated first. Without this line
+// `toSchema()` fails on the first subscription field.
+builder.subscriptionType({});

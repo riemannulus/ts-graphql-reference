@@ -10,6 +10,7 @@ import {
 import * as pointRepo from '../../../modules/point/point.write.repo.js';
 import { systemClock } from '../../../foundation/clock.js';
 import { ConcurrentUpdateError, FeatureDisabledError } from '../../../foundation/errors.js';
+import { fakeOutbox, recordingPublisher } from '../../support/event-bus-fake.js';
 import { fakeFlagReader } from '../../support/flag-reader-fake.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
@@ -17,14 +18,25 @@ import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 // (default ON) so the transfer path runs, and one case flips it OFF.
 const enabled = fakeFlagReader({ pointTransfer: true });
 
+/** Numeric sort — `toSorted()` defaults to lexicographic, which lies about ids. */
+const byNumber = (a: number, b: number): number => a - b;
+
 const prisma = await makeTestPrisma();
-const points = createPointService({ rw: prisma, ro: prisma }, systemClock);
+// Held by name so each test can read what the use-case emitted. Which RUNG a
+// use-case publishes at is part of its contract, so it is asserted here.
+const events = recordingPublisher();
+const outbox = fakeOutbox();
+const points = createPointService({ rw: prisma, ro: prisma }, systemClock, { events, outbox });
 
 async function makeUser(email = 'points@example.com') {
   return prisma.user.create({ data: { email } });
 }
 
-beforeEach(() => resetDb(prisma));
+beforeEach(async () => {
+  await resetDb(prisma);
+  events.recorded.length = 0;
+  outbox.enqueued.length = 0;
+});
 afterAll(() => prisma.$disconnect());
 
 describe('PointService.charge', () => {
@@ -240,5 +252,81 @@ describe('PointService.verifyBalances', () => {
     });
 
     await expect(points.verifyBalances()).rejects.toBeInstanceOf(PointBalanceDriftError);
+  });
+});
+
+describe('delivery rungs — which use-case publishes how', () => {
+  it('charge takes rung 1: the event is enqueued in the transaction, not published', async () => {
+    const user = await makeUser('rung1@example.com');
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
+
+    // Money in. Losing this event is a "I paid and got nothing" ticket, so it
+    // goes through the outbox and commits with the charge — nothing reaches the
+    // bus directly.
+    expect(outbox.enqueued).toEqual([
+      { topic: 'pointBalanceChanged', key: user.id, payload: { userId: user.id } },
+    ]);
+    expect(events.recorded).toEqual([]);
+  });
+
+  it('spend takes rung 0: published once, directly, after commit', async () => {
+    const user = await makeUser('rung0@example.com');
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
+    events.recorded.length = 0;
+    outbox.enqueued.length = 0;
+
+    await points.spend(user.id, { amount: 30, reason: 'test' });
+
+    expect(events.recorded).toEqual([
+      { topic: 'pointBalanceChanged', key: user.id, payload: { userId: user.id } },
+    ]);
+    expect(outbox.enqueued).toEqual([]);
+  });
+
+  it('a rolled-back spend publishes nothing', async () => {
+    const user = await makeUser('rollback@example.com');
+    await points.charge(user.id, { paidAmount: 10, freeAmount: 0 });
+    events.recorded.length = 0;
+
+    // Overspending throws from the core, so the transaction never commits and
+    // no event describes a write that did not land.
+    //
+    // Scope, honestly: this pins the OBSERVABLE law (a failed use-case emits
+    // nothing) but it would NOT catch a publish moved inside the `uow` body,
+    // because the core throws before the write either way. The structural
+    // property — that the event and the write commit together — is only really
+    // provable where the event is itself a row, which is what the rung-1
+    // atomicity test in tests/events/outbox.test.ts does.
+    await expect(points.spend(user.id, { amount: 999, reason: 'too much' })).rejects.toBeInstanceOf(
+      InsufficientPointError,
+    );
+    expect(events.recorded).toEqual([]);
+  });
+
+  it('transfer publishes for BOTH sides', async () => {
+    const from = await makeUser('from@example.com');
+    const to = await makeUser('to@example.com');
+    await points.charge(from.id, { paidAmount: 100, freeAmount: 0 });
+    events.recorded.length = 0;
+
+    await points.transfer(from.id, to.id, { amount: 40 }, enabled);
+
+    // The receiver's balance changed too, and keys are per-user — one event
+    // cannot serve both. Easy to miss, because the transaction returns only the
+    // sender's spend record.
+    expect(events.recorded.map((e) => e.key as number).toSorted(byNumber)).toEqual(
+      [from.id, to.id].toSorted(byNumber),
+    );
+  });
+
+  it('expire publishes nothing when nothing was due', async () => {
+    const user = await makeUser('noexpiry@example.com');
+    await points.charge(user.id, { paidAmount: 100, freeAmount: 0 });
+    events.recorded.length = 0;
+
+    // The transaction commits having written nothing. Publishing here would wake
+    // every subscriber on every sweep pass to re-read an unchanged balance.
+    expect((await points.expire(user.id)).expiredCount).toBe(0);
+    expect(events.recorded).toEqual([]);
   });
 });

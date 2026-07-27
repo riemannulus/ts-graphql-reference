@@ -11,6 +11,7 @@ import {
   otelErrorReporter,
   sentryErrorReporter,
 } from './foundation/error-reporter.js';
+import { createRedisFanout } from './events/redis-event-target.js';
 import { buildScheduler } from './scheduler/scheduler.js';
 
 // Sentry is OPTIONAL error tracking, enabled only when SENTRY_DSN is set (from
@@ -67,7 +68,17 @@ if (sentryEnabled) {
 const errorReporter = sentryEnabled
   ? compositeErrorReporter(otelErrorReporter, sentryErrorReporter())
   : otelErrorReporter;
-const { app, services } = buildApp({ errorReporter });
+// Subscriptions fan out across instances only when a Redis URL is configured.
+// Without one the bus stays in-process, which is correct for a single instance
+// and is what every test runs on — the reference never requires Redis to boot.
+// This is the ONE place a backend is chosen; swapping it (for a Postgres
+// LISTEN/NOTIFY target, say) is a new driver file plus this line.
+const fanout = process.env.REDIS_URL ? createRedisFanout(process.env.REDIS_URL) : null;
+
+const { app, services, outbox } = buildApp({
+  errorReporter,
+  ...(fanout === null ? {} : { eventTarget: fanout.target }),
+});
 const port = Number(process.env.PORT ?? 4000);
 
 // The background-job scheduler is a SEPARATE process concern from serving
@@ -79,7 +90,7 @@ const port = Number(process.env.PORT ?? 4000);
 // a disabled scheduler opens none.
 const scheduler = process.env.SCHEDULER_ENABLED === 'false'
   ? null
-  : buildScheduler({ services, logger: app.log, errorReporter });
+  : buildScheduler({ services, outbox, logger: app.log, errorReporter });
 
 try {
   await app.listen({ port, host: '0.0.0.0' });
@@ -105,7 +116,22 @@ const shutdown = async () => {
   // then flush telemetry LAST so the final buffered spans/metrics are not lost
   // (timeboxed inside shutdownTelemetry so a stuck exporter cannot hang exit).
   if (scheduler) await scheduler.stop();
+  // Hand off whatever committed but has not gone out yet. Not required for
+  // correctness — another instance's drain, or this one's on next boot, would
+  // pick these up — but it turns a routine deploy from "some events arrive up to
+  // 30s late" into "none do". Never fatal: if it throws, the rows simply stay
+  // pending, which is the state the outbox is designed to recover from.
+  try {
+    await outbox.drain();
+  } catch (error) {
+    app.log.error({ err: error }, 'final outbox drain failed; rows remain pending');
+  }
+  // Closing the server also closes live WebSockets, which ends every subscription
+  // and lets clients reconnect to a healthy instance (graphql-ws clients retry).
+  // This is the gap crepe's `main.ts` still has a TODO for.
   await app.close();
+  // Redis last among the app's own resources: the drain above needed it.
+  if (fanout) await fanout.close();
   await shutdownTelemetry();
   // Flush + disable Sentry last (awaited, timeboxed) so queued error events are
   // not lost on exit. close() drains then disables the client.

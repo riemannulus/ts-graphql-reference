@@ -30,6 +30,7 @@ model User {
   pointBalance PointBalance?
   pointCharges PointCharge[]
   pointSpends  PointSpend[]
+  sessions     Session[]
   createdAt    DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
 }
@@ -129,4 +130,66 @@ model PointSpend {
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt])
+}
+
+/// An authenticated session — the principal seam (design spec §10.1).
+/// `accessToken` is the opaque credential a caller presents (cookie →
+/// `Authorization: Bearer` → `connectionParams`, parsed by `auth.value.ts`); its
+/// UNIQUE index makes one-row-per-token a DATABASE fact, so a duplicate mint
+/// fails at the constraint (concurrency ladder rung 1, CONVENTIONS §1) instead of
+/// resolving two principals. Whether a session is still valid is decided in code
+/// against the injected clock (`auth.service.resolvePrincipal`) — the row stores
+/// the instant, it never judges it. Dropping the user cascades the sessions away.
+model Session {
+  id          String   @id @default(uuid())
+  accessToken String   @unique
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Audit-only: when the session was minted. NO decision reads it (CONVENTIONS
+  /// §10 rule 2) — `expiresAt` is the decision-relevant instant, so this column
+  /// may keep its DB-clock default without straddling the two clocks.
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  /// When the session stops resolving to a principal. A DOMAIN timestamp, hence
+  /// NO `@default`: the session-minting use-case stamps it from the injected
+  /// `Clock` (CONVENTIONS §10 rule 1), so the expiry comparison is single-clocked
+  /// and a fixed test clock can pin it.
+  expiresAt   DateTime @db.Timestamptz(6)
+
+  @@index([userId])
+}
+
+/// The transactional outbox — a row is enqueued in the SAME transaction as the
+/// domain write and published by the drainer after commit (delivery ladder rung 1,
+/// design spec §4.3). Payloads carry IDS ONLY, which is what makes duplicate
+/// delivery and reordering harmless. Claiming is `FOR UPDATE SKIP LOCKED` (the
+/// concurrency ladder's rung 4) over `OutboxEvent_pending_idx`, a PARTIAL index
+/// Prisma cannot express — SQL-only, exactly like `FeatureFlag_name_live_key`.
+/// This is the ONLY `BigInt` and the ONLY `Json` in this schema: a JS `bigint`
+/// makes `JSON.stringify` THROW, so `src/events/outbox.repo.ts` maps `id` to
+/// `string` at its boundary and no `bigint` escapes that one file.
+model OutboxEvent {
+  id          BigInt    @id @default(autoincrement())
+  topic       String
+  /// The topic key normalized to TEXT. Read back through the topic's
+  /// `TopicSpec.keyKind` (`src/events/event-registry.ts`), so a numeric key is a
+  /// `number` again by the time a subscriber sees it.
+  key         String
+  /// The event body — ids only. NON-nullable on purpose: a Prisma `Json?` has TWO
+  /// nulls (`Prisma.DbNull` vs `Prisma.JsonNull`) and Prisma 7 rejects a bare
+  /// `null`, so an empty body is written as `{}` and that ambiguity never exists.
+  payload     Json
+  /// Audit-only: when the row was enqueued. NO decision reads it (CONVENTIONS §10
+  /// rule 2); the drainer orders by `id`, never by this column.
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  /// Stamped from the app clock when the event reached the bus (CONVENTIONS §10
+  /// rule 1); NULL means still pending, which is half of the partial index's
+  /// predicate.
+  publishedAt DateTime? @db.Timestamptz(6)
+  /// Delivery attempts so far. A DB CHECK keeps it non-negative — the direct
+  /// analogue of `PointBalance_paidAmount_check`.
+  attempts    Int       @default(0)
+  /// Retries exhausted (the DLQ stamp, app clock again): the row leaves the claim
+  /// set — the other half of the partial index's predicate — and waits for an
+  /// operator instead of blocking the queue.
+  failedAt    DateTime? @db.Timestamptz(6)
 }

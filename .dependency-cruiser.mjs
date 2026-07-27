@@ -80,8 +80,21 @@ export default {
         'below them may import them as a value. The Services TYPE flowing ' +
         'down into context.ts is the sanctioned (erased) exception.',
       severity: 'error',
-      from: { path: '^src/(modules|db|flags|foundation|graphql|scheduler)/' },
+      from: { path: '^src/(modules|db|events|flags|foundation|graphql|scheduler)/' },
       to: { path: '^src/(app|services|server)\\.ts$', dependencyTypesNot: ['type-only'] },
+    },
+    {
+      name: 'events-is-a-leaf',
+      comment:
+        'The events facade is domain-agnostic infrastructure: it knows topic ' +
+        'names and payload SHAPES, never a feature module. Payload types are ' +
+        'written structurally (`{ userId: number }`) rather than imported, so ' +
+        'the dependency runs one way only — a module publishes through the ' +
+        'injected port, and events/ never reaches back. Import type is no ' +
+        'exception here: a type edge would still couple the catalog to a module.',
+      severity: 'error',
+      from: { path: '^src/events/' },
+      to: { path: '^src/modules/' },
     },
     {
       name: 'date-lib-lives-in-time-only',

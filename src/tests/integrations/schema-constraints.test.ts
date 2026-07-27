@@ -125,4 +125,30 @@ describe('database CHECK constraints', () => {
         VALUES ('dup', 'DEV', CURRENT_TIMESTAMP)`,
     ).rejects.toThrow(/FeatureFlag_name_live_key/);
   });
+
+  it('rejects a negative outbox attempt count', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "OutboxEvent" ("topic", "key", "payload", "attempts")
+        VALUES ('pointBalanceChanged', '1', '{}', -1)`,
+    ).rejects.toThrow(/OutboxEvent_attempts_check/);
+  });
+
+  it('accepts a zero outbox attempt count (the freshly enqueued row)', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "OutboxEvent" ("topic", "key", "payload", "attempts")
+        VALUES ('pointBalanceChanged', '1', '{}', 0)`,
+    ).resolves.toBe(1);
+  });
+
+  it('rejects a duplicate session access token (one row per credential)', async () => {
+    const userId = await makeUser();
+    await expect(
+      prisma.$executeRaw`INSERT INTO "Session" ("id", "accessToken", "userId", "expiresAt")
+        VALUES ('sess-1', 'tok', ${userId}, '2026-01-01T00:00:00Z')`,
+    ).resolves.toBe(1);
+    await expect(
+      prisma.$executeRaw`INSERT INTO "Session" ("id", "accessToken", "userId", "expiresAt")
+        VALUES ('sess-2', 'tok', ${userId}, '2026-01-01T00:00:00Z')`,
+    ).rejects.toThrow(/Session_accessToken_key/);
+  });
 });
