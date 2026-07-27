@@ -4,6 +4,7 @@ import { createPointService } from '../../../modules/point/point.service.js';
 import * as pointRepo from '../../../modules/point/point.write.repo.js';
 import { addDays, kstEndOfDay } from '../../../foundation/time.js';
 import { ConcurrentUpdateError } from '../../../foundation/errors.js';
+import { fakeOutbox, recordingPublisher } from '../../support/event-bus-fake.js';
 import { fixedClock } from '../../support/clock.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
@@ -15,7 +16,7 @@ import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 // it runs — the point of injecting the clock rather than freezing a global.
 const prisma = await makeTestPrisma();
 const NOW = new Date('2026-07-01T00:00:00.000Z');
-const points = createPointService({ rw: prisma, ro: prisma }, fixedClock(NOW));
+const points = createPointService({ rw: prisma, ro: prisma }, fixedClock(NOW), { events: recordingPublisher(), outbox: fakeOutbox() });
 
 beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());
@@ -109,11 +110,15 @@ describe('PointService.expire (clock-driven path)', () => {
     const before = createPointService(
       { rw: prisma, ro: prisma },
       fixedClock(new Date(deadline.getTime() - 1)),
+      { events: recordingPublisher(), outbox: fakeOutbox() },
     );
     expect((await before.expire(userId)).expiredCount).toBe(0);
 
     // Exactly at the deadline → due (the bound is inclusive).
-    const at = createPointService({ rw: prisma, ro: prisma }, fixedClock(deadline));
+    const at = createPointService({ rw: prisma, ro: prisma }, fixedClock(deadline), {
+      events: recordingPublisher(),
+      outbox: fakeOutbox(),
+    });
     expect((await at.expire(userId)).expiredCount).toBe(1);
   });
 });

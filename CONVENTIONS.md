@@ -625,3 +625,158 @@ a pure-arithmetic oracle; run CI under a non-UTC `TZ` to lock it in.
 | `dayjs().kst().startOf('day')` inline; `lib/dayjs.ts` prototype patches | pure `time.ts` functions (`kstEndOfDay`, `addDays`) returning `Date` |
 | cron `reflectX(now = dayjs().kst())` default arg | service takes explicit `now` (backfill) or the injected clock (scheduled) |
 | `vi.useFakeTimers({ toFake: ['Date'] })` | `fixedClock(instant)` injected via `createServices` / `buildApp` |
+
+## 11. Realtime: subscriptions, events, and delivery
+
+GraphQL subscriptions run on a topic bus (`src/events/`) that mirrors the
+`flags/` split exactly — pure machinery (`events.ts`), a registry that says WHAT
+exists (`event-registry.ts`), an I/O shell that binds it to a client
+(`event-bus.ts`), and a driver that picks the backend (`redis-event-target.ts`,
+the `scheduler/agenda.ts` analogue). Add a topic in the registry; nothing else
+changes.
+
+### The five laws
+
+**1 — A payload carries ids, never rows.** The resolver re-fetches with the
+Pothos `query`, so the subscriber's selection set is served the same way a
+mutation's re-fetch serves it (§2). A row would also be stale by the time it
+crossed the network, and would leak columns the subscriber never selected. This
+one law is what pays for the other four: it is why duplicate delivery, reordered
+delivery, and coalescing under a throttle are all unobservable.
+
+**2 — Route by topic key; never `filter` in the field.** A key is a routing
+address, so a subscriber receives only its own events. Filtering after fan-out
+means every instance receives everybody's events and discards most of them.
+
+**3 — Only a service publishes.** Not a resolver, not a route, not a job, not a
+repo, not a core. Publishing is an effect of a use-case, and the service is the
+choke point every caller passes through. Lint-enforced: `**/event-bus*`,
+`**/outbox*`, `**/operators*` and `**/rate*` are banned in the core, repo,
+schema, route and job layers. A service may import the registry TYPES (oxlint
+flags `import type` too, so banning them would make injection impossible) but
+never the bus factory — the instance arrives injected, like the clock.
+
+**4 — Publish after commit, at the weakest rung that holds.** Publishing inside
+the transaction hands subscribers an event for a write that may roll back; their
+re-fetch then throws, and on graphql-ws a thrown error ENDS the subscription.
+
+**5 — The re-fetch `where` is the authorization boundary, and ownership comes
+from the principal.** The two halves of that `where` have different sources:
+
+| part of `where` | source | job |
+| --- | --- | --- |
+| "whose row is this" | always `requirePrincipal(ctx)` | authorization |
+| "which row" | the payload's id | narrowing |
+
+The payload cannot decide what a subscriber may see. Where the audience IS the
+owner (`PointBalance` is keyed by `userId`) the payload contributes nothing to
+the lookup and is a pure trigger; where they differ, both halves appear.
+
+### The delivery ladder
+
+Same doctrine as the concurrency ladder — take the weakest rung that preserves
+the invariant.
+
+| Rung | Tool | Guarantee | Lives in | Reach for it when |
+| ---- | ---- | --------- | -------- | ----------------- |
+| 0 | `events.publish` after commit | at-most-once | service | losing the event costs a redundant refetch |
+| 1 | outbox: enqueue in the same tx, drain after | at-least-once | service + `events/outbox*` | losing the event is a money or reconciliation problem |
+
+Rung 0 is the default, and it is honest about what it is: **a subscription is a
+cache-invalidation hint, not a delivery channel.** A client that reconnects and
+re-queries is the normal recovery path, so a lost event costs a round trip.
+
+Rung 1 writes the event in the SAME transaction as the domain write, so the two
+commit or vanish together. Its drain is deliberately three phases — take a batch
+and count the attempt in one transaction, publish OUTSIDE any transaction, mark
+delivered in a second. Holding a lock across a network round-trip is the thing to
+avoid, and an attempt counter that rolls back lets a poison row retry forever.
+The cost is a window where a crash re-delivers — which law 1 makes harmless.
+
+**Correctness rests on the guarded mark, not on a lock.** `markPublished`
+requires `publishedAt: null`, so a second drainer that delivered the same row
+simply loses that race — ladder rung 0, the weakest thing that holds. This is
+worth stating because the obvious design does not need the obvious machinery: a
+queue claim (`FOR UPDATE SKIP LOCKED`, rung 4) buys nothing here, and buying it
+would mean the first raw SQL in a repo in this codebase. `db/uow.ts` holds ALL
+the raw transaction and lock SQL; a repo issues none.
+
+What the drain does take is `uow.trySerialized` on a singleton key, purely so N
+instances do not each redo the same work. It holds no invariant, so it is `try`
+rather than blocking: a drainer that cannot get it waits for its next tick.
+Ordering normally falls out of that (one drainer, `orderBy: id`) but is NOT
+guaranteed — a cycle that loses the lock between phases can interleave with the
+next holder, so nothing may depend on it.
+
+If a single drainer ever becomes the bottleneck, THAT is when the rung-4 claim is
+earned: it lets drainers work disjoint batches concurrently, at the cost of the
+raw SQL and of giving up ordering entirely.
+
+**Do not build an outbox when a domain table is already a durable queue.** If a
+row's own status column already means "work to do" — crepe's `IapNotification`
+is exactly this — then the work item is already transactional and a second queue
+just duplicates it. The outbox here has ONE sink, the bus.
+
+### Rate limiting is the only operator
+
+| concern | where it belongs |
+| --- | --- |
+| "this event is not worth sending" | the service — do not publish |
+| "only this subscriber's events" | the topic key (law 2) |
+| "may they see this row" | the re-fetch `where` (law 5) |
+| **"this client cannot take 50/sec"** | **an operator** |
+
+Rate is the one concern that cannot move to the publisher, because it is a
+property of the SUBSCRIBER's tolerance — the publisher knows neither how many
+subscribers exist nor how fast each reads. It is declared at subscribe time
+(`{ minIntervalMs }`), never assembled in the schema layer; there is no raw
+`pipe` escape hatch.
+
+The policy is pure (`rate.ts` `planEmit` — total, property-tested, takes `now` as
+a parameter) and only the driving loop is a shell (`operators.ts`), because
+`await` and reading a clock are both banned in a pure module (§1, §10).
+
+**Why not RxJS.** The GraphQL boundary wants an `AsyncIterable`, so Rx would live
+only inside `event-bus.ts` behind a conversion. `AsyncIterable` is pull-based, so
+a subscriber on a slow socket throttles its own producer; an `Observable` pushes
+regardless, and the consumer here is a mobile WebSocket. And keeping the policy
+as a pure function is what lets the repo's own property tests pin its laws, with
+the `fixedClock` the suite already has instead of a marble scheduler. Revisit if
+one subscription ever needs to join 3+ topics on a time axis, if hand-written
+operators pass five, or if windowed aggregation appears — the contract is an
+`AsyncIterable`, so the switch stays a one-file change.
+
+### Context lifetime on a subscription
+
+A subscription's context is built ONCE at subscribe time and lives for the whole
+stream. Two consequences worth stating:
+
+- `ctx.flags` memoizes per context, so **flag values freeze for the life of the
+  connection**. A kill switch stops NEW subscriptions; an existing one keeps its
+  value. Re-read inside `resolve` if a gate must be live.
+- `ctx.principal` is likewise resolved once and does not re-validate as the
+  session ages.
+
+The routed client is `db.rw`, not the replica — see the note on `routeClient`.
+The event is causally downstream of a commit on the primary, and the re-fetch is
+a `findUniqueOrThrow`, which does not degrade gracefully on replica lag.
+
+### crepe migration map
+
+| crepe today | gannet blueprint |
+| --- | --- |
+| `src/pubsub.ts` singleton, Redis connected at import | `event-registry.ts` (pure catalog) + a bus built in the composition root and injected |
+| topic string literals at 15 call sites | names come from `TOPICS`; a typo is a compile error |
+| resolvers, routes and utils all publish | only a service publishes (law 3, lint-enforced) |
+| publish beside the write, no commit guarantee | publish after commit; rung 1 for anything that must not be lost (law 4) |
+| IAP grants publish NOTHING (iamport/toss do) | the grant transaction enqueues to the outbox — the asymmetry disappears |
+| ingest dual-writes, and its `created` gate skips the enqueue on redelivery | the inbox row IS the queue; the wake-up is an optimization, never the guarantee |
+| `session!` non-null assertions | `requirePrincipal(ctx)` |
+| `resolve` re-fetches by id, ownership unchecked | ownership comes from the principal (law 5) |
+| cookie/header/connectionParams if-else per transport | one pure `parseCredential`, shared by HTTP and WS, property-tested |
+| `connectionParams` first | cookie first; `connectionParams` last and deprecated |
+| no rate control (typing indicators included) | `{ minIntervalMs }` — pure policy plus a shell |
+| `/_/ws`, graphql-ws | `/graphql/ws`, same protocol — the client change is one URL |
+| no SSE | SSE on `/graphql` needs no code; the simpler default for new clients |
+| shutdown TODO: WS never drained | SIGTERM drains the outbox, then closes sockets so clients reconnect elsewhere |
+| `pubsub` importable anywhere | schema gets a subscribe-only `ctx.events`; `publish` is not on the type |

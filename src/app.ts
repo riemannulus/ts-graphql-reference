@@ -7,8 +7,14 @@ import fastify, {
   type FastifyRequest,
   type FastifyServerOptions,
 } from 'fastify';
+import websocket from '@fastify/websocket';
+import type { TypedEventTarget } from '@graphql-yoga/typed-event-target';
 import { GraphQLError } from 'graphql';
+import { makeHandler } from 'graphql-ws/use/@fastify/websocket';
 import { createYoga } from 'graphql-yoga';
+import { createEventBus } from './events/event-bus.js';
+import { TOPICS } from './events/event-registry.js';
+import { createOutbox } from './events/outbox.js';
 import { createContextFactory } from './graphql/context.js';
 import { useOperationLog } from './graphql/plugins/operation-log.js';
 import { createServices } from './services.js';
@@ -47,6 +53,15 @@ function resolveLogger(logger: BuildAppOptions['logger']): FastifyServerOptions[
 export interface ServerContext {
   req: FastifyRequest;
   reply: FastifyReply;
+}
+
+/**
+ * What `graphql-ws`'s Fastify adapter puts on `ctx.extra`. Declared structurally
+ * rather than imported so the app does not depend on the adapter's internal
+ * type; all we need is the upgrade request, which carries the cookies.
+ */
+interface WsExtra extends Record<PropertyKey, unknown> {
+  request: FastifyRequest;
 }
 
 export interface BuildAppOptions {
@@ -100,6 +115,13 @@ export interface BuildAppOptions {
    * a test's fixed clock makes every time-sensitive path deterministic at once.
    */
   clock?: Clock;
+  /**
+   * Distributed fan-out for subscriptions. Omitted here and in every test, which
+   * makes the bus in-process — the right default for one instance and the reason
+   * the suite needs no Redis. `server.ts` builds the Redis-backed target when
+   * `REDIS_URL` is set and closes it on shutdown.
+   */
+  eventTarget?: TypedEventTarget<CustomEvent>;
 }
 
 /**
@@ -118,10 +140,40 @@ export function buildApp(options: BuildAppOptions = {}) {
   const ownsDb = injectedDb === undefined;
   const clock = options.clock ?? systemClock;
   const errorReporter = options.errorReporter ?? noopErrorReporter;
+
+  // Fastify is constructed BEFORE the services so the outbox can take `app.log`
+  // as its logger — it drains on a timer, outside any request, so it has no
+  // `reqId` of its own and a named child is what makes a drain line greppable.
+  const app = fastify({
+    logger: resolveLogger(options.logger),
+    // Mint a fresh request id per request and surface it on every log line as
+    // `reqId` — the correlation key crepe lacked. It is minted, never read from
+    // an inbound header: honoring `x-request-id` unconditionally lets a client
+    // spoof the key, so trusting one is an explicit, proxy-gated extension.
+    genReqId: () => crypto.randomUUID(),
+    requestIdLogLabel: 'reqId',
+  });
+
+  // The event bus, built once. With no `eventTarget` injected it fans out
+  // in-process — correct for a single instance and for every test, which is why
+  // the suite never needs Redis. `server.ts` injects the Redis-backed target when
+  // REDIS_URL is set. The bus is handed out in HALVES: services get the publisher,
+  // the GraphQL context gets the subscriber, and neither can reach the other's
+  // methods (see events/events.ts).
+  const events = createEventBus(TOPICS, { eventTarget: options.eventTarget, clock });
+  const outbox = createOutbox({
+    db,
+    bus: events,
+    clock,
+    logger: app.log.child({ component: 'outbox' }),
+  });
+
   const services = createServices(db, {
     googleOAuth: options.googleOAuth,
     postSearchIndex: options.postSearchIndex,
     clock,
+    events,
+    outbox,
   });
 
   // Feature flags via OpenFeature. The DB-backed provider evaluates the crepe
@@ -135,20 +187,10 @@ export function buildApp(options: BuildAppOptions = {}) {
   OpenFeature.setProvider(flagDomain, flagProvider);
   const flagClient = OpenFeature.getClient(flagDomain);
 
-  const app = fastify({
-    logger: resolveLogger(options.logger),
-    // Mint a fresh request id per request and surface it on every log line as
-    // `reqId` — the correlation key crepe lacked. It is minted, never read from
-    // an inbound header: honoring `x-request-id` unconditionally lets a client
-    // spoof the key, so trusting one is an explicit, proxy-gated extension.
-    genReqId: () => crypto.randomUUID(),
-    requestIdLogLabel: 'reqId',
-  });
-
   const yoga = createYoga<ServerContext>({
     schema,
     graphqlEndpoint: '/graphql',
-    context: createContextFactory({ db, services, flagClient }),
+    context: createContextFactory({ db, services, flagClient, events }),
     // Envelop/Yoga cross-cutting seam. Order is load-bearing (first = outermost):
     // the operation log wraps everything so it is the single per-request record;
     // OpenTelemetry creates the per-operation span (root-field resolver spans are
@@ -211,7 +253,64 @@ export function buildApp(options: BuildAppOptions = {}) {
   // dependency — services.auth, from the same container the GraphQL layer uses
   // — so the REST handler provisions users without ever seeing the database
   // handles or the GraphQL per-request context. See src/modules/auth/.
-  registerGoogleOAuth(app, services.auth, errorReporter);
+  // Subscriptions over WebSocket — the graphql-ws protocol, for wire
+  // compatibility with clients that already speak it (crepe's relay setup needs
+  // only a URL change). SSE needs no code at all: Yoga serves subscriptions over
+  // the SAME `/graphql` route above when the client sends
+  // `Accept: text/event-stream`, which is the simpler default for new clients.
+  //
+  // `getEnveloped` is what makes the two transports behave identically: the WS
+  // path runs the same plugins (operation log, OpenTelemetry) and the same
+  // context factory as HTTP, rather than a parallel pipeline that drifts.
+  // Both the plugin and the route go inside ONE encapsulated plugin, and the
+  // inner register is AWAITED. This ordering is load-bearing, not style:
+  // @fastify/websocket installs an `onRoute` hook when it finishes loading, and
+  // `{ websocket: true }` is honored only for routes added AFTER that. Register
+  // it without awaiting and the option is silently ignored — `makeHandler` is
+  // then invoked as an ordinary HTTP handler, the upgrade dies with
+  // "socket.once is not a function", and every WS client sees a 1006 close with
+  // nothing in the logs to explain it.
+  void app.register(async (instance) => {
+    await instance.register(websocket);
+    instance.get(
+      '/graphql/ws',
+      { websocket: true },
+      makeHandler<Record<string, unknown>, WsExtra>({
+        schema,
+        onSubscribe: async (ctx, _id, payload) => {
+          const {
+            schema: wsSchema,
+            parse: parseDocument,
+            validate,
+            contextFactory,
+          } = yoga.getEnveloped({
+            req: ctx.extra.request,
+            // The legacy credential channel. A WS upgrade carries cookies like
+            // any request, so this is only for clients that predate that.
+            connectionParams: ctx.connectionParams,
+          });
+          const document = parseDocument(payload.query);
+          const errors = validate(wsSchema, document);
+          if (errors.length > 0) return errors;
+          return {
+            schema: wsSchema,
+            operationName: payload.operationName,
+            document,
+            variableValues: payload.variables,
+            contextValue: await contextFactory(),
+          };
+        },
+      }),
+    );
+  });
+
+  registerGoogleOAuth(app, services.auth, services.session, {
+    // A `Secure` cookie is never returned over plain HTTP, and the reference runs
+    // on HTTP locally — so the flag follows the deploy stage rather than being
+    // hardcoded either way. Anything that is not a local/dev stage gets it.
+    secureCookies: stage !== null && stage !== 'LOCAL' && stage !== 'DEV',
+    errorReporter,
+  });
 
   app.addHook('onClose', async () => {
     if (ownsDb) {
@@ -225,5 +324,7 @@ export function buildApp(options: BuildAppOptions = {}) {
     // instead be closed per-domain with `OpenFeature.close(flagDomain)`.
   });
 
-  return { app, db, services, yoga };
+  // `outbox` is returned so `server.ts` can drain it one last time on shutdown
+  // and so an integration test can drive it without reaching into the container.
+  return { app, db, services, yoga, events, outbox };
 }

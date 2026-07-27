@@ -21,6 +21,19 @@ import { defineLocks } from './locks.js';
 export const lockKey = defineLocks({
   /** Serializes all point movement for one user (balance + charge ledger). */
   pointBalance: (userId: number) => userId,
+  /**
+   * Serializes the outbox drain across the fleet — a singleton key, hence the
+   * constant `objid`: there is one queue, not one per entity.
+   *
+   * Unlike every other key here, this one holds NO invariant. Delivery is
+   * correct without it: the mark is a guarded write (`publishedAt: null`), so a
+   * second drainer that published the same row simply loses that race, and a
+   * duplicate delivery is unobservable anyway because payloads carry ids and the
+   * subscriber re-fetches. The lock only stops N instances from doing the same
+   * work N times. That is why the drain takes it with `trySerialized` and shrugs
+   * when it cannot get it, rather than queueing behind the holder.
+   */
+  outboxDrain: () => 0,
 });
 
 /** The registered lock namespaces, derived from the registry. */

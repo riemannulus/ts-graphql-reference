@@ -1,5 +1,6 @@
 import { registerPointMutations } from './point.mutation.js';
 import { registerPointQueries } from './point.query.js';
+import { registerPointSubscriptions } from './point.subscription.js';
 import { registerPointTypes } from './point.type.js';
 
 /**
@@ -12,4 +13,5 @@ export function registerPointModule(): void {
   registerPointTypes();
   registerPointQueries();
   registerPointMutations();
+  registerPointSubscriptions();
 }

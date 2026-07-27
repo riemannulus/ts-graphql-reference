@@ -2,12 +2,21 @@ import type { Agenda } from 'agenda';
 import type { Services } from '../services.js';
 import { createAgenda, type CreateAgendaOptions } from './agenda.js';
 import type { JobSchedule } from './job.js';
+import { registerOutboxJobs } from '../events/outbox.job.js';
+import type { Outbox } from '../events/outbox.js';
 import { registerFeatureFlagJobs } from '../modules/feature-flag/jobs/feature-flag.job.js';
 import { registerPointJobs } from '../modules/point/jobs/point.job.js';
 
 export interface BuildSchedulerOptions extends CreateAgendaOptions {
   /** The service container — each job module receives its own service from here. */
   services: Services;
+  /**
+   * The outbox. A peer of `services` rather than a member of it: the container
+   * holds domain use-cases, and the outbox is infrastructure that those use-cases
+   * write THROUGH. Its jobs still take exactly one dependency, so they satisfy
+   * the same `JobRegistrar<T>` contract every module job does.
+   */
+  outbox: Outbox;
 }
 
 export interface Scheduler {
@@ -37,6 +46,7 @@ export function buildScheduler(options: BuildSchedulerOptions): Scheduler {
   const schedules: JobSchedule[] = [
     ...registerFeatureFlagJobs(agenda, services.featureFlag),
     ...registerPointJobs(agenda, services.point),
+    ...registerOutboxJobs(agenda, options.outbox),
   ];
 
   return {

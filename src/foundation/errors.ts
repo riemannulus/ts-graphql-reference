@@ -48,6 +48,25 @@ export class FeatureDisabledError extends DomainError {
   }
 }
 
+/**
+ * An operation that requires an authenticated principal was reached without one.
+ * Expected and client-safe (an anonymous caller simply has not logged in), so a
+ * DomainError — the shell maps it to a client-visible `UNAUTHENTICATED`. Thrown
+ * by `requirePrincipal(ctx)` (see src/graphql/context.ts), the principal
+ * analogue of `writer(ctx)`'s mutation-only guard.
+ *
+ * Deliberately carries NO parameter property and interpolates nothing: unlike
+ * `FeatureDisabledError`'s flag name, the only value in scope here is the
+ * credential itself. A DomainError's message is client-visible AND — per the
+ * data-egress caveat in app.ts — recorded pre-mask on the OTel span, so a token
+ * must never reach it.
+ */
+export class UnauthenticatedError extends DomainError {
+  constructor() {
+    super('Authentication is required for this operation', 'UNAUTHENTICATED');
+  }
+}
+
 export function isDomainError(error: unknown): error is DomainError {
   return (
     typeof error === 'object' &&

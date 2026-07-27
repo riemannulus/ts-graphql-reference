@@ -1,6 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["import", "typescript", "unicorn", "promise"],
+  "plugins": [
+    "import",
+    "typescript",
+    "unicorn",
+    "promise"
+  ],
   "categories": {
     "correctness": "error",
     "suspicious": "warn",
@@ -18,7 +23,10 @@
     "import/no-self-import": "error",
     "import/no-duplicates": "error",
     "import/no-unassigned-import": "off",
-    "eqeqeq": ["error", "always"],
+    "eqeqeq": [
+      "error",
+      "always"
+    ],
     "no-console": "warn",
     "typescript/no-explicit-any": "warn",
     "typescript/consistent-type-imports": "warn",
@@ -30,7 +38,7 @@
       "error",
       {
         "name": "Date",
-        "message": "Reading the wall clock (new Date() / Date.now()) is I/O and belongs to ONE seam: foundation/clock.ts (systemClock). Everywhere else, take `now` from the injected Clock (services/providers) or as a parameter (cores), and do calendar math via foundation/time.ts. This fences the clock repo-wide the way dependency-cruiser fences dayjs to time.ts. (The Date TYPE in annotations is fine — this bans the global as a VALUE.)"
+        "message": "Reading the wall clock (new Date() / Date.now()) is I/O and belongs to ONE seam: foundation/clock.ts (systemClock). Everywhere else, take `now` from the injected Clock (services/providers) or as a parameter (cores), and do calendar math via foundation/time.ts. This fences the clock repo-wide the way dependency-cruiser fences dayjs to time.ts. (The Date TYPE in annotations is fine \u2014 this bans the global as a VALUE.)"
       }
     ]
   },
@@ -65,9 +73,15 @@
                   "**/flag-reader*",
                   "**/clock*",
                   "**/*.repo*",
-                  "**/*.service*"
+                  "**/*.service*",
+                  "**/events*",
+                  "**/event-registry*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
                 ],
-                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself, and it never reads the clock: `now` arrives as a parameter (foundation/clock.ts is the shell's seam). Calendar math over that instant is allowed via the pure foundation/time.ts."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) \u2014 it never reads a flag itself, and it never reads the clock: `now` arrives as a parameter (foundation/clock.ts is the shell's seam). Calendar math over that instant is allowed via the pure foundation/time.ts."
               }
             ]
           }
@@ -76,13 +90,16 @@
           "error",
           {
             "name": "Date",
-            "message": "A core file must not read the clock: new Date() / Date.now() are I/O. Receive `now: Date` as a parameter (the shell mints it from the injected clock) and do any calendar math via foundation/time.ts. This is the time analogue of 'await never appears in a core file'. (The Date TYPE in annotations is fine — this bans the global as a VALUE.)"
+            "message": "A core file must not read the clock: new Date() / Date.now() are I/O. Receive `now: Date` as a parameter (the shell mints it from the injected clock) and do any calendar math via foundation/time.ts. This is the time analogue of 'await never appears in a core file'. (The Date TYPE in annotations is fine \u2014 this bans the global as a VALUE.)"
           }
         ]
       }
     },
     {
-      "files": ["src/foundation/time.ts", "src/foundation/clock.ts"],
+      "files": [
+        "src/foundation/time.ts",
+        "src/foundation/clock.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -103,7 +120,7 @@
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "foundation/time.ts (the pure calendar module) and foundation/clock.ts (the now seam) must stay free of I/O, transactions, and framework deps — like locks.ts. time.ts is the ONLY file allowed to import a date library (dependency-cruiser's dayjs-lives-in-time-only enforces the dayjs side); clock.ts holds the single sanctioned new Date()."
+                "message": "foundation/time.ts (the pure calendar module) and foundation/clock.ts (the now seam) must stay free of I/O, transactions, and framework deps \u2014 like locks.ts. time.ts is the ONLY file allowed to import a date library (dependency-cruiser's dayjs-lives-in-time-only enforces the dayjs side); clock.ts holds the single sanctioned new Date()."
               }
             ]
           }
@@ -111,13 +128,18 @@
       }
     },
     {
-      "files": ["src/foundation/clock.ts"],
+      "files": [
+        "src/foundation/clock.ts"
+      ],
       "rules": {
         "no-restricted-globals": "off"
       }
     },
     {
-      "files": ["src/db/locks.ts", "src/db/lock-registry.ts"],
+      "files": [
+        "src/db/locks.ts",
+        "src/db/lock-registry.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -137,7 +159,7 @@
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "The advisory-lock key policy (locks.ts machinery + lock-registry.ts) must stay pure: no I/O, transactions, or framework deps. The two may reference each other (registry → machinery), but nothing in the repo/service/db shell."
+                "message": "The advisory-lock key policy (locks.ts machinery + lock-registry.ts) must stay pure: no I/O, transactions, or framework deps. The two may reference each other (registry \u2192 machinery), but nothing in the repo/service/db shell."
               }
             ]
           }
@@ -145,7 +167,10 @@
       }
     },
     {
-      "files": ["src/flags/flags.ts", "src/flags/flag-registry.ts"],
+      "files": [
+        "src/flags/flags.ts",
+        "src/flags/flag-registry.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -169,7 +194,7 @@
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "The feature-flag catalog (flags.ts machinery + flag-registry.ts) must stay pure: no I/O, no OpenFeature SDK, no framework deps. The registry may import the machinery (flag-registry → flags); binding to a client lives in flag-reader.ts (the uow.ts analogue), the one facade file that imports the SDK."
+                "message": "The feature-flag catalog (flags.ts machinery + flag-registry.ts) must stay pure: no I/O, no OpenFeature SDK, no framework deps. The registry may import the machinery (flag-registry \u2192 flags); binding to a client lives in flag-reader.ts (the uow.ts analogue), the one facade file that imports the SDK."
               }
             ]
           }
@@ -177,7 +202,50 @@
       }
     },
     {
-      "files": ["src/**/modules/**/*.provider.ts"],
+      "files": [
+        "src/events/events.ts",
+        "src/events/event-registry.ts",
+        "src/events/rate.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/*",
+                  "fastify",
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "@openfeature/*",
+                  "**/builder*",
+                  "**/prisma*",
+                  "**/db*",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/*.repo*",
+                  "**/*.service*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*"
+                ],
+                "message": "The event catalog (events.ts machinery + event-registry.ts) and the rate policy (rate.ts) must stay pure: no I/O, no pubsub client, no framework deps, and no clock \u2014 `planEmit` takes `now` as a parameter. The registry may import the machinery (event-registry \u2192 events); binding to a live pubsub lives in event-bus.ts (the flag-reader.ts analogue), the one facade file that imports graphql-yoga, and the driving loop in operators.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/**/modules/**/*.provider.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -198,7 +266,7 @@
                   "**/flag-reader*",
                   "**/*.service*"
                 ],
-                "message": "A provider (*.provider.ts) is an external-port adapter: it may read via db + a repo and speak its SDK, but it must not know the schema, the transport, transactions, a service, or the flag facade — it sits BELOW the flag reader (which delegates to it), never reaching up into it. The DB feature-flag provider reads the FeatureFlag rows and decides with the pure core predicate."
+                "message": "A provider (*.provider.ts) is an external-port adapter: it may read via db + a repo and speak its SDK, but it must not know the schema, the transport, transactions, a service, or the flag facade \u2014 it sits BELOW the flag reader (which delegates to it), never reaching up into it. The DB feature-flag provider reads the FeatureFlag rows and decides with the pure core predicate."
               }
             ]
           }
@@ -206,15 +274,28 @@
       }
     },
     {
-      "files": ["src/**/modules/**/*.service.ts"],
+      "files": [
+        "src/**/modules/**/*.service.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["graphql", "graphql-yoga", "@pothos/*", "**/builder*", "fastify", "@openfeature/*", "**/flag-reader*"],
-                "message": "Use-cases (*.service.ts) speak the domain language only: no GraphQL/transport imports, and no OpenFeature SDK or flag-reader factory. A service receives the FlagReader as a per-call argument (the FlagReader TYPE from flag-registry is fine — like importing uow / lock-registry types); the schema layer or context factory builds the reader. The schema layer calls the service, never the other way round."
+                "group": [
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "fastify",
+                  "@openfeature/*",
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/operators*",
+                  "**/rate*"
+                ],
+                "message": "Use-cases (*.service.ts) speak the domain language only: no GraphQL/transport imports, and no OpenFeature SDK or flag-reader factory. A service receives the FlagReader as a per-call argument (the FlagReader TYPE from flag-registry is fine \u2014 like importing uow / lock-registry types); the schema layer or context factory builds the reader. The schema layer calls the service, never the other way round."
               }
             ]
           }
@@ -222,7 +303,9 @@
       }
     },
     {
-      "files": ["src/**/modules/**/*.repo.ts"],
+      "files": [
+        "src/**/modules/**/*.repo.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -240,9 +323,13 @@
                   "**/lock-registry*",
                   "**/flags*",
                   "**/flag-registry*",
-                  "**/flag-reader*"
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
                 ],
-                "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, transactions, or feature flags. It receives a DbClient (rw/ro/tx — the caller's choice, who also opens the transaction and takes the locks) and returns rows."
+                "message": "The persistence layer (*.repo.ts) must not know the schema, the transport, transactions, or feature flags. It receives a DbClient (rw/ro/tx \u2014 the caller's choice, who also opens the transaction and takes the locks) and returns rows."
               }
             ]
           }
@@ -250,15 +337,33 @@
       }
     },
     {
-      "files": ["src/**/modules/**/*.schema.ts", "src/**/modules/**/schemas/**"],
+      "files": [
+        "src/**/modules/**/*.schema.ts",
+        "src/**/modules/**/schemas/**"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["fastify", "**/prisma.js", "**/db.js", "**/uow*", "**/locks*", "**/lock-registry*", "**/flags*", "**/flag-registry*", "**/flag-reader*", "@openfeature/*"],
-                "message": "Schema files resolve through ctx (the routed selection client + services + ctx.flags) and repo read functions — they never construct or import database handles, open transactions, take locks, or build a flag reader (that is the service's / context factory's job). Gate exposure with ctx.flags."
+                "group": [
+                  "fastify",
+                  "**/prisma.js",
+                  "**/db.js",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "@openfeature/*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
+                ],
+                "message": "Schema files resolve through ctx (the routed selection client + services + ctx.flags) and repo read functions \u2014 they never construct or import database handles, open transactions, take locks, or build a flag reader (that is the service's / context factory's job). Gate exposure with ctx.flags."
               }
             ]
           }
@@ -266,7 +371,9 @@
       }
     },
     {
-      "files": ["src/**/modules/**/*.route.ts"],
+      "files": [
+        "src/**/modules/**/*.route.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -282,9 +389,13 @@
                   "**/db.js",
                   "**/uow*",
                   "**/locks*",
-                  "**/lock-registry*"
+                  "**/lock-registry*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
                 ],
-                "message": "Route files are the HTTP delivery layer (the peer of schemas/): they register on Fastify and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, or locks — the service owns those."
+                "message": "Route files are the HTTP delivery layer (the peer of schemas/): they register on Fastify and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, or locks \u2014 the service owns those."
               }
             ]
           }
@@ -292,7 +403,10 @@
       }
     },
     {
-      "files": ["src/**/modules/**/jobs/**", "src/**/modules/**/*.job.ts"],
+      "files": [
+        "src/**/modules/**/jobs/**",
+        "src/**/modules/**/*.job.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -313,9 +427,13 @@
                   "**/lock-registry*",
                   "**/flags*",
                   "**/flag-registry*",
-                  "**/flag-reader*"
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
                 ],
-                "message": "Job files are the scheduled delivery layer (the peer of schemas/ and routes/): they DEFINE handlers on the shared Agenda and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, locks, or the flag facade — the service owns those. A handler is thin: it delegates the decision + write to the service, which reads `now` from the injected clock (time enters through that seam, not the handler)."
+                "message": "Job files are the scheduled delivery layer (the peer of schemas/ and routes/): they DEFINE handlers on the shared Agenda and receive their service at registration time, so they never import the GraphQL builder, the database handles, transactions, locks, or the flag facade \u2014 the service owns those. A handler is thin: it delegates the decision + write to the service, which reads `now` from the injected clock (time enters through that seam, not the handler)."
               }
             ]
           }
@@ -323,14 +441,88 @@
       }
     },
     {
-      "files": ["src/graphql/builder.ts"],
+      "files": [
+        "src/events/outbox.repo.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["**/modules/**"],
+                "group": [
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "fastify",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/outbox*",
+                  "**/operators*",
+                  "**/rate*"
+                ],
+                "message": "The outbox persistence layer follows the same rule as a module repo: it must not know the schema, the transport, transactions, or feature flags. It receives a DbClient (the caller opens the transaction) and returns rows. Its FOR UPDATE SKIP LOCKED claim is the concurrency ladder\u2019s rung 4, which CONVENTIONS \u00a71 allocates to the repo."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/events/outbox.job.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@pothos/*",
+                  "graphql",
+                  "graphql-yoga",
+                  "fastify",
+                  "@openfeature/*",
+                  "**/builder*",
+                  "**/prisma.js",
+                  "**/db.js",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "**/event-bus*",
+                  "**/operators*",
+                  "**/rate*"
+                ],
+                "message": "The outbox jobs are a scheduled delivery layer like any module job: they DEFINE handlers on the shared Agenda and receive the outbox at registration, so they never import the GraphQL builder, the database handles, transactions, or the flag facade. A handler is thin \u2014 it delegates, and reads no clock of its own."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/graphql/builder.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/modules/**"
+                ],
                 "message": "builder.ts must not import feature modules (modules import the builder). Importing them here would create an import cycle."
               }
             ]
@@ -339,7 +531,9 @@
       }
     },
     {
-      "files": ["src/tests/**"],
+      "files": [
+        "src/tests/**"
+      ],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-console": "off",

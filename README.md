@@ -119,6 +119,19 @@ src/
     schema.ts            # calls each module's registerXxxModule() → builder.toSchema()
     context.ts           # Context type + createContextFactory() + the
                          #   per-operation rw/ro read-client routing
+  events/                # realtime: the topic bus + the transactional outbox
+    events.ts            # pure machinery: TopicSpec + defineTopics + the bus types
+                         #   (the flags.ts analogue) and the outbox key codec
+    event-registry.ts    # the one place that says WHAT topics exist (TOPICS);
+                         #   add a topic here — the machinery is fixed
+    event-bus.ts         # binds TOPICS to a Yoga PubSub (the flag-reader.ts-style
+                         #   I/O shell); the only file importing createPubSub
+    rate.ts              # pure throttle policy: planEmit(state, now, interval)
+    operators.ts         # the shell that drives it (async generators + a Delay port)
+    outbox.ts            # delivery rung 1: enqueue-in-tx, claim, publish, mark
+    outbox.repo.ts       #   Prisma + the FOR UPDATE SKIP LOCKED claim (ladder rung 4)
+    outbox.job.ts        #   scheduled delivery: events:outbox:drain / :purge
+    redis-event-target.ts# the driver (agenda.ts analogue): Redis fan-out, or none
   scheduler/             # background jobs (Agenda v6 + Postgres) — the graphql/ analogue
     job.ts               # machinery: the JobSchedule type + defineJob (the flags.ts-style
                          #   fixed contract every job module speaks)
@@ -373,6 +386,38 @@ no queue connection. Because the backend is an injectable port (`AgendaBackend`)
 tests build a scheduler over a fake backend to assert the job registry and the
 thin handler wiring without a real Postgres queue (PGlite cannot run agenda's
 `pg` LISTEN/NOTIFY) — the same seam as the OAuth / search stubs.
+
+### Subscriptions (realtime)
+
+Subscriptions are served over **two transports at once**, on purpose. SSE needs
+no code — Yoga answers the existing `/graphql` route when a client sends
+`Accept: text/event-stream` — and is the simpler default for new clients.
+`graphql-ws` is mounted at `/graphql/ws` for wire compatibility with clients that
+already speak it; crepe's relay setup needs only a URL change. Both run the same
+plugins and the same context factory (`yoga.getEnveloped`), so they cannot drift.
+
+The bus mirrors the flags facade: pure machinery, a registry, an I/O shell, and a
+driver. Fan-out is injected — with no `REDIS_URL` the bus stays in-process, which
+is correct for one instance and is why the test suite never needs Redis.
+
+Two things are enforced by types rather than review. `ctx.events` is the
+**subscribe half only**, so a resolver cannot publish; publishing belongs to a
+service, which is the choke point every caller passes through. And the re-fetch's
+`where` takes ownership from `requirePrincipal(ctx)`, never from the event
+payload — so even a service that published to the wrong key cannot show one user
+another's row.
+
+Delivery is a two-rung ladder, and the point module uses both: `spend`,
+`transfer` and `expire` publish directly after commit (at-most-once — a lost
+event costs a refetch), while `charge` writes to a **transactional outbox** in
+the same transaction as the write (at-least-once — money must not go unreported).
+Payloads carry ids only, which is what makes duplicates and reordering harmless.
+See CONVENTIONS §11 for the full rules.
+
+> **Operational note.** The outbox is drained by an Agenda job, so at least one
+> process must run with the scheduler enabled. With `SCHEDULER_ENABLED=false`
+> everywhere, rung-1 events go out only on the in-process wake-up and are
+> silently delayed after a crash.
 
 ### Error handling
 

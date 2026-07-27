@@ -116,6 +116,13 @@ input SpendPointInput {
   userId: Int!
 }
 
+type Subscription {
+  """
+  Streams the authenticated user's point balance whenever it changes (charge, spend, transfer, or expiry). Rate-limited server-side.
+  """
+  pointBalanceChanged: PointBalance
+}
+
 input TransferPointInput {
   amount: Int!
   fromUserId: Int!

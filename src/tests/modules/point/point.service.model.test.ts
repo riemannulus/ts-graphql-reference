@@ -3,11 +3,12 @@ import { afterAll, beforeEach, expect } from 'vitest';
 import { createPointService } from '../../../modules/point/point.service.js';
 import { InsufficientPointError } from '../../../modules/point/point.core.js';
 import { arbChargeInput } from './point.arbitraries.js';
+import { fakeOutbox, recordingPublisher } from '../../support/event-bus-fake.js';
 import { systemClock } from '../../../foundation/clock.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();
-const points = createPointService({ rw: prisma, ro: prisma }, systemClock);
+const points = createPointService({ rw: prisma, ro: prisma }, systemClock, { events: recordingPublisher(), outbox: fakeOutbox() });
 
 /**
  * Model-based test: a random sequence of charge/spend operations is replayed

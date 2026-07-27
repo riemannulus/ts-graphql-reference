@@ -1,5 +1,8 @@
 import type { Db } from './db/db.js';
+import type { AppEventPublisher } from './events/event-registry.js';
+import type { Outbox } from './events/outbox.js';
 import { type Clock, systemClock } from './foundation/clock.js';
+import { createSessionService } from './modules/auth/auth.service.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
@@ -12,8 +15,21 @@ import {
 import { createPostSearchService } from './modules/search/post-search.service.js';
 import { createUserService } from './modules/user/user.service.js';
 
-/** Optional overrides for dependencies that have a default production binding. */
+/** Dependencies the container needs, plus overrides for the defaulted ones. */
 export interface CreateServicesOptions {
+  /**
+   * The WRITE half of the event bus (delivery rung 0). REQUIRED and undefaulted
+   * on purpose: a no-op default would let a service publish into a void and no
+   * test would notice. The composition root builds the real bus; a service test
+   * injects `recordingPublisher()` (src/tests/support/event-bus-fake.ts).
+   */
+  events: AppEventPublisher;
+  /**
+   * The transactional outbox (delivery rung 1). Required for the same reason —
+   * silently dropping a guaranteed-delivery event is the failure this rung exists
+   * to prevent.
+   */
+  outbox: Outbox;
   /**
    * Google OAuth client. Production binds an unimplemented stub; tests inject a
    * fake. The OAuth service depends on the port, not a concrete client.
@@ -52,20 +68,21 @@ export interface CreateServicesOptions {
  * replica-lagged state would be wrong. The `ro` handle serves the query path
  * (schema → repo), not use-cases.
  */
-export function createServices(db: Db, options: CreateServicesOptions = {}) {
+export function createServices(db: Db, options: CreateServicesOptions) {
   const clock = options.clock ?? systemClock;
   const user = createUserService(db);
-  const point = createPointService(db, clock);
+  const point = createPointService(db, clock, { events: options.events, outbox: options.outbox });
   const auth = createOAuthService({
     users: user,
     google: options.googleOAuth ?? stubGoogleOAuthClient,
   });
+  const session = createSessionService({ db, clock });
   const onboarding = createOnboardingService({ db });
   const postSearch = createPostSearchService({
     index: options.postSearchIndex ?? stubPostSearchIndex,
   });
   const featureFlag = createFeatureFlagService(db, clock);
-  return { user, point, auth, onboarding, postSearch, featureFlag };
+  return { user, point, auth, session, onboarding, postSearch, featureFlag };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */
