@@ -8,15 +8,20 @@ import type { DbClient } from '../db/db.js';
  * which is how `enqueue` joins the SAME transaction as the domain write — that
  * shared transaction IS the guarantee the rung buys.
  *
- * TWO boundary conversions happen in this file and nowhere else:
+ * Two boundary conversions happen in this file and nowhere else:
  *
  * - **`BigInt` never escapes.** `OutboxEvent.id` is the only `BigInt` in the
  *   schema, and `JSON.stringify` THROWS on a JS `bigint` — one logged row would
- *   take down a drain. Ids leave here as `string` and come back as `string`; the
- *   `BigInt(...)` conversions are confined to the two statements below.
- * - **`payload` is parsed, not trusted.** It is a `Json` column, so it reads back
- *   as `Prisma.JsonValue`; the drainer receives `unknown` and the topic's own
- *   codec decides what it is (CONVENTIONS §4, parse don't validate).
+ *   take down a drain. Ids leave here as `string` and come back as `string`.
+ * - **`payload` is handed out as `unknown`.** It is a `Json` column, so Prisma
+ *   types it `JsonValue`; the drainer gets `unknown` and the topic's own codec
+ *   decides what it is (CONVENTIONS §4, parse don't validate).
+ *
+ * There is NO raw SQL here, and that is a deliberate constraint rather than an
+ * accident: `db/uow.ts` is the one place in this codebase that writes raw
+ * transaction or lock SQL, and its own doc comment says so. A queue whose
+ * correctness rests on a guarded write (see `markPublished`) does not need to
+ * break that.
  */
 
 /** One row to enqueue. `payload` is ids only — see the five laws (CONVENTIONS §11). */
@@ -58,63 +63,55 @@ export async function enqueue(db: DbClient, input: EnqueueOutboxInput): Promise<
 }
 
 /**
- * Claims a batch of pending rows and counts the attempt, atomically.
+ * Takes the next batch of pending rows and counts the attempt.
  *
- * `FOR UPDATE SKIP LOCKED` is the concurrency ladder's **rung 4** — "row lock /
- * queue claim … claim specific rows (e.g. a worker queue)", which CONVENTIONS §1
- * allocates to the REPO. (The neighbouring rule that raw lock SQL may live only
- * in `uow.ts` governs ADVISORY locks — it sits under the heading "Advisory locks
- * are the escape hatch, not the default" and its sibling bullets are about
- * `orderLocks` and the key registry. A row lock is a different rung with a
- * different home.) It is the first raw query in a repo in this codebase, hence
- * the length of this comment.
+ * Plain Prisma, deliberately — there is no `FOR UPDATE SKIP LOCKED` here, and an
+ * earlier draft that had one was solving a problem it did not have. Mutual
+ * exclusion between drainers holds NO invariant: delivery is correct because the
+ * mark is a guarded write (`markPublished` requires `publishedAt: null`), and a
+ * duplicate delivery is unobservable anyway (payloads are ids, the subscriber
+ * re-fetches). Coordination is a WORK-saving measure, so it belongs where the
+ * codebase already puts it — `uow.trySerialized` around the caller, reached
+ * through the toolkit (see `outbox.ts`). That keeps the toolkit's own claim true:
+ * `db/uow.ts` holds all the raw lock SQL in this codebase, and a repo issues
+ * none.
  *
- * SKIP LOCKED is what lets several drainers run without coordinating: each takes
- * rows the others have not locked, and none blocks. The cost is that global
- * ordering is NOT preserved — which the outbox can afford only because payloads
- * are ids and the resolver re-fetches, so reordering and duplication are both
- * unobservable (the five laws).
+ * Ordering: `orderBy: id` plus a single drainer at a time means events normally
+ * go out in the order they were enqueued. That is a happy consequence of the
+ * lock, not a guarantee — a drain that loses the lock mid-cycle can interleave
+ * with the next holder — so nothing may depend on it.
  *
- * The attempt is counted HERE, inside the claim, rather than after a failed
- * publish: the publish happens outside any transaction (see `outbox.ts`), so a
- * crash between the two must still burn an attempt or a poison row would be
- * retried forever.
+ * The attempt is counted HERE, in the same transaction as the read, rather than
+ * after a failed publish: the publish happens outside any transaction (see
+ * `outbox.ts`), so a crash between the two must still burn an attempt or a
+ * poison row would be retried forever.
  *
- * Every projected column is cast explicitly. Raw rows come back driver-typed, not
- * Prisma-mapped, and this repo runs two different drivers (`@prisma/adapter-pg`
- * in production, `pglite-prisma-adapter` in tests) — `"id"::text` and
- * `"payload"::text` make the shape identical under both instead of trusting each
- * driver's coercion. It is the same discipline as the `classid::int` casts in
- * `tests/integrations/concurrency.test.ts`.
+ * `id` is the schema's only `BigInt`, and `JSON.stringify` throws on a JS
+ * `bigint` — one logged row would take down a drain. It leaves here as `string`
+ * and comes back as `string`; the conversions are confined to this file.
  */
-export async function claimPending(
+export async function takePending(
   db: DbClient,
   options: ClaimOptions,
 ): Promise<ClaimedOutboxEvent[]> {
-  const rows = await db.$queryRaw<Array<{ id: string; topic: string; key: string; payload: string }>>`
-    SELECT "id"::text AS "id", "topic", "key", "payload"::text AS "payload"
-    FROM "OutboxEvent"
-    WHERE "publishedAt" IS NULL
-      AND "failedAt" IS NULL
-      AND "attempts" < ${options.maxAttempts}
-    ORDER BY "id"
-    FOR UPDATE SKIP LOCKED
-    LIMIT ${options.limit}
-  `;
+  const rows = await db.outboxEvent.findMany({
+    where: { publishedAt: null, failedAt: null, attempts: { lt: options.maxAttempts } },
+    orderBy: { id: 'asc' },
+    take: options.limit,
+    select: { id: true, topic: true, key: true, payload: true },
+  });
   if (rows.length === 0) return [];
 
   await db.outboxEvent.updateMany({
-    where: { id: { in: rows.map((row) => BigInt(row.id)) } },
+    where: { id: { in: rows.map((row) => row.id) } },
     data: { attempts: { increment: 1 } },
   });
 
   return rows.map((row) => ({
-    id: row.id,
+    id: row.id.toString(),
     topic: row.topic,
     key: row.key,
-    // The column is JSONB, so this always parses; a throw here would mean the
-    // column was written by something that bypassed the delegate.
-    payload: JSON.parse(row.payload) as unknown,
+    payload: row.payload,
   }));
 }
 
@@ -122,6 +119,10 @@ export async function claimPending(
  * Marks rows delivered. `publishedAt` arrives as a parameter — a repo never mints
  * a decision instant, the service reads it from the injected clock once
  * (CONVENTIONS §10 rule 1). Returns how many rows moved, which the drainer logs.
+ *
+ * The `publishedAt: null` predicate is the whole of the correctness story — it
+ * is what makes the mark idempotent, and therefore why the drain needs no row
+ * lock upstream of it.
  *
  * Deliberately NOT a guarded write: a concurrent drainer that also delivered the
  * row and marked it first is a duplicate delivery, which is expected under

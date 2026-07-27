@@ -687,16 +687,30 @@ cache-invalidation hint, not a delivery channel.** A client that reconnects and
 re-queries is the normal recovery path, so a lost event costs a round trip.
 
 Rung 1 writes the event in the SAME transaction as the domain write, so the two
-commit or vanish together. Its drain is deliberately three phases — claim (with
-`FOR UPDATE SKIP LOCKED`, the concurrency ladder's rung 4) and count the attempt
-in one transaction, publish OUTSIDE any transaction, mark delivered in a second.
-Holding row locks across a network round-trip is the thing to avoid, and an
-attempt counter that rolls back lets a poison row retry forever. The cost is a
-window where a crash re-delivers — which law 1 makes harmless.
+commit or vanish together. Its drain is deliberately three phases — take a batch
+and count the attempt in one transaction, publish OUTSIDE any transaction, mark
+delivered in a second. Holding a lock across a network round-trip is the thing to
+avoid, and an attempt counter that rolls back lets a poison row retry forever.
+The cost is a window where a crash re-delivers — which law 1 makes harmless.
 
-**The outbox does not preserve order**, for the same reason: concurrent drainers
-with `SKIP LOCKED` take rows in whatever order they can lock them. A topic that
-genuinely needs ordering needs a different mechanism, not this one.
+**Correctness rests on the guarded mark, not on a lock.** `markPublished`
+requires `publishedAt: null`, so a second drainer that delivered the same row
+simply loses that race — ladder rung 0, the weakest thing that holds. This is
+worth stating because the obvious design does not need the obvious machinery: a
+queue claim (`FOR UPDATE SKIP LOCKED`, rung 4) buys nothing here, and buying it
+would mean the first raw SQL in a repo in this codebase. `db/uow.ts` holds ALL
+the raw transaction and lock SQL; a repo issues none.
+
+What the drain does take is `uow.trySerialized` on a singleton key, purely so N
+instances do not each redo the same work. It holds no invariant, so it is `try`
+rather than blocking: a drainer that cannot get it waits for its next tick.
+Ordering normally falls out of that (one drainer, `orderBy: id`) but is NOT
+guaranteed — a cycle that loses the lock between phases can interleave with the
+next holder, so nothing may depend on it.
+
+If a single drainer ever becomes the bottleneck, THAT is when the rung-4 claim is
+earned: it lets drainers work disjoint batches concurrently, at the cost of the
+raw SQL and of giving up ordering entirely.
 
 **Do not build an outbox when a domain table is already a durable queue.** If a
 row's own status column already means "work to do" — crepe's `IapNotification`

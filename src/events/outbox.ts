@@ -1,4 +1,5 @@
 import type { Db, DbClient } from '../db/db.js';
+import { lockKey } from '../db/lock-registry.js';
 import { uow } from '../db/uow.js';
 import type { Clock } from '../foundation/clock.js';
 import type { Logger } from '../foundation/logger.js';
@@ -107,12 +108,28 @@ export function createOutbox(deps: OutboxDeps): Outbox {
   let draining = false;
   let wakeAgain = false;
 
-  /** One claim → publish → mark cycle. Returns rows published this turn. */
+  /**
+   * One take → publish → mark cycle. Returns rows published this turn, or 0 when
+   * another drainer already holds the lock.
+   *
+   * `trySerialized`, not `serialized`: a drainer that cannot get the lock should
+   * shrug and wait for its next tick, not queue up behind the holder and then
+   * run a redundant pass. That is the primitive's documented purpose.
+   *
+   * The lock is an optimization and nothing depends on holding it — see
+   * `lock-registry.outboxDrain`. It cannot be held across the publish anyway:
+   * `pg_advisory_xact_lock` is transaction-scoped, and publishing inside the
+   * transaction is exactly what phase 2 exists to avoid.
+   */
   async function drainTurn(): Promise<number> {
-    const claimed = await uow.run(deps.db, async (tx) => {
+    const taken = await uow.trySerialized(deps.db, [lockKey.outboxDrain()], async (tx) => {
       await outboxRepo.failExhausted(tx, maxAttempts, deps.clock.now());
-      return outboxRepo.claimPending(tx, { limit: batchSize, maxAttempts });
+      return outboxRepo.takePending(tx, { limit: batchSize, maxAttempts });
     });
+    // Someone else is draining. Their batch covers ours, so there is nothing to
+    // do and nothing to report.
+    if (!taken.acquired) return 0;
+    const claimed = taken.result;
     if (claimed.length === 0) return 0;
 
     const published: string[] = [];

@@ -82,7 +82,7 @@ RTDN webhook (Google Cloud Pub/Sub, at-least-once)
 | 구독 접근 | `ctx.events`는 **subscribe 전용 타입** | `ReadDbClient`와 같은 수법 |
 | **전달 보장** | **2단 사다리.** rung 0 = 커밋 후 직접 발행(at-most-once, 기본), **rung 1 = 아웃박스(at-least-once)** — 둘 다 이번에 구현 | IAP처럼 돈이 걸린 경로는 유실이 허용되지 않는다. 사다리 형태는 concurrency ladder와 동일한 교리 |
 | 아웃박스 싱크 | **버스 발행만.** 잡 enqueue 싱크는 만들지 않는다 | §6.4 — 도메인 테이블이 이미 내구성 큐면 아웃박스를 또 만들지 않는다 |
-| 순서 보장 | **없음.** 아웃박스는 순서를 보장하지 않는다 | 동시 드레이너 + `SKIP LOCKED`. 법칙 1(id만)이 순서 무관을 만든다 — §6.3 |
+| 순서 보장 | **없음(보장하지 않음).** 단일 드레이너 덕에 통상 순서대로 나가지만 계약이 아니다 | 락은 불변식을 지키지 않으므로 사이클 중간에 넘어갈 수 있다 — §6.3 |
 | 인박스 | **패턴으로 문서화, 레퍼런스 코드는 미포함** | 레퍼런스에 at-least-once 인바운드 표면이 없다. crepe `IapNotification`이 이미 올바른 구현체 |
 | 스트림 연산 | **순수 정책(`rate.ts`) + 셸(`operators.ts`)**, Rx 미도입 | 정책이 순수해져 프로퍼티 테스트 대상이 됨 |
 | principal | **실물 `Session` 모델 + 최소 seam** | crepe가 DB row 조회 한 방. 포트+stub은 가짜 추상화 |
@@ -122,7 +122,7 @@ src/events/
   operators.ts          # 셸: throttle() — async generator, 주입된 Clock을 읽음
   event-bus.ts          # uow.ts / flag-reader.ts 아날로그: TOPICS를 Yoga createPubSub에
                         #   바인딩하고 subscribe 옵션에 따라 연산자를 적용하는 I/O 셸
-  outbox.repo.ts        # Prisma: 같은 tx 삽입 / SKIP LOCKED 클레임 / 발행·실패 표시 / 퍼지
+  outbox.repo.ts        # Prisma 전용(raw SQL 없음): 같은 tx 삽입 / 배치 take / 표시 / 퍼지
   outbox.ts             # 드레이너 셸: 클레임 → publish → 표시. notify() 웨이크업
   outbox.job.ts         # 스케줄 delivery: events:outbox:drain / events:outbox:purge
   redis-event-target.ts # scheduler/agenda.ts 아날로그(드라이버): ioredis 2 커넥션 →
@@ -348,15 +348,28 @@ export interface Outbox<T extends Topics> {
 }
 ```
 
-클레임은 concurrency ladder **rung 4**(`FOR UPDATE SKIP LOCKED` — "claim specific rows (e.g. a worker queue)")이고, CONVENTIONS가 그 rung은 repo에 산다고 못박았으므로 `outbox.repo.ts`에 둔다:
+**클레임에 row lock을 쓰지 않는다.** 상호 배제는 불변식을 지키지 않기 때문이다 — 정확성은 `markPublished`의 가드(`publishedAt: null`, ladder rung 0)에서 나오고, 중복 전달은 법칙 1이 이미 무해하게 만든다. rung 4(`FOR UPDATE SKIP LOCKED`)를 쓰면 이 저장소 최초의 repo-level raw SQL을 들이게 되는데, 그 대가로 사는 것이 없다. `db/uow.ts`가 raw 트랜잭션·락 SQL을 전부 보유한다는 그 파일의 자기 진술을 깨지 않는다.
 
-```sql
-SELECT "id", "topic", "key", "payload" FROM "OutboxEvent"
-WHERE "publishedAt" IS NULL AND "failedAt" IS NULL
-ORDER BY "id"
-FOR UPDATE SKIP LOCKED
-LIMIT $1
+대신 드레인은 `uow.trySerialized`로 싱글턴 키를 잡는다 — N개 인스턴스가 같은 일을 N번 하지 않기 위한 **작업 절약**이지 정확성 장치가 아니므로, 못 잡으면 다음 tick까지 양보한다. repo는 평범한 Prisma만 쓴다:
+
+```ts
+// outbox.ts — 상호 배제는 셸이 toolkit을 통해 잡는다
+const taken = await uow.trySerialized(db, [lockKey.outboxDrain()], async (tx) => {
+  await outboxRepo.failExhausted(tx, maxAttempts, clock.now());
+  return outboxRepo.takePending(tx, { limit: batchSize, maxAttempts });
+});
+if (!taken.acquired) return 0; // 다른 드레이너가 처리 중 — 양보
+
+// outbox.repo.ts — raw SQL 없음
+const rows = await db.outboxEvent.findMany({
+  where: { publishedAt: null, failedAt: null, attempts: { lt: maxAttempts } },
+  orderBy: { id: 'asc' },
+  take: limit,
+  select: { id: true, topic: true, key: true, payload: true },
+});
 ```
+
+부수 효과로 `id::text` / `payload::text` 캐스팅과 `JSON.parse`가 사라지고, 두 드라이버(`@prisma/adapter-pg` / `pglite-prisma-adapter`)의 raw row 타입 차이를 걱정할 필요도 없어진다 — Prisma가 타입을 준다.
 
 **두 속도로 돈다.** 즉시성은 `notify()`(커밋 직후 인프로세스 웨이크업, 밀리초)가 담당하고, 정확성은 스케줄 잡 `events:outbox:drain`(30초)이 담당한다 — 크래시로 `notify()`를 놓쳤거나 다른 인스턴스가 넣은 row를 반드시 잡는다. **`notify()`는 최적화이지 정확성 요건이 아니다.**
 
@@ -366,7 +379,7 @@ LIMIT $1
 
 ### 6.3 아웃박스가 포기하는 것 — 순서
 
-동시 드레이너 + `SKIP LOCKED`는 **전역 순서를 보장하지 않는다.** 같은 키의 두 이벤트가 뒤바뀌어 도착할 수 있다.
+**전역 순서는 보장하지 않는다.** 단일 드레이너가 `orderBy: id`로 처리하므로 통상적으로는 순서대로 나가지만, 락이 불변식을 지키지 않는 이상 사이클 중간에 다른 드레이너로 넘어가 뒤바뀔 수 있다.
 
 **이게 허용되는 이유는 오직 법칙 1 때문이다.** 페이로드가 id뿐이고 `resolve`가 현재 상태를 재조회하므로, 두 이벤트가 어떤 순서로 오든 구독자는 같은 최신 상태를 본다. 같은 이유로 **중복 전달도 무해하다** — at-least-once의 대가인 dedup이 구독 싱크에는 아예 필요 없다.
 
@@ -624,7 +637,7 @@ mutation chargePoint                                              [rung 1 — �
       → uow.run(db, tx => { applyChargePlan(tx, …)
                             outbox.enqueue(tx, 'pointBalanceChanged', userId, {userId}) })  // 커밋
       → outbox.notify()                                          // 웨이크업 (최적화)
-  → 드레이너: SKIP LOCKED 클레임 → bus.publish → publishedAt 스탬프
+  → 드레이너: trySerialized 하에 take → (tx 밖) bus.publish → publishedAt 스탬프
       → eventTarget (in-memory | Redis) → 전 인스턴스 fan-out
 
 mutation spendPoint                                               [rung 0 — 직접]
@@ -666,7 +679,7 @@ subscription pointBalanceChanged            (SSE /graphql | WS /graphql/ws)
 
 서비스 테스트는 `createServices`에 **기록용 fake 버스**를 주입한다(`PostSearchIndex`/`GoogleOAuthClient`와 같은 자세). Redis 어댑터는 테스트하지 않는다.
 
-**`SKIP LOCKED` 동시성은 PGlite에서 테스트할 수 없다** — 단일 커넥션이라 두 드레이너를 띄울 수 없다. CONVENTIONS §7이 이미 같은 한계를 기록한 자리(P2034 직렬화 실패)와 동일한 취급으로, 구조적 매핑만 검증하고 최악의 실패 모드가 "중복 발행"(법칙 1에 의해 무해)임을 근거로 수용한다.
+**드레이너 간 경합은 PGlite에서 테스트할 수 없다** — 단일 커넥션이라 두 드레이너를 띄울 수 없다. CONVENTIONS §7이 같은 한계를 기록한 자리(P2034)와 동일한 취급으로 수용한다. 여기서는 부담이 훨씬 가벼운데, 락이 정확성을 지키지 않으므로 락이 통째로 실패해도 최악이 중복 발행(법칙 1에 의해 무해)이기 때문이다.
 
 ## 16. crepe IAP 이식 가이드
 
@@ -809,7 +822,7 @@ CONVENTIONS §11에 CONVENTIONS §10의 "crepe migration map"과 같은 형식�
 4. ~~**`t.prismaField`가 `subscriptionFields` 안에서 Pothos prisma 플러그인 v4와 동작하는지.**~~ **[해소됨 — 2026-07-27 스파이크]** `builder.subscriptionType({})` 후 `subscriptionFields`에서 `t.prismaField({ type: 'PointBalance' })`가 빌드되고, **중첩 relation(`user { email }`)까지 해석된다** — 구독 resolve 경로에서도 Pothos `query` 전개가 정상 동작한다. graphql-ws over `@fastify/websocket` + `yoga.getEnveloped()` 경로도 같은 스파이크에서 확인했다.
 5. **컨텍스트 팩토리 async 전환의 파급.** 기존 e2e가 동기 팩토리를 가정하지 않는지 확인. 인증 요청당 DB 왕복 1회 추가.
 6. **PGlite 단일 커넥션.** e2e 구독 테스트에서 쓰기와 구독 재조회가 한 커넥션을 공유한다. **법칙 4(커밋 후 발행)가 이를 안전하게 만든다** — 열린 트랜잭션 안에서 발행하면 재조회가 같은 커넥션에서 교착할 수 있다. 어겼을 때 테스트가 즉시 실패하는 지점이다.
-7. **`FOR UPDATE SKIP LOCKED`를 PGlite가 파싱은 하되 동시성을 재현할 수 없다**(§15). 구조적 매핑만 검증하고, 최악의 실패 모드가 중복 발행(법칙 1에 의해 무해)임을 근거로 수용한다.
+7. **드레이너 간 경합을 PGlite가 재현할 수 없다**(§15). 락이 불변식을 지키지 않으므로 최악의 실패 모드는 중복 발행(법칙 1에 의해 무해)이고, 그 근거로 수용한다.
 8. **아웃박스 드레인이 스케줄러에 묶인다.** `SCHEDULER_ENABLED=false`인 프로세스는 `notify()` 경로로만 드레인하므로, 최소 한 프로세스가 스케줄러를 켜야 한다는 운영 조건이 생긴다(§11.4). 이 조건을 README에 적고, 위반 시 조용히 지연되는 대신 눈에 띄도록 미발행 row 수를 메트릭으로 노출할지 검토한다.
 9. **`BigInt` id.** `OutboxEvent.id`가 `BigInt`라 Prisma가 JS `bigint`를 돌려준다. 로깅·직렬화 경로에서 `JSON.stringify`가 던지므로 드레이너 내부에 갇히도록 주의한다.
 
