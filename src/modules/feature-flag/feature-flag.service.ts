@@ -2,7 +2,12 @@ import type { FeatureFlag } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { uow } from '../../db/uow.js';
 import type { Clock } from '../../foundation/clock.js';
-import { planFlagUpsert, purgeCutoff } from './feature-flag.core.js';
+import {
+  type FlagDriftReport,
+  planFlagUpsert,
+  purgeCutoff,
+  reconcileFlagNames,
+} from './feature-flag.core.js';
 import * as flagRepo from './feature-flag.repo.js';
 
 /**
@@ -25,7 +30,13 @@ export interface UpsertFlagInput {
   disableAfter?: Date | null;
 }
 
-export function createFeatureFlagService(db: Db, clock: Clock) {
+/**
+ * `declaredNames` is the code catalog — the flag-registry's keys — injected in
+ * the composition root exactly as `clock` is: the job delivery layer may not
+ * import the flag facade (lint), and the service itself must stay below the
+ * registry, so the names arrive here as plain data.
+ */
+export function createFeatureFlagService(db: Db, clock: Clock, declaredNames: readonly string[]) {
   return {
     /**
      * Creates or updates the LIVE flag named `input.name`: if a live row exists it
@@ -74,6 +85,19 @@ export function createFeatureFlagService(db: Db, clock: Clock) {
       const cutoff = purgeCutoff(opts.now ?? clock.now(), opts.retentionDays); // decide (core)
       const { count } = await uow.run(db, (tx) => flagRepo.purgeDeletedBefore(tx, cutoff)); // execute
       return count;
+    },
+
+    /**
+     * Reports code↔store drift: live rows no registry entry declares, and
+     * declared names whose only rows are soft-deleted (killed in the DB, still
+     * gated in code). Read-only — the purge job runs it BEFORE the purge, while
+     * the soft-deleted rows that witness a kill still exist (see
+     * `reconcileFlagNames` for why the ordering matters). The decision is the
+     * core's; this reads the names and hands them over.
+     */
+    async reconcile(): Promise<FlagDriftReport> {
+      const rows = await uow.run(db, (tx) => flagRepo.listNames(tx)); // read
+      return reconcileFlagNames(rows, declaredNames); // decide (core)
     },
   };
 }

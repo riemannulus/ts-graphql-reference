@@ -35,8 +35,8 @@ export function buildScheduler(options: BuildSchedulerOptions): Scheduler {
   const { services } = options;
 
   const schedules: JobSchedule[] = [
-    ...registerFeatureFlagJobs(agenda, services.featureFlag),
-    ...registerPointJobs(agenda, services.point),
+    ...registerFeatureFlagJobs(agenda, services.featureFlag, options.logger),
+    ...registerPointJobs(agenda, services.point, options.logger),
   ];
 
   return {

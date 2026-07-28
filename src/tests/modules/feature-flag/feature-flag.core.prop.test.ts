@@ -7,10 +7,17 @@ import {
   planFlagUpsert,
   PURGE_RETENTION_DAYS,
   purgeCutoff,
+  reconcileFlagNames,
   STAGES,
   UnknownFlagStageError,
 } from '../../../modules/feature-flag/feature-flag.core.js';
-import { arbFlagRow, arbInstant, arbStage } from './feature-flag.arbitraries.js';
+import {
+  arbDeclaredNames,
+  arbFlagNameRows,
+  arbFlagRow,
+  arbInstant,
+  arbStage,
+} from './feature-flag.arbitraries.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const arbRetentionDays = fc.integer({ min: 0, max: 3650 });
@@ -175,5 +182,63 @@ describe('purgeCutoff', () => {
 
   test.prop([arbInstant])('defaults to the PURGE_RETENTION_DAYS window', (now) => {
     expect(purgeCutoff(now).getTime()).toBe(purgeCutoff(now, PURGE_RETENTION_DAYS).getTime());
+  });
+});
+
+// The code↔store drift reconciliation as laws over arbitrary worlds: rows drawn
+// from a small name pool (so the store and the catalog intersect often) against
+// an arbitrary declared catalog.
+describe('reconcileFlagNames', () => {
+  test.prop([arbFlagNameRows, arbDeclaredNames])(
+    'an orphan is exactly a live name outside the catalog',
+    (rows, declared) => {
+      const { orphanLive } = reconcileFlagNames(rows, declared);
+      const live = new Set(rows.filter((r) => r.deletedAt === null).map((r) => r.name));
+      const expected = [...live].filter((n) => !declared.includes(n)).toSorted();
+      expect(orphanLive).toEqual(expected);
+    },
+  );
+
+  test.prop([arbFlagNameRows, arbDeclaredNames])(
+    'a killed-but-declared name is declared, stored, and has no live row',
+    (rows, declared) => {
+      const { killedButDeclared } = reconcileFlagNames(rows, declared);
+      const live = new Set(rows.filter((r) => r.deletedAt === null).map((r) => r.name));
+      const stored = new Set(rows.map((r) => r.name));
+      for (const name of killedButDeclared) {
+        expect(declared).toContain(name);
+        expect(stored.has(name)).toBe(true);
+        expect(live.has(name)).toBe(false);
+      }
+    },
+  );
+
+  test.prop([arbFlagNameRows, arbDeclaredNames])(
+    'the two lists never overlap (a name cannot be both orphaned and declared)',
+    (rows, declared) => {
+      const { orphanLive, killedButDeclared } = reconcileFlagNames(rows, declared);
+      expect(orphanLive.filter((n) => killedButDeclared.includes(n))).toEqual([]);
+    },
+  );
+
+  test.prop([arbDeclaredNames])(
+    'a declared name with no rows at all is reported in neither list (the normal pre-config state)',
+    (declared) => {
+      expect(reconcileFlagNames([], declared)).toEqual({ orphanLive: [], killedButDeclared: [] });
+    },
+  );
+
+  it('separates the three worlds: orphan live row, killed declared name, healthy declared name', () => {
+    const t = new Date(1_700_000_000_000);
+    const rows = [
+      { name: 'orphan', deletedAt: null },
+      { name: 'killed', deletedAt: t },
+      { name: 'healthy', deletedAt: null },
+      { name: 'healthy', deletedAt: t }, // an old soft-deleted row does not mask the live one
+    ];
+    expect(reconcileFlagNames(rows, ['killed', 'healthy', 'unconfigured'])).toEqual({
+      orphanLive: ['orphan'],
+      killedButDeclared: ['killed'],
+    });
   });
 });

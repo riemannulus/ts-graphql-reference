@@ -7,14 +7,25 @@ export const FEATURE_FLAG_PURGE_JOB = 'feature-flag:purge-deleted';
 /**
  * The feature-flag module's scheduled delivery — a `jobs/*.job.ts` file, the
  * peer of `schemas/` and `routes/`. Like an HTTP route (`registerGoogleOAuth`),
- * the registrar receives its SERVICE, never a db handle, and the handler is
- * THIN: it delegates the retention decision and the delete to the service, which
- * reads `now` from the injected clock (CONVENTIONS §10 — time enters through the
+ * the registrar receives its SERVICE (plus the delivery layer's logger — its
+ * `app.log`), never a db handle, and the handler is THIN: it delegates the
+ * drift report and the retention decision + delete to the service, which reads
+ * `now` from the injected clock (CONVENTIONS §10 — time enters through the
  * clock seam, exactly as a resolver never mints its own `new Date()`). It DEFINES
  * the handler and RETURNS the schedule for `scheduler.ts` to apply.
  */
-export const registerFeatureFlagJobs: JobRegistrar<FeatureFlagService> = (agenda, service) => {
+export const registerFeatureFlagJobs: JobRegistrar<FeatureFlagService> = (agenda, service, logger) => {
   defineJob(agenda, FEATURE_FLAG_PURGE_JOB, async () => {
+    // Reconcile BEFORE purging: a soft-deleted row is the only witness that a
+    // flag still declared in code was killed in the DB, and the purge erases
+    // exactly those rows. Drift is a WARNING, not a failure — the sweep must
+    // still run — surfaced through the delivery layer's logger, while the
+    // durable enforcement of "retire the code too" is the registry's `removeBy`
+    // deadline (flag-hygiene.test.ts).
+    const drift = await service.reconcile();
+    if (drift.orphanLive.length > 0 || drift.killedButDeclared.length > 0) {
+      logger?.warn({ job: FEATURE_FLAG_PURGE_JOB, ...drift }, 'feature-flag code/store drift');
+    }
     await service.purgeDeleted();
   });
   // Daily at 03:00 KST — a low-traffic window for a housekeeping sweep. The

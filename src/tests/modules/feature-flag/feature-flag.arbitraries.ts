@@ -29,3 +29,17 @@ export const arbFlagRow: fc.Arbitrary<FlagRow> = fc.record({
   disableAfter: arbNullableInstant,
   deletedAt: arbNullableInstant,
 });
+
+/** A flag name from a SMALL pool, so stored rows and the declared catalog
+ * overlap often — reconcileFlagNames' interesting cases are the intersections. */
+export const arbFlagName: fc.Arbitrary<string> = fc.constantFrom('a', 'b', 'c', 'd', 'e');
+
+/** A stored-rows world: names from the pool (repeats allowed — one live row can
+ * coexist with soft-deleted rows of the same name), each live or soft-deleted. */
+export const arbFlagNameRows = fc.array(
+  fc.record({ name: arbFlagName, deletedAt: arbNullableInstant }),
+  { maxLength: 12 },
+);
+
+/** A declared catalog: distinct names from the same pool. */
+export const arbDeclaredNames = fc.uniqueArray(arbFlagName, { maxLength: 5 });

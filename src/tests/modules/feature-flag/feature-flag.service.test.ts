@@ -8,10 +8,13 @@ import { systemClock } from '../../../foundation/clock.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
 
 // The admin write side against the test DB: create, in-place update (one live row
-// per name), recreate-by-name after a soft delete, soft delete, and the core's
-// validation surfacing as domain errors that write nothing.
+// per name), recreate-by-name after a soft delete, soft delete, the core's
+// validation surfacing as domain errors that write nothing, and the code↔store
+// drift report. DECLARED plays the flag registry's keys (injected as data in the
+// composition root; a fixture catalog here, like the reader tests' fixture specs).
 const prisma = await makeTestPrisma();
-const flags = createFeatureFlagService({ rw: prisma, ro: prisma }, systemClock);
+const DECLARED = ['declaredHealthy', 'declaredKilled', 'declaredUnconfigured'];
+const flags = createFeatureFlagService({ rw: prisma, ro: prisma }, systemClock, DECLARED);
 
 beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());
@@ -106,5 +109,38 @@ describe('FeatureFlagService.purgeDeleted', () => {
 
     expect(await flags.purgeDeleted({ now, retentionDays: 30 })).toBe(0); // 11d < 30d → kept
     expect(await flags.purgeDeleted({ now, retentionDays: 7 })).toBe(1); // 11d ≥ 7d → purged
+  });
+});
+
+describe('FeatureFlagService.reconcile', () => {
+  const killedAt = new Date('2026-06-01T00:00:00Z');
+
+  it('reports live rows outside the catalog and declared names whose rows are all soft-deleted', async () => {
+    await prisma.featureFlag.create({ data: { name: 'orphan', stage: 'PROD', deletedAt: null } });
+    await prisma.featureFlag.create({ data: { name: 'declaredKilled', stage: 'PROD', deletedAt: killedAt } });
+    // A live row plus an older soft-deleted one — healthy, reported in neither list.
+    await prisma.featureFlag.create({ data: { name: 'declaredHealthy', stage: 'PROD', deletedAt: null } });
+    await prisma.featureFlag.create({ data: { name: 'declaredHealthy', stage: 'PROD', deletedAt: killedAt } });
+
+    expect(await flags.reconcile()).toEqual({
+      orphanLive: ['orphan'],
+      killedButDeclared: ['declaredKilled'],
+    });
+  });
+
+  it('reports nothing when the store matches the catalog (unconfigured names included)', async () => {
+    // `declaredUnconfigured` has no rows at all: the flag serves its registry
+    // default, which is the normal pre-configuration state — not drift.
+    await prisma.featureFlag.create({ data: { name: 'declaredHealthy', stage: 'PROD', deletedAt: null } });
+
+    expect(await flags.reconcile()).toEqual({ orphanLive: [], killedButDeclared: [] });
+  });
+
+  it('loses the killed-flag witness once the purge runs — why the job reconciles first', async () => {
+    await prisma.featureFlag.create({ data: { name: 'declaredKilled', stage: 'PROD', deletedAt: killedAt } });
+
+    expect((await flags.reconcile()).killedButDeclared).toEqual(['declaredKilled']);
+    await flags.purgeDeleted({ now: new Date('2026-08-01T00:00:00Z') }); // past retention
+    expect((await flags.reconcile()).killedButDeclared).toEqual([]); // indistinguishable from unconfigured
   });
 });

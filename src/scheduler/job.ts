@@ -1,4 +1,5 @@
 import type { Agenda } from 'agenda';
+import type { SchedulerLogger } from './agenda.js';
 
 /**
  * Defines an async job handler on agenda. agenda's `define` is overloaded — a
@@ -51,10 +52,17 @@ export interface JobSchedule {
 
 /**
  * A job module's registrar: DEFINE the handlers on `agenda`, RETURN the
- * schedules to apply. `Service` is the ONE dependency it receives — its own
- * module's service, injected at assembly time — never a db handle, exactly as an
- * HTTP route receives its service at registration (`registerGoogleOAuth`). The
- * handler stays thin: it owns the clock and delegates the decision + write to
- * the service.
+ * schedules to apply. `Service` is the ONE domain dependency it receives — its
+ * own module's service, injected at assembly time — never a db handle, exactly
+ * as an HTTP route receives its service at registration (`registerGoogleOAuth`).
+ * The optional `logger` is the delivery layer's observability port (the same
+ * sink agenda's lifecycle events use; an HTTP route has `app.log` the same way)
+ * for a handler whose OUTPUT is a report rather than a write — a registrar that
+ * only delegates writes ignores it. The handler stays thin: it delegates the
+ * decision + write to the service.
  */
-export type JobRegistrar<Service> = (agenda: Agenda, service: Service) => JobSchedule[];
+export type JobRegistrar<Service> = (
+  agenda: Agenda,
+  service: Service,
+  logger?: SchedulerLogger,
+) => JobSchedule[];
