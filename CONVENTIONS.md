@@ -472,9 +472,33 @@ misconfigured backend fails every gate closed.
 | --- | --- | --- |
 | Kill / rollout gate | one `flags.assert.x()` line | machinery (throws `FeatureDisabledError` → `UNAVAILABLE`) |
 | Rule change (a limit, a cutoff) | one read in the read phase, passed as data | the pure **core** (a property test then covers both sides for free) |
-| Implementation swap | a typed `Record<Variant, Impl>` lookup | the **type** (exhaustiveness), never an `if`-chain |
+| Swapping ONE implementation for another | one **gate** read, passed as data | the pure **core**, selecting between two named functions |
+| Choosing among 3+ (or a growing set of) implementations | a typed `Record<Variant, Impl>` lookup | the **type** (exhaustiveness), never an `if`-chain |
 
-All three modes ship as worked examples:
+**Reach for `variant` only when a boolean cannot say it.** The common rollout —
+replacing one implementation with a better one — is a `gate`, not a `variant`: read
+the boolean, hand it to the core, and let the core pick between two named functions.
+
+```ts
+const useNewPlanner = await flags.newSpendPlanner();          // service: read as data
+const plan = (useNewPlanner ? planSpendV2 : planSpend)(world, amount); // core: select
+```
+
+That is still "no `if`-chain" — it selects a value, and deleting the flag collapses
+it to one call. `variant` + an exhaustive `Record` earns its extra declaration at
+three choices, or at two that will become three; below that it is ceremony, and
+ceremony is what makes people skip the flag and branch in the shell instead.
+
+**A variant set is declared ONCE, in the core that owns the implementations.** The
+registry imports that `as const` list (`welcomeVariant` imports `WELCOME_VARIANTS`)
+instead of repeating the literal. Two parallel literals are only half-guarded: a
+variant added to the registry alone fails at the call site, but one added to the
+core alone type-checks fine and becomes an implementation the flag can never
+select. Sharing the array makes both impossible, and adding a variant a single-file
+edit. The edge runs registry → core only; a core may not import the flag facade
+(lint), which is what keeps it acyclic.
+
+All modes ship as worked examples:
 
 - **Mode 2 (gate):** `point.transfer` calls `flags.assert.pointTransfer()` as its
   first line — in the **service**, not the resolver, because the service is the

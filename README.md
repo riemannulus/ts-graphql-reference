@@ -309,6 +309,10 @@ one-line-in-the-service example (no `if`-sprawl):
   passes the boolean into the pure core (`planSpend`), which owns the branch;
 - **implementation swap** — `onboarding.register` reads `flags.welcomeVariant()` and
   the core selects the welcome-post builder from an exhaustive `Record<Variant, …>`.
+  A `variant` flag is for THREE-or-more choices; swapping one implementation for
+  another is a plain `gate` whose boolean the core uses to pick between two named
+  functions (CONVENTIONS §9). The variant SET is declared once, in the core that
+  owns the implementations, and the registry imports it.
 
 Layers that must NOT read a flag — core, repo, schema — are lint-blocked from
 importing the facade (a core receives a flag value as DATA); a service may import the

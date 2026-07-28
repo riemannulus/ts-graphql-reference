@@ -7,7 +7,10 @@
  *
  * Like `flags.ts`, this module stays pure — no I/O, no SDK, no framework deps
  * (lint-enforced). It is the `lock-registry.ts` analogue: the growing catalog on
- * top of fixed machinery.
+ * top of fixed machinery. It MAY import a `as const` value set from a pure core
+ * (see `welcomeVariant`) so a variant list is single-sourced where its
+ * implementations live; that edge is safe in one direction only, and it is — a
+ * core is lint-banned from importing the flag facade, so no cycle can form.
  *
  * Every entry declares its LIFECYCLE (see `flags.ts`): `permanent` for a flag
  * the registry may keep indefinitely, `temporary('YYYY-MM-DD')` for one that
@@ -18,6 +21,7 @@
  * far ahead so the worked examples stay green; a real app sets the real
  * rollout/experiment deadline.
  */
+import { WELCOME_VARIANTS } from '../modules/onboarding/onboarding.content.js';
 import { defineFlags, gate, permanent, temporary, variant, type FlagReader as FlagReaderOf } from './flags.js';
 
 /** The ONLY declaration of the app's flags. Add an entry to gate a new capability. */
@@ -49,15 +53,21 @@ export const FLAGS = defineFlags({
   pointTransferPreferFree: gate(false, 'Spend free points before paid ones on a transfer.', temporary('2030-12-31')),
 
   /**
-   * MODE 3 — implementation swap. Selects which welcome post a new user receives;
-   * the onboarding core picks the builder from an exhaustive `Record<Variant, …>`,
-   * so a new variant without an implementation is a compile error. Default
-   * `classic` = the original copy. Read via `flags.welcomeVariant()`.
+   * MODE 3 — implementation swap across 3+ choices. Selects which welcome post a
+   * new user receives; the onboarding core picks the builder from an exhaustive
+   * `Record<Variant, …>`, so a new variant without an implementation is a compile
+   * error. Default `classic` = the original copy. Read via `flags.welcomeVariant()`.
+   *
+   * The variant SET is not re-declared here — it is `WELCOME_VARIANTS`, imported
+   * from the core that owns the implementations. One literal, one place: adding a
+   * variant is a single-file edit (the list + its builder) and the flag follows,
+   * where two parallel literals would let the core grow a variant the registry can
+   * never select (an unreachable implementation the compiler cannot see).
    *
    * PERMANENT: a long-lived content knob (seasonal copy comes and goes), not a
    * rollout — there is no future day on which this selector is "done".
    */
-  welcomeVariant: variant(['classic', 'festive', 'minimal'], 'classic', 'Welcome-post copy variant.', permanent),
+  welcomeVariant: variant(WELCOME_VARIANTS, 'classic', 'Welcome-post copy variant.', permanent),
 });
 
 /** The registered flag names, derived from the registry. */
