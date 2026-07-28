@@ -4,9 +4,13 @@ export interface WelcomePostContent {
 }
 
 /**
- * The welcome-post copy variants. This is the set the `welcomeVariant` feature
- * flag chooses from (kept in sync with the flag's declared variants — the service
- * call site is where a mismatch surfaces as a type error).
+ * The welcome-post copy variants — the SINGLE declaration of the set, owned by
+ * the module that owns the implementations below. `flag-registry.ts` imports THIS
+ * list for the `welcomeVariant` spec rather than repeating the literal, so the
+ * flag's choices and the builders can never disagree: adding a variant here makes
+ * the record below non-exhaustive (a compile error in this file) and the flag
+ * picks the new choice up for free. The dependency runs registry → core only; a
+ * core may not import the flag facade (lint), which is what keeps it acyclic.
  */
 export const WELCOME_VARIANTS = ['classic', 'festive', 'minimal'] as const;
 export type WelcomeVariant = (typeof WELCOME_VARIANTS)[number];
