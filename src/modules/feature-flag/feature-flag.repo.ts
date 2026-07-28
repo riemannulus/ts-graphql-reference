@@ -1,5 +1,6 @@
 import type { FeatureFlag } from '@prisma/client';
 import type { DbClient, ReadDbClient } from '../../db/db.js';
+import type { FlagNameRow } from './feature-flag.core.js';
 
 /**
  * Feature-flag persistence. The provider's live-row lookup (a read) and the admin
@@ -61,4 +62,14 @@ export function softDelete(db: DbClient, id: number, deletedAt: Date): Promise<F
  */
 export function purgeDeletedBefore(db: DbClient, cutoff: Date): Promise<{ count: number }> {
   return db.featureFlag.deleteMany({ where: { deletedAt: { not: null, lte: cutoff } } });
+}
+
+/**
+ * Every stored row's name + liveness — the whole input of the drift
+ * reconciliation (`reconcileFlagNames`). Soft-deleted rows are included on
+ * purpose: they are what distinguishes a KILLED flag from a never-configured
+ * one, until the purge removes them.
+ */
+export function listNames(db: ReadDbClient): Promise<FlagNameRow[]> {
+  return db.featureFlag.findMany({ select: { name: true, deletedAt: true } });
 }

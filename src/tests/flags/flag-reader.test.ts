@@ -1,7 +1,7 @@
 import type { Client } from '@openfeature/server-sdk';
 import { describe, expect, it } from 'vitest';
 import { createFlagReader } from '../../flags/flag-reader.js';
-import { gate, variant } from '../../flags/flags.js';
+import { gate, permanent, variant } from '../../flags/flags.js';
 import { FeatureDisabledError } from '../../foundation/errors.js';
 
 // The client-binding reader over a fixture registry (so the machinery is proven
@@ -22,8 +22,8 @@ function fakeClient(bools: Record<string, boolean>, strings: Record<string, stri
   return { client, calls };
 }
 
-const SPECS = { alpha: gate(false, 'alpha gate'), beta: gate(true, 'beta gate') };
-const VARIANT_SPECS = { theme: variant(['light', 'dark'], 'light', 'ui theme') };
+const SPECS = { alpha: gate(false, 'alpha gate', permanent), beta: gate(true, 'beta gate', permanent) };
+const VARIANT_SPECS = { theme: variant(['light', 'dark'], 'light', 'ui theme', permanent) };
 
 describe('createFlagReader', () => {
   it('reads a gate through the client and returns its value', async () => {

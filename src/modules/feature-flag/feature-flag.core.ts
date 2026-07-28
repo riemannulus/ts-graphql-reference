@@ -127,3 +127,51 @@ export const PURGE_RETENTION_DAYS = 30;
 export function purgeCutoff(now: Date, retentionDays: number = PURGE_RETENTION_DAYS): Date {
   return addDays(now, -retentionDays);
 }
+
+/** The name + liveness of one stored flag row — all the drift reconciliation reads. */
+export interface FlagNameRow {
+  name: string;
+  deletedAt: Date | null;
+}
+
+/**
+ * Code↔store drift, both directions. `orphanLive`: names with a LIVE row that no
+ * registry entry declares — no reader can reach them (a typo, or rows left after
+ * the code-level flag removal). `killedButDeclared`: declared names whose only
+ * rows are soft-deleted — the flag was killed in the DB but its gate still ships
+ * in code (a code-cleanup candidate). A declared name with NO rows is in neither
+ * list: serving the registry default is the normal pre-configuration state.
+ */
+export interface FlagDriftReport {
+  orphanLive: string[];
+  killedButDeclared: string[];
+}
+
+/**
+ * Compares the stored flag names against the code catalog (`declared` — the
+ * registry's keys, arriving as DATA the way a flag value reaches a core). Pure
+ * and total; both lists are name-sorted for stable logs. Runs BEFORE the purge
+ * in the scheduled job on purpose: a soft-deleted row is the only witness that a
+ * declared flag was killed, and the purge erases exactly that witness — after
+ * it, a killed flag is indistinguishable from a never-configured one, which is
+ * why the durable enforcement is the registry's `removeBy` deadline and this
+ * report is best-effort observability inside the retention window.
+ */
+export function reconcileFlagNames(
+  rows: readonly FlagNameRow[],
+  declared: readonly string[],
+): FlagDriftReport {
+  const declaredSet = new Set(declared);
+  const live = new Set<string>();
+  const stored = new Set<string>();
+  for (const row of rows) {
+    stored.add(row.name);
+    if (row.deletedAt === null) live.add(row.name);
+  }
+  return {
+    orphanLive: [...live].filter((name) => !declaredSet.has(name)).toSorted(),
+    killedButDeclared: [...stored]
+      .filter((name) => !live.has(name) && declaredSet.has(name))
+      .toSorted(),
+  };
+}

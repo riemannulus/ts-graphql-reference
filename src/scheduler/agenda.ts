@@ -11,6 +11,7 @@ import { type ErrorReporter, noopErrorReporter } from '../foundation/error-repor
  */
 export interface SchedulerLogger {
   info(obj: object, msg?: string): void;
+  warn(obj: object, msg?: string): void;
   error(obj: object, msg?: string): void;
 }
 

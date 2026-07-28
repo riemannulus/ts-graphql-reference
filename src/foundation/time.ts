@@ -55,6 +55,18 @@ export function addDays(instant: Date, days: number): Date {
 }
 
 /**
+ * The KST calendar date containing `instant`, as an ISO `YYYY-MM-DD` string —
+ * the "what day is it, for the business" question as a pure function. ISO
+ * calendar dates compare lexicographically, so a caller can hold a day-granular
+ * deadline as a plain string and test it with `<`/`>` (the flag-hygiene check
+ * does exactly this against a spec's `removeBy`). Zone-independent like
+ * `kstEndOfDay`: shift +9h in UTC mode and read the UTC calendar.
+ */
+export function kstCalendarDate(instant: Date): string {
+  return dayjs.utc(instant).add(KST_UTC_OFFSET_HOURS, 'hour').format('YYYY-MM-DD');
+}
+
+/**
  * The last instant of the KST calendar day that contains `instant`
  * (23:59:59.999 at UTC+9). An inclusive, day-granular deadline: a thing dated
  * within a KST day is still "in time" until this instant passes. Zone-independent

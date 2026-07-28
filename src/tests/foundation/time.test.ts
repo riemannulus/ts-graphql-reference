@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest';
 import { describe, expect, it } from 'vitest';
-import { addDays, kstEndOfDay, KST_TIME_ZONE, KST_UTC_OFFSET_HOURS } from '../../foundation/time.js';
+import { addDays, kstCalendarDate, kstEndOfDay, KST_TIME_ZONE, KST_UTC_OFFSET_HOURS } from '../../foundation/time.js';
 
 // A pure-arithmetic oracle for "end of the KST day", independent of dayjs: shift
 // +9h into UTC-wall-ms, floor to the UTC day, take that day's last ms, shift back.
@@ -73,6 +73,24 @@ describe('time.kstEndOfDay', () => {
     fc.date({ min: new Date('2000-01-01T00:00:00Z'), max: new Date('2100-01-01T00:00:00Z') }),
   ])('matches a pure-arithmetic KST-end-of-day oracle for every instant', (instant) => {
     expect(kstEndOfDay(instant).getTime()).toBe(kstEndOfDayOracle(instant));
+  });
+});
+
+describe('time.kstCalendarDate', () => {
+  it('names the KST day containing the instant (the UTC-vs-KST trap)', () => {
+    // 2026-01-16T15:00:00Z is already 2026-01-17 00:00 KST.
+    expect(kstCalendarDate(new Date('2026-01-16T15:00:00Z'))).toBe('2026-01-17');
+    expect(kstCalendarDate(new Date('2026-01-16T14:59:59.999Z'))).toBe('2026-01-16');
+  });
+
+  test.prop([
+    fc.date({ min: new Date('2000-01-01T00:00:00Z'), max: new Date('2100-01-01T00:00:00Z') }),
+  ])('agrees with kstEndOfDay: every instant shares its day-name with its day-end', (instant) => {
+    expect(kstCalendarDate(kstEndOfDay(instant))).toBe(kstCalendarDate(instant));
+    // ...and the next millisecond starts the next day.
+    expect(kstCalendarDate(new Date(kstEndOfDay(instant).getTime() + 1))).not.toBe(
+      kstCalendarDate(instant),
+    );
   });
 });
 

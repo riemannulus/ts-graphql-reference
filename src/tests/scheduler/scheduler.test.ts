@@ -12,15 +12,33 @@ import { fakeAgendaBackend } from '../support/agenda-backend-fake.js';
 // the SDL snapshot: a module dropped from buildScheduler's register list, or a
 // renamed job / changed interval, fails loudly here.
 
-/** A services container whose only real members are the two the jobs call. */
+/** A services container whose only real members are the ones the jobs call. */
 function servicesWith(overrides: {
   purgeDeleted?: (opts?: { now?: Date; retentionDays?: number }) => Promise<number>;
+  reconcile?: () => Promise<{ orphanLive: string[]; killedButDeclared: string[] }>;
   verifyBalances?: () => Promise<{ usersChecked: number }>;
 }): Services {
   return {
-    featureFlag: { purgeDeleted: overrides.purgeDeleted ?? (() => Promise.resolve(0)) },
+    featureFlag: {
+      purgeDeleted: overrides.purgeDeleted ?? (() => Promise.resolve(0)),
+      reconcile:
+        overrides.reconcile ?? (() => Promise.resolve({ orphanLive: [], killedButDeclared: [] })),
+    },
     point: { verifyBalances: overrides.verifyBalances ?? (() => Promise.resolve({ usersChecked: 0 })) },
   } as unknown as Services;
+}
+
+/** A recording SchedulerLogger (the scheduler analogue of the fake OAuth client). */
+function recordingLogger() {
+  const warnings: Array<{ obj: object; msg?: string }> = [];
+  return {
+    warnings,
+    logger: {
+      info: () => {},
+      warn: (obj: object, msg?: string) => warnings.push({ obj, msg }),
+      error: () => {},
+    },
+  };
 }
 
 /** Runs a defined job's handler once (promise-style; job/done args unused here). */
@@ -46,18 +64,55 @@ describe('buildScheduler', () => {
     ]);
   });
 
-  it('the feature-flag purge handler delegates to the service', async () => {
-    const purgeDeleted = vi.fn(() => Promise.resolve(0));
+  it('the feature-flag purge handler reconciles first, then delegates the purge', async () => {
+    const calls: string[] = [];
+    const reconcile = vi.fn(() => {
+      calls.push('reconcile');
+      return Promise.resolve({ orphanLive: [], killedButDeclared: [] });
+    });
+    const purgeDeleted = vi.fn(() => {
+      calls.push('purge');
+      return Promise.resolve(0);
+    });
     const scheduler = buildScheduler({
-      services: servicesWith({ purgeDeleted }),
+      services: servicesWith({ purgeDeleted, reconcile }),
       backend: fakeAgendaBackend(),
     });
 
     await runJob(scheduler, FEATURE_FLAG_PURGE_JOB);
 
+    // Reconcile BEFORE purge: the purge erases the soft-deleted rows that
+    // witness a killed-but-still-declared flag.
+    expect(calls).toEqual(['reconcile', 'purge']);
     // Delegates without minting a clock: the service reads `now` from the
     // injected clock, so the handler passes no arguments.
     expect(purgeDeleted).toHaveBeenCalledWith();
+  });
+
+  it('the purge handler warns on code/store drift and stays silent without it', async () => {
+    const drifting = servicesWith({
+      reconcile: () =>
+        Promise.resolve({ orphanLive: ['typoName'], killedButDeclared: ['oldGate'] }),
+    });
+    const { warnings, logger } = recordingLogger();
+    const scheduler = buildScheduler({ services: drifting, backend: fakeAgendaBackend(), logger });
+
+    await runJob(scheduler, FEATURE_FLAG_PURGE_JOB);
+    expect(warnings).toEqual([
+      {
+        obj: { job: FEATURE_FLAG_PURGE_JOB, orphanLive: ['typoName'], killedButDeclared: ['oldGate'] },
+        msg: 'feature-flag code/store drift',
+      },
+    ]);
+
+    const clean = recordingLogger();
+    const quiet = buildScheduler({
+      services: servicesWith({}),
+      backend: fakeAgendaBackend(),
+      logger: clean.logger,
+    });
+    await runJob(quiet, FEATURE_FLAG_PURGE_JOB);
+    expect(clean.warnings).toEqual([]);
   });
 
   it('the point verify handler delegates to the service', async () => {

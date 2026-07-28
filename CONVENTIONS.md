@@ -453,8 +453,8 @@ I/O:
 - `flags/flags.ts` — machinery: the flag spec kinds, `defineFlags`, and the derived
   `FlagReader` type. Imports nothing (not even the SDK).
 - `flags/flag-registry.ts` — the ONE place that says WHAT is flag-gated (`FLAGS`):
-  each flag's kind, its default, and its JSDoc. Add a flag here; the machinery is
-  fixed.
+  each flag's kind, its default, its lifecycle, and its JSDoc. Add a flag here;
+  the machinery is fixed.
 - `flags/flag-reader.ts` — the `uow.ts` analogue: the I/O shell that binds the
   registry to the OpenFeature client per request. The only facade file that imports
   the SDK. Reads are **memoized per request**, so a flag read in a resolver and
@@ -490,6 +490,28 @@ The reader always arrives as a per-call argument (`ctx.flags`), exactly as `ctx.
 reaches a repo — a singleton service never stores request state. A business flag
 `if` appearing in a service body is the same smell as any leaked decision: push the
 branch to the core (as data) or to the gate.
+
+**Lifecycle — the code-level purge.** A flag lives in two places, and each needs a
+way to die. The DB half has one (live → soft-deleted → hard-deleted after
+`PURGE_RETENTION_DAYS` by the `feature-flag:purge-deleted` job); the CODE half —
+the registry entry and its call sites — gets its own, or it lives forever. Every
+spec therefore declares `permanent` (a kill switch or ops toggle, allowed to stay;
+say why in its doc) or `temporary('YYYY-MM-DD')` (a rollout/experiment flag that
+must be DELETED from the registry by that KST day). `flag-hygiene.test.ts` fails
+the build once a temporary flag outlives its `removeBy` (`expiredFlags`, the
+`purgeCutoff` analogue) — and deleting the entry turns every call site into a
+compile error, so the compiler drives the code purge the way the job drives the DB
+one. This matters doubly here because a gate's default is `false`: a fully
+rolled-out feature stays gated on a live DB row until the code stops asking, so
+removing the gate IS the last step of the rollout. The purge job also runs
+`featureFlag.reconcile()` BEFORE sweeping (a soft-deleted row is the only witness
+that a declared flag was killed — the purge erases exactly that witness), logging
+live rows no entry declares (`orphanLive`) and declared names whose only rows are
+soft-deleted (`killedButDeclared`) through the scheduler's logger. The registry's
+keys reach the service as data from the composition root — the job layer is
+lint-banned from the flag facade, like every layer below delivery. The reference's
+`removeBy` dates are set far ahead so the worked examples stay green; a real app
+sets real deadlines.
 
 **Enforcement** (lint, like the locks layer): the core, repo, and schema layers
 cannot import the facade at all (`flags`/`flag-registry`/`flag-reader` — all three
