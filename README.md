@@ -193,6 +193,11 @@ src/
 > shape of the module graph is enforced separately by dependency-cruiser
 > (`pnpm check:graph`): no runtime import cycles, and cross-module
 > dependencies only from the explicit allowlist in `.dependency-cruiser.mjs`.
+> Where a change lives at module granularity — extend an existing module,
+> create a new one, or add a cross-module edge — is CONVENTIONS §11; PRs that
+> change the graph go through the edge audit in the PR template. All four
+> checks (`typecheck`, `lint`, `check:graph`, `test`) run in CI
+> (`.github/workflows/check.yaml`).
 
 ### The layers in one request
 
