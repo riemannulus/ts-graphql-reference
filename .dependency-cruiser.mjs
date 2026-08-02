@@ -12,7 +12,9 @@
  *   allowlisted edges — onboarding → {user, post}, search → post,
  *   auth → user (type-only) — form a DAG by construction: user and post fall
  *   under the default ban, so they can never point back. A module-level cycle
- *   can therefore only enter by editing this file, which is the review point.
+ *   can therefore only enter by editing this file, which is the review point;
+ * - where non-module code may enter src/modules at all: only the composition
+ *   points (schema.ts, services.ts, app.ts, scheduler.ts) — CONVENTIONS §11.
  */
 
 /** @type {import('dependency-cruiser').IConfiguration} */
@@ -82,6 +84,28 @@ export default {
       severity: 'error',
       from: { path: '^src/(modules|db|flags|foundation|graphql|scheduler)/' },
       to: { path: '^src/(app|services|server)\\.ts$', dependencyTypesNot: ['type-only'] },
+    },
+    {
+      name: 'modules-enter-at-composition-points',
+      comment:
+        'Non-module code reaches src/modules only at the composition points: ' +
+        'graphql/schema.ts (register functions), services.ts (the container), ' +
+        'app.ts (routes + providers), scheduler/scheduler.ts (jobs). A Yoga ' +
+        'plugin or a db/flags/foundation helper importing a module — owner or ' +
+        'composite — would invert the architecture: modules are delivered and ' +
+        'composed, they are not libraries (CONVENTIONS §11).',
+      severity: 'error',
+      from: {
+        path: '^src/',
+        pathNot: [
+          '^src/modules/',
+          '^src/app\\.ts$',
+          '^src/services\\.ts$',
+          '^src/graphql/schema\\.ts$',
+          '^src/scheduler/scheduler\\.ts$',
+        ],
+      },
+      to: { path: '^src/modules/' },
     },
     {
       name: 'date-lib-lives-in-time-only',
