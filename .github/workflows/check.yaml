@@ -1,0 +1,29 @@
+# The four checks every PR must pass (README "Scripts", CONVENTIONS §11
+# "Enforcement"): types, layer lint, module-graph shape, tests.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm check:graph
+      # Non-UTC TZ on purpose: time.test.ts pins the KST day-boundary math
+      # against a pure-arithmetic oracle, and it must hold regardless of the
+      # server zone (CONVENTIONS §10).
+      - run: pnpm test
+        env:
+          TZ: America/New_York

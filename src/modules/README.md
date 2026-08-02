@@ -29,6 +29,24 @@ depend one way only"):
 arrowhead on `auth → user` marks the type-only edge (erased at compile time);
 solid arrowheads are runtime value imports.
 
+## Changing this graph
+
+Where a change lives — extending a module, creating a new one, or adding an
+edge above — is decided by the four-question procedure in
+[CONVENTIONS §11](../../CONVENTIONS.md#11-module-boundaries--extend-create-or-take-an-edge).
+In short: rows an existing module owns → extend that module; a new noun with
+its own invariants → a new leaf **owner** module (the default-deny rule means
+this needs no allowlist edit); a use-case composing several owners → a new
+**composite** module above them, which takes the edges. Before any edge, walk
+the coupling ladder (declared read composition → data as parameters →
+injected service → allowlisted value import) and take the weakest rung that
+works.
+
+A new edge enters only through a PR that extends the allowlist in
+`.dependency-cruiser.mjs`, adds a row to the table above (and keeps it a
+DAG), and regenerates the SVGs below — the PR template's edge-audit checklist
+walks through it.
+
 <details>
 <summary>File-level dependency graph (every file under <code>src/modules</code>)</summary>
 

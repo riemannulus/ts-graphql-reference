@@ -46,7 +46,8 @@ per-file lint cannot:
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
   which `import/no-cycle` cannot see — the allowlist can, and since its
   sanctioned edges form a DAG by construction, module-level acyclicity holds
-  unless the allowlist itself is edited, which is the review point.
+  unless the allowlist itself is edited, which is the review point. Whether a
+  change earns a new module or a new edge at all is §11's decision procedure.
 - **The composition root stays at the top**: nothing below `app.ts` /
   `services.ts` / `server.ts` may import them as values.
 
@@ -325,7 +326,8 @@ stays Prisma-free.
   compose the other modules' repo write functions inside it; decisions still
   come from each owning module's core. Module services depend one way only —
   enforced by the cross-module allowlist in `.dependency-cruiser.mjs`
-  (`pnpm check:graph`).
+  (`pnpm check:graph`). When a use-case earns this shape — and when a
+  cross-module edge is allowed at all — is decided by §11.
 - The schema is assembled from **one register function per module** —
   `registerXxxModule()` in that module's `schemas/index.ts`, called once in
   `schema.ts`. No side-effect imports, no import-order contract beyond
@@ -421,6 +423,10 @@ migration any environment has already applied; ship a new one.
 
 ## 8. Checklist for a new module
 
+0. Confirm the change earns a module at all (§11): rows an existing module
+   owns → extend it; a new noun → a new owner module; a use-case across
+   owners → a composite module; and walk the coupling ladder before taking
+   any cross-module edge.
 1. Model the data in `prisma/schema.prisma`; encode value sets / signs as
    CHECKs in the migration; `migrate` + `generate`.
 2. Write `<name>.repo.ts` and the schema files, compose their register
@@ -647,3 +653,147 @@ a pure-arithmetic oracle; run CI under a non-UTC `TZ` to lock it in.
 | `dayjs().kst().startOf('day')` inline; `lib/dayjs.ts` prototype patches | pure `time.ts` functions (`kstEndOfDay`, `addDays`) returning `Date` |
 | cron `reflectX(now = dayjs().kst())` default arg | service takes explicit `now` (backfill) or the injected clock (scheduled) |
 | `vi.useFakeTimers({ toFake: ['Date'] })` | `fixedClock(instant)` injected via `createServices` / `buildApp` |
+
+## 11. Module boundaries — extend, create, or take an edge?
+
+The graduation rule (§1) decides which LAYERS a module has earned; this
+section decides which MODULE a change lives in — the question every feature
+starts with, one step before §8's checklist. Every change is one of four
+answers: extend an existing module, create a new owner module, create a new
+composite module, or add a dependency edge to an existing module.
+
+**A module is its ownership.** A module owns a set of Prisma models, the
+invariants over them, and the write paths that keep those invariants true.
+Everything below follows from asking *"who owns the rows this change must
+keep consistent?"* — never from file size, team shape, or transport (§5:
+modules group by domain, not transport). Two module shapes exist, and the
+distinction organizes the whole graph (`src/modules/README.md`):
+
+- **Owner modules** own tables and their invariants and import no other
+  module: `user`, `post`, `point`, `feature-flag`. They are the graph's
+  leaves.
+- **Composite modules** own a *capability* over other modules' nouns, hold
+  few or no tables of their own, and compose owners one way from above:
+  `onboarding` (a cross-module use-case), `search` (an external index
+  hydrated through the post repo), `auth` (an external protocol over the
+  injected user service). Nothing imports a composite — it is reached only
+  from the composition points (`schema.ts`, `buildApp`, the scheduler) — and
+  the default-deny graph rule keeps that true mechanically.
+
+Code with no Prisma model and no domain rule is not a module at all: shared
+machinery lives in `foundation/` / `db/` / `flags/`. A "utils" or "common"
+module under `modules/` is a smell — it becomes an edge into everything.
+
+### The decision procedure
+
+Ask in order; the first yes wins.
+
+**Q1 — Same noun?** Does the change only read/write rows an existing module
+already owns, refining that module's invariants?
+→ **Extend that module.** The graduation rule (§1) picks the layer; §8
+steps 3–4 apply when the change brings the module's first decision. New
+attribute rows kept consistent by the owning module's plan executors stay
+with the owner (`PointBalance` is a point-owned row, not a module). A
+junction table belongs to the module whose invariant it carries and whose
+aggregate it feeds (a per-post like count would live in `post`). Litmus:
+*the module whose write paths keep the row consistent owns it.*
+
+**Q2 — New noun?** Does the change introduce a model with its own lifecycle
+and invariants — nameable without reference to an existing noun, kept
+consistent by its own writes?
+→ **New owner module, born a leaf.** The default-deny rule
+(`cross-module-deps-are-allowlisted`) bans cross-module imports for any
+module not explicitly exempted, so a new module starts with zero edges
+mechanically — creating one needs no allowlist edit, only §8's checklist.
+Read composition with existing nouns is declared from the new owner's side
+(`builder.prismaObjectField`, §2) and costs no edge.
+
+**Q3 — New capability across nouns?** Is the change a use-case whose ONE
+transaction must compose decisions or writes of two or more owner modules?
+→ **New composite module above them** (the onboarding shape): the composite
+takes the edges; the owners do not change. Never implement a workflow by
+adding an edge *between* two owners — each would eventually need the other,
+and mutual need is exactly what §5's one-way rule exists to resist.
+
+**Q4 — An existing module needs a new edge?** Only when a use-case that
+module already owns genuinely extends into rows another owner keeps:
+onboarding starts granting signup points (`onboarding → point`), a future
+coupon module's redeem must also spend points (`coupon → point`).
+→ **Extend the allowlist** by the procedure below. The edge points from the
+use-case owner down to the row owner, and must keep the module graph a DAG.
+The moment two modules want edges into EACH OTHER, the answer is never
+"allow both": lift the shared use-case into a composite above (Q3), or push
+the shared rows down into a new owner both can reach (Q2).
+
+### The coupling ladder
+
+Most "I need module X" needs no edge at all. Before answering Q2–Q4, walk
+this ladder and take the weakest rung that works — the module-graph analogue
+of the concurrency ladder (§1):
+
+| Rung | Mechanism | Edge | Worked example |
+| ---- | --------- | ---- | -------------- |
+| 0 | declared read composition: `t.relation` / `t.relationCount` / `builder.prismaObjectField` registered by the row owner (§2) | none | post counts on `User` |
+| 1 | the fact arrives as data: a parameter, a flag value, `now` | none | `planSpend` receives the prefer-free boolean |
+| 2 | the dependency arrives injected: a deps parameter or `createServices` wiring; the type via `import type` | type-only | `auth → user` |
+| 3 | value import of the owner's repo functions, taking only core-minted types (branded values / plans, §4), composed under ONE transaction | value (allowlisted) | `onboarding → {user, post}`; `search → post` (read hydration) |
+
+Rungs 0–1 are free: no graph change, no review trigger. Rung 2 keeps the
+runtime decoupled (the seam is wired once in the composition root) and is
+preferred whenever a whole use-case — not individual writes — is being
+reused. Rung 3 exists for what an injected service cannot give: one `uow`
+transaction spanning two owners' writes. Everything reached at rung 3 is
+constrained by §4 — a write carrying an invariant its signature cannot hold
+(a status transition, a cross-row rule) must NOT be reachable across the
+edge.
+
+### Changing the graph: the procedure
+
+The allowlist in `.dependency-cruiser.mjs` is the only gate an edge passes
+through, and the edit is deliberately manual — it is the review point:
+
+1. **Name the rung** in the PR description, and why the rungs below it don't
+   fit.
+2. **Extend the allowlist**: add the module to the default rule's `pathNot`
+   exemption AND give it its own `X-reaches-Y-only` rule; a rung-2 (injected)
+   edge also gets an `X-to-Y-is-type-only` rule.
+3. **Keep the DAG visible**: update the edge table in
+   `src/modules/README.md` (edge, why, kind) and confirm it stays acyclic —
+   module-level acyclicity is guaranteed by the allowlist's shape, not by
+   `no-runtime-cycles` (§1), so that table IS the proof the reviewer reads.
+4. **Regenerate the pictures** in the same PR: `pnpm graph:modules`.
+5. **Reviewer checks what no tool can** — the checklist below.
+
+### Enforcement
+
+Mechanical — CI (`.github/workflows/check.yaml`) runs `typecheck`, `lint`,
+`check:graph`, and `test` on every push and PR, so a violating PR cannot go
+green:
+
+| Rule | Enforced by |
+| --- | --- |
+| a new module is born a leaf; owners import no module | dependency-cruiser default-deny (`cross-module-deps-are-allowlisted`) — `pnpm check:graph` |
+| a composite reaches only its sanctioned targets | per-module `…-reaches-…-only` rules — `pnpm check:graph` |
+| an injected edge stays type-only | `…-is-type-only` rules — `pnpm check:graph` |
+| no runtime import cycles | `no-runtime-cycles` — `pnpm check:graph` |
+| nothing below the composition root imports it | `composition-root-is-the-top` — `pnpm check:graph` |
+| layer rules inside the module | oxlint `no-restricted-imports` per layer — `pnpm lint` |
+| the delivery surface change is visible in review | SDL snapshot test — `pnpm test` |
+
+Human — the PR template (`.github/PULL_REQUEST_TEMPLATE.md`) asks for
+exactly the judgments the tools cannot make, so review attention concentrates
+where the graph changes:
+
+1. Which of Q1–Q4 the change is; for an edge, why the lower ladder rungs
+   don't fit.
+2. §4 across the new edge: crossed writes take branded values or plans; no
+   invariant-guarding service write is reached from outside its module.
+3. Decisions stayed in the owning modules' cores; the composing service opens
+   ONE transaction.
+4. The README edge table is still a DAG; the SVGs were regenerated.
+
+Left to the adopting team's repository settings: a CODEOWNERS entry on the
+boundary files — `.dependency-cruiser.mjs`, `src/modules/README.md`,
+`src/services.ts`, `src/graphql/schema.ts`, this file — so every node/edge
+change pages a maintainer, and branch protection requiring the `check`
+workflow.
