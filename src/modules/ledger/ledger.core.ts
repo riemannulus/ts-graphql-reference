@@ -1049,9 +1049,13 @@ function touchHolder(work: Working, world: LedgerWorld, holder: Holder): string 
  * fee, a payout floor, an exchange rate. Reading the currency off the first
  * token and then summing across all of them would let the array's ORDER pick
  * which policy applies, which is how a mixed withdrawal of income and points
- * gets charged at whichever happened to be listed first. A mixed operation is
- * not forbidden as a matter of taste: it is two operations, and saying so costs
- * a caller one more entry in `ops`.
+ * gets charged at whichever happened to be listed first.
+ *
+ * Demanded at EVERY burn and every redeemable move besides, not only where a
+ * number is computed: one burn is one currency, so the rule is a property of
+ * the operation rather than of the branch that happens to need it. A mixed
+ * operation is not forbidden as a matter of taste — it is two operations, and
+ * saying so costs a caller one more entry in `ops`.
  */
 function soleCurrencyOf(tokens: readonly Token[], reason: string): Currency {
   const first = tokens[0];
@@ -1319,6 +1323,10 @@ function planMove(
   ) {
     throw new LedgerMovementNotAllowedError(op.reason, op.from.kind, op.to.kind);
   }
+  // A move of nothing is not a movement. Checked for EVERY move, not only the
+  // redeemable ones below, so an empty `tokens` is refused rather than planning
+  // silently to do nothing.
+  soleCurrencyOf(op.tokens, op.reason);
   const fromKey = touchHolder(work, world, op.from);
   const toKey = touchHolder(work, world, op.to);
 
@@ -1397,13 +1405,16 @@ function planSwap(
   ) {
     throw new LedgerMovementNotAllowedError(op.rate, op.from.kind, op.to.kind);
   }
-  if (
-    rate.samePerson &&
-    isPersonalHolder(op.from) &&
-    isPersonalHolder(op.to) &&
-    op.from.userId !== op.to.userId
-  ) {
-    throw new LedgerSwapNotAllowedError(op.rate, 'both sides must be the same person');
+  if (rate.samePerson) {
+    // An impersonal end is refused rather than skipped: "the same person" has
+    // no meaning for an escrow, so a future edge that paired this flag with one
+    // would silently get no rule at all.
+    if (!isPersonalHolder(op.from) || !isPersonalHolder(op.to)) {
+      throw new LedgerSwapNotAllowedError(op.rate, 'both sides must be a person');
+    }
+    if (op.from.userId !== op.to.userId) {
+      throw new LedgerSwapNotAllowedError(op.rate, 'both sides must be the same person');
+    }
   }
 
   const burnTotal = op.tokens.reduce((sum, token) => sum + token.amount, 0);

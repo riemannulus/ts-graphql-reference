@@ -40,7 +40,8 @@ export function registerLedgerQueries(): void {
       type: ['LedgerLotBalance'],
       description:
         "A person's live lots of one currency, in the order they will be spent " +
-        '(earliest deadline first).',
+        `(earliest deadline first). At most ${ledgerRepo.LOT_PAGE_SIZE}: the ` +
+        'first page is the one that will be spent.',
       args: {
         userId: t.arg.int({ required: true }),
         currency: t.arg({ type: CurrencyArgEnum, required: true }),

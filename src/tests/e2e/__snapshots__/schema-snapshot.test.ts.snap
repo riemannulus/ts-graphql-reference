@@ -287,7 +287,7 @@ type Query {
   ledgerHolderEvents(before: Int, userId: Int!): [LedgerEvent!]
 
   """
-  A person's live lots of one currency, in the order they will be spent (earliest deadline first).
+  A person's live lots of one currency, in the order they will be spent (earliest deadline first). At most 50: the first page is the one that will be spent.
   """
   ledgerLotHoldings(currency: LedgerCurrencyFilter!, userId: Int!): [LedgerLotBalance!]
 

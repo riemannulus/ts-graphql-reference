@@ -661,26 +661,28 @@ describe('the sweeps', () => {
     // Opening the flow and posting to it are two transactions, and the void
     // sweep runs every ten minutes. A sweep flow whose window had already
     // passed would be closed in that gap, killing the run that created it.
+    //
+    // Both sweeps run as the scheduler runs them — the void sweep on the clock,
+    // the expiry sweep on a backfill instant. That pairing is the whole point:
+    // the window is a lifetime for a ROW, so it is measured from the clock even
+    // when the decision is about some other moment.
     const buyer = await makeUser('sweep-race@example.com');
     await topUp(buyer, { paid: 1_000 });
-    const later = new Date('2032-06-01T00:00:00.000Z');
 
     // A genuinely abandoned flow, so the void sweep has something to take.
     const abandoned = await ledger.openReference({
       kind: 'CHARGE',
-      now: later,
-      expiresAt: later,
+      expiresAt: new Date('2026-05-01T00:00:00.000Z'),
     });
 
-    const result = await ledger.expireDueLots({ now: later });
+    const result = await ledger.expireDueLots({ now: new Date('2032-06-01T00:00:00.000Z') });
     const sweepFlow = await prisma.ledgerReference.findUniqueOrThrow({
       where: { id: result.referenceId! },
     });
-    expect(sweepFlow.expiresAt!.getTime()).toBeGreaterThan(later.getTime());
-
-    // A void sweep running at the very same instant takes the abandoned flow
-    // and leaves the expiry sweep's own alone.
-    expect(await ledger.voidStaleReferences({ now: later })).toMatchObject({ voidedCount: 1 });
+    // Reclaimable tomorrow, not now — so the void sweep running beside it today
+    // takes the abandoned flow and leaves this one alone.
+    expect(sweepFlow.expiresAt!.getTime()).toBeGreaterThan(NOW.getTime());
+    expect(await ledger.voidStaleReferences()).toMatchObject({ voidedCount: 1 });
     expect(
       (await prisma.ledgerReference.findUniqueOrThrow({ where: { id: abandoned.id } })).closeReason,
     ).toBe('VOID');

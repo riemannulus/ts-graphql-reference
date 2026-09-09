@@ -29,6 +29,9 @@ import type { Currency, Holder } from './ledger.value.js';
 /** The most rows any single event page returns. */
 export const EVENT_PAGE_SIZE = 50;
 
+/** The most live lots one wallet-and-currency read returns, in spend order. */
+export const LOT_PAGE_SIZE = 50;
+
 /** One holder's balances, one row per currency it has ever held. */
 export function findBalances(
   db: ReadDbClient,
@@ -46,6 +49,10 @@ export function findBalances(
  * A person's live lot remainders for one currency, oldest deadline first — the
  * order value is spent in (`selectLotsFifo`), so the list a client renders and
  * the list the kernel drains are the same list.
+ *
+ * Capped like the event reads. Lots live for years and a top-up mints one each
+ * time, so a heavy wallet's live-lot list grows without a natural bound; the
+ * first page is the one anyone reads, because it is what will be spent first.
  */
 export function findLotHoldings(
   db: ReadDbClient,
@@ -57,6 +64,7 @@ export function findLotHoldings(
     orderBy: [{ lot: { validUntil: 'asc' } }, { lotId: 'asc' }],
     ...query,
     where: { holderKey: holderKey(holder), amount: { gt: 0 }, lot: { currency } },
+    take: LOT_PAGE_SIZE,
   });
 }
 

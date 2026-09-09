@@ -165,9 +165,9 @@ export interface SweepOptions {
 const DEFAULT_BATCH_SIZE = 200;
 
 /**
- * How long a sweep's own flow stays reclaimable-but-alive. It must outlive the
- * gap between opening the flow and posting to it, or the void sweep closes the
- * run that is still using it.
+ * How long a sweep's own flow stays reclaimable-but-alive, measured from the
+ * wall clock. It must outlive the gap between opening the flow and posting to
+ * it, or the void sweep closes the run that is still using it.
  */
 const SWEEP_FLOW_LIFETIME_DAYS = 1;
 
@@ -298,16 +298,19 @@ export function createLedgerService(deps: LedgerServiceDeps) {
     // lands leaves a reference `voidStaleReferences` can still reclaim rather
     // than an OPEN row nothing will ever close.
     //
-    // The window is a DAY, not `now`. Opening the flow and posting to it are two
-    // transactions, and the void sweep runs every ten minutes: a window that has
-    // already passed would let that sweep close this flow in the gap between
-    // them, killing the very run that created it. A day is longer than any
-    // posting and still short enough that an abandoned one is reclaimed by
-    // tomorrow.
+    // The window is a DAY, and it is measured from the WALL CLOCK rather than
+    // from `now`. Opening the flow and posting to it are two transactions, and
+    // the void sweep runs every ten minutes: a window already in the past would
+    // let that sweep close this flow in the gap between them, killing the run
+    // that created it. A backfill decides on a historical instant, so measuring
+    // the window from it would reopen exactly that race — `expiresAt` is an
+    // operational lifetime for a row, not a fact about the instant being swept.
+    // Everything else here stays on `now`, which is what makes the backfill a
+    // backfill.
     const reference = await openReference({
       kind: 'ADJUST',
       now,
-      expiresAt: addDays(now, SWEEP_FLOW_LIFETIME_DAYS),
+      expiresAt: addDays(clock.now(), SWEEP_FLOW_LIFETIME_DAYS),
     });
 
     const { events } = await post({

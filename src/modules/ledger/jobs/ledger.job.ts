@@ -23,7 +23,10 @@ export const LEDGER_BALANCE_TRIAL_JOB = 'ledger:balance:trial';
 export const registerLedgerJobs: JobRegistrar<LedgerService> = (agenda, service, logger) => {
   defineJob(agenda, LEDGER_LOT_EXPIRE_JOB, async () => {
     const result = await service.expireDueLots();
-    if (result.expiredCount === 0) return;
+    // Keyed on WALLETS, not on lots: a full batch whose lots all drained between
+    // the two reads burned nothing and is exactly the run whose backlog warning
+    // matters most.
+    if (result.walletCount === 0) return;
     // What a sweep DESTROYED is the one number an operator will be asked about,
     // so it is reported rather than discarded. A full batch of WALLETS means
     // there is more waiting than one daily run can take: a warning, because at

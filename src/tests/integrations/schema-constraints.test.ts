@@ -1,5 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
+import { SWAP_RATE_KINDS } from '../../modules/ledger/ledger.core.js';
+import {
+  ACTOR_KINDS,
+  CLOSE_REASONS,
+  CURRENCIES,
+  HOLDER_KINDS,
+  LOT_SOURCES,
+  LOTTED_CURRENCIES,
+  REFERENCE_KINDS,
+  REFERENCE_STATES,
+} from '../../modules/ledger/ledger.value.js';
 
 // The DB-side halves of invariants whose other half lives in code. The code
 // keeps the single source of truth for *rules* (transitions, plans); these
@@ -320,6 +331,103 @@ describe('ledger CHECK constraints', () => {
     // A cascade here would take the lot and the holder while the events naming
     // them survive, and the trial balance would never balance again.
     await expect(prisma.user.delete({ where: { id: userId } })).rejects.toThrow();
+  });
+
+  // The migration promises that drift between the code's value sets and the
+  // database's fails a test. Rejecting an out-of-set value proves only half of
+  // that: it would not catch a member ADDED to a core `const` array and
+  // forgotten in the CHECK, which is the direction that breaks a real write. So
+  // every member of every set is inserted and must be accepted.
+  it('accepts every reference kind, state and close reason the core declares', async () => {
+    for (const [index, kind] of REFERENCE_KINDS.entries()) {
+      // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "LedgerReference" ("id", "kind", "openedAt")
+            VALUES ('K${String(index).padStart(11, '0')}', '${kind}', CURRENT_TIMESTAMP)`,
+        ),
+      ).resolves.toBe(1);
+    }
+    for (const [index, reason] of CLOSE_REASONS.entries()) {
+      // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "LedgerReference" ("id", "kind", "state", "closeReason", "closedAt", "openedAt")
+            VALUES ('R${String(index).padStart(11, '0')}', 'ADJUST', 'CLOSED', '${reason}',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        ),
+      ).resolves.toBe(1);
+    }
+    // OPEN and FUNDED are the states a row may carry without a close reason.
+    for (const [index, state] of REFERENCE_STATES.filter((s) => s !== 'CLOSED').entries()) {
+      // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "LedgerReference" ("id", "kind", "state", "openedAt")
+            VALUES ('S${String(index).padStart(11, '0')}', 'ADJUST', '${state}', CURRENT_TIMESTAMP)`,
+        ),
+      ).resolves.toBe(1);
+    }
+  });
+
+  it('accepts every holder kind, lot source and lotted currency the core declares', async () => {
+    const userId = await makeUser();
+    const referenceId = await makeReference('AD-0000000100', 'ADJUST');
+    for (const kind of HOLDER_KINDS) {
+      const personal = kind === 'USER' || kind === 'RECEIVABLE';
+      const columns = personal ? '"userId"' : '"referenceId"';
+      const anchor = personal ? String(userId) : `'${referenceId}'`;
+      // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "LedgerHolder" ("key", "kind", ${columns}, "createdAt")
+            VALUES ('${kind}:anchor', '${kind}', ${anchor}, CURRENT_TIMESTAMP)`,
+        ),
+      ).resolves.toBe(1);
+    }
+    for (const source of LOT_SOURCES) {
+      for (const currency of LOTTED_CURRENCIES) {
+        // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+        await expect(
+          prisma.$executeRawUnsafe(
+            `INSERT INTO "LedgerLot"
+              ("currency", "ownerUserId", "mintReferenceId", "source", "originalAmount", "mintedAt", "validUntil")
+              VALUES ('${currency}', ${userId}, '${referenceId}', '${source}', 1,
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ),
+        ).resolves.toBe(1);
+      }
+    }
+  });
+
+  it('accepts every actor kind, currency and swap rate the core declares', async () => {
+    const referenceId = await makeReference('AD-0000000101', 'ADJUST');
+    let ordinal = 0;
+    for (const actorKind of ACTOR_KINDS) {
+      for (const currency of CURRENCIES.filter((c) => !LOTTED_CURRENCIES.includes(c as never))) {
+        // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+        await expect(
+          prisma.$executeRawUnsafe(
+            `INSERT INTO "LedgerEvent"
+              ("referenceId", "idempotencyKey", "ordinal", "op", "currency", "amount",
+               "fromHolderKey", "reason", "actorKind", "createdAt")
+              VALUES ('${referenceId}', 'sets', ${ordinal}, 'BURN', '${currency}', 1,
+                      'USER:1', 'ADMIN_REVOKE', '${actorKind}', CURRENT_TIMESTAMP)`,
+          ),
+        ).resolves.toBe(1);
+        ordinal += 1;
+      }
+    }
+    for (const rateKind of SWAP_RATE_KINDS) {
+      // eslint-disable-next-line no-await-in-loop -- one insert per declared member
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "LedgerSwap"
+            ("referenceId", "rateKind", "burnCurrency", "mintCurrency", "feePermille", "feeKrw")
+            VALUES ('${referenceId}', '${rateKind}', 'PAID_POINT', 'INCOME', 0, 0)`,
+        ),
+      ).resolves.toBe(1);
+    }
   });
 
   it('rejects an exchange rate the currency graph does not have an edge for', async () => {

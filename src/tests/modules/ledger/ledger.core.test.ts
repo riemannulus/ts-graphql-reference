@@ -654,7 +654,7 @@ describe('planPosting — swapping', () => {
     // so without the same-person rule it is a person-to-person transfer wearing
     // an exchange's name — nothing staked, nothing to reverse, no fee.
     const world = buildWorld({
-      referenceId: 'CO-0000000001',
+      referenceId: 'CV-0000000001',
       scalars: [{ holder: BUYER, currency: 'INCOME', amount: 50_000 }],
     });
     const convert = (to: typeof BUYER) =>
@@ -668,7 +668,7 @@ describe('planPosting — swapping', () => {
             rate: 'POINT_CONVERSION',
           },
         ],
-        { referenceId: 'CO-0000000001', closeAs: 'SETTLED' },
+        { referenceId: 'CV-0000000001', closeAs: 'SETTLED' },
       );
 
     expect(() => plan(world, convert(SELLER))).toThrow(LedgerSwapNotAllowedError);
