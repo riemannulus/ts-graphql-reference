@@ -75,8 +75,8 @@ import {
  *   computed here and never supplied, so a caller cannot mint more than it
  *   destroyed.
  * - **L3 escrow closure** — a flow closes only when its own accounts hold
- *   nothing, and it must say why it closed. No money is stranded in a finished
- *   order; a flow may only touch the escrow and payable accounts it owns.
+ *   nothing, and it must say why it closed. No money is left stranded in a
+ *   finished order.
  * - **L4 lot identity** — a move carries the SAME lot to the other side, so a
  *   refund returns the deadlines and the funding source the payment created,
  *   rather than a reconstruction of them.
@@ -599,7 +599,6 @@ export interface PostingPlan {
 // Errors
 // ---------------------------------------------------------------------------
 
-/** A posting was addressed to a flow that has already finished. */
 /**
  * An operation named an escrow or payable account that belongs to a DIFFERENT
  * money flow. Refused, and not as a matter of taste: an account is owned by the
@@ -645,14 +644,23 @@ export class LedgerBelowPayoutMinimumError extends DomainError {
   }
 }
 
-/** A burn was asked for with no tokens to burn. */
-export class LedgerNothingToBurnError extends DomainError {
-  constructor(readonly reason: string) {
-    super(`Burn for ${reason} names nothing to burn`, 'LEDGER_NOTHING_TO_BURN');
-    this.name = 'LedgerNothingToBurnError';
+/** An operation named no tokens, or named tokens of more than one currency. */
+export class LedgerTokenCurrencyError extends DomainError {
+  constructor(
+    readonly reason: string,
+    readonly why: 'EMPTY' | 'MIXED',
+  ) {
+    super(
+      why === 'EMPTY'
+        ? `${reason} names nothing to move`
+        : `${reason} must name tokens of a single currency`,
+      'LEDGER_TOKEN_CURRENCY',
+    );
+    this.name = 'LedgerTokenCurrencyError';
   }
 }
 
+/** A posting was addressed to a flow that has already finished. */
 export class LedgerReferenceClosedError extends DomainError {
   constructor(readonly referenceId: string) {
     super(`Ledger reference ${referenceId} is closed`, 'LEDGER_REFERENCE_CLOSED');
@@ -1021,6 +1029,26 @@ function touchHolder(work: Working, world: LedgerWorld, holder: Holder): string 
   return key;
 }
 
+/**
+ * The ONE currency a set of tokens is in.
+ *
+ * Demanded wherever a currency's own POLICY decides a number — a withdrawal
+ * fee, a payout floor, an exchange rate. Reading the currency off the first
+ * token and then summing across all of them would let the array's ORDER pick
+ * which policy applies, which is how a mixed withdrawal of income and points
+ * gets charged at whichever happened to be listed first. A mixed operation is
+ * not forbidden as a matter of taste: it is two operations, and saying so costs
+ * a caller one more entry in `ops`.
+ */
+function soleCurrencyOf(tokens: readonly Token[], reason: string): Currency {
+  const first = tokens[0];
+  if (first === undefined) throw new LedgerTokenCurrencyError(reason, 'EMPTY');
+  if (tokens.some((token) => token.currency !== first.currency)) {
+    throw new LedgerTokenCurrencyError(reason, 'MIXED');
+  }
+  return first.currency;
+}
+
 function assertHoldable(policy: CurrencyPolicy, holder: Holder): void {
   if (!policy.holderKinds.includes(holder.kind)) {
     throw new LedgerCurrencyNotHoldableError(policy.code, holder.kind);
@@ -1174,11 +1202,10 @@ function planBurn(
   },
   now: Date,
 ): void {
-  if (args.tokens.length === 0) {
-    // A burn of nothing is not a movement, and a fee riding on it would be cash
-    // leaving the ledger with no event to explain it.
-    throw new LedgerNothingToBurnError(args.reason);
-  }
+  // A burn of nothing is not a movement, and a fee riding on it would be cash
+  // leaving the ledger with no event to explain it. One currency, for the same
+  // reason `planSwap` demands it: the burn's policy checks must be unambiguous.
+  soleCurrencyOf(args.tokens, args.reason);
   const key = touchHolder(work, world, args.from);
   let feeLeft = args.feeKrw;
   for (const token of args.tokens) {
@@ -1257,8 +1284,7 @@ function burnFee(
   if (op.feeKrw !== undefined) {
     throw new LedgerFeeNotAllowedError(op.reason, 'the redeem policy decides this fee');
   }
-  const currency = op.tokens[0]?.currency;
-  if (currency === undefined) throw new LedgerNothingToBurnError(op.reason);
+  const currency = soleCurrencyOf(op.tokens, op.reason);
   const policy = policies[currency];
   if (policy.redeem === null) {
     throw new LedgerFeeNotAllowedError(op.reason, `${currency} cannot become cash`);
@@ -1287,8 +1313,7 @@ function planMove(
     // A payout below the floor is refused HERE, where the money leaves the
     // wallet, rather than at the bank burn — a person must not watch value sit
     // in a payable account only to be told it was always too small to send.
-    const currency = op.tokens[0]?.currency;
-    if (currency === undefined) throw new LedgerNothingToBurnError(op.reason);
+    const currency = soleCurrencyOf(op.tokens, op.reason);
     const redeem = policies[currency].redeem;
     const total = op.tokens.reduce((sum, token) => sum + token.amount, 0);
     if (redeem !== null && total < redeem.minimumAmount) {
@@ -1347,14 +1372,9 @@ function planSwap(
   now: Date,
 ): void {
   const rate = SWAP_RATES[op.rate];
-  if (op.tokens.length === 0) throw new LedgerSwapNotAllowedError(op.rate, 'nothing to exchange');
-
-  const burnCurrency = op.tokens[0]!.currency;
   // One header per burn currency: an escrow holding two kinds of point settles
   // as two swaps, so `LedgerSwap.burnCurrency` is never a half-truth.
-  if (op.tokens.some((token) => token.currency !== burnCurrency)) {
-    throw new LedgerSwapNotAllowedError(op.rate, 'burn tokens must share one currency');
-  }
+  const burnCurrency = soleCurrencyOf(op.tokens, op.rate);
   if (!(rate.from as readonly Currency[]).includes(burnCurrency)) {
     throw new LedgerSwapNotAllowedError(op.rate, `${burnCurrency} is not an input of this rate`);
   }

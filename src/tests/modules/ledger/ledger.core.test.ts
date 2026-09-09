@@ -12,7 +12,7 @@ import {
   LedgerLotNotDueError,
   LedgerLotNotRedeemableError,
   LedgerMovementNotAllowedError,
-  LedgerNothingToBurnError,
+  LedgerTokenCurrencyError,
   LedgerReasonNotAllowedError,
   LedgerReferenceClosedError,
   LedgerSwapNotAllowedError,
@@ -532,6 +532,46 @@ describe('planPosting — burning', () => {
     expect(plan(world, withdrawal()).events[0]!.feeKrw).toBe(0);
   });
 
+  it('refuses a mixed-currency withdrawal, so no policy is picked by list order', () => {
+    // Income takes no payout cut, points take 10% with a 1,000 floor. Reading
+    // the currency off the first token and charging over the total would make
+    // the fee depend on the order of an array.
+    const world = buildWorld({
+      referenceId: PAYOUT_REF,
+      scalars: [{ holder: PAYABLE, currency: 'INCOME', amount: 50_000 }],
+      lots: [
+        {
+          id: 31,
+          currency: 'PAID_POINT',
+          ownerUserId: 1,
+          amount: 50_000,
+          at: PAYABLE,
+          cancellableUntil: null,
+        },
+      ],
+      referenceHolders: [PAYABLE],
+    });
+    expect(() =>
+      plan(
+        world,
+        post(
+          [
+            {
+              op: 'BURN',
+              from: PAYABLE,
+              tokens: [
+                { currency: 'INCOME', amount: 50_000, lotId: null },
+                { currency: 'PAID_POINT', amount: 50_000, lotId: 31 },
+              ],
+              reason: 'BANK_WITHDRAWAL',
+            },
+          ],
+          { referenceId: PAYOUT_REF },
+        ),
+      ),
+    ).toThrow(LedgerTokenCurrencyError);
+  });
+
   it('refuses a burn of nothing, which a fee could otherwise ride out on', () => {
     const world = buildWorld({ referenceId: 'AD-0000000001' });
     expect(() =>
@@ -542,7 +582,7 @@ describe('planPosting — burning', () => {
           { referenceId: 'AD-0000000001' },
         ),
       ),
-    ).toThrow(LedgerNothingToBurnError);
+    ).toThrow(LedgerTokenCurrencyError);
   });
 
   it('sends value to the bank only out of a payable', () => {
@@ -609,6 +649,30 @@ describe('planPosting — swapping', () => {
     expect(result.reference).toMatchObject({ nextState: 'CLOSED', closeReason: 'SETTLED' });
   });
 
+  it('refuses a currency the rate does not take as input', () => {
+    // The graph is closed at runtime as well as at the type level: `SETTLE`
+    // takes points, so offering it income is not an exchange that exists.
+    const world = buildWorld({
+      state: 'FUNDED',
+      scalars: [{ holder: ESCROW, currency: 'INCOME', amount: 5_000 }],
+      referenceHolders: [ESCROW],
+    });
+    expect(() =>
+      plan(
+        world,
+        post([
+          {
+            op: 'SWAP',
+            from: ESCROW,
+            to: SELLER,
+            tokens: [{ currency: 'INCOME', amount: 5_000, lotId: null }],
+            rate: 'SETTLE',
+          },
+        ]),
+      ),
+    ).toThrow(LedgerSwapNotAllowedError);
+  });
+
   it('needs one header per burn currency, so a mixed escrow settles as two swaps', () => {
     const mixed = buildWorld({
       state: 'FUNDED',
@@ -634,7 +698,7 @@ describe('planPosting — swapping', () => {
           },
         ]),
       ),
-    ).toThrow(LedgerSwapNotAllowedError);
+    ).toThrow(LedgerTokenCurrencyError);
 
     // As two ops it is fine, and the fees add up to the same 10%.
     const result = plan(

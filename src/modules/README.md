@@ -56,7 +56,9 @@ the domain stops being simple.
 A production system would pick one. Migrating `point`'s rows onto the ledger is
 the obvious next change, and it is a separate one: it touches `point`'s public
 mutations, so landing it with the ledger itself would put two independent
-decisions in one diff.
+decisions in one diff. Until then the word "ledger" carries an older, narrower
+sense inside `point/` — `PointLedgerInconsistencyError` and the `arbLedger`
+generator mean that module's own list of charges, not this module.
 
 ## Changing this graph
 

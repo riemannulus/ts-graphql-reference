@@ -13,13 +13,17 @@ import type { Currency, Holder } from './ledger.value.js';
  * Everything takes `ReadDbClient` (write methods stripped at the type level).
  * Reads that feed a DECISION live with their executors in ledger.write.repo.ts.
  *
- * The event reads are PAGED, and the page size is decided here rather than
- * offered as an argument the caller may leave off. The event log only grows, so
- * an unbounded "everything that ever happened to this account" is a query that
- * gets slower for the rest of its life and a response that eventually will not
- * serialize. A person's statement — the one that grows without limit — is
- * walked newest-first with a `before` cursor; a single flow's events are capped
- * at the same page but need no cursor, because a flow has an end.
+ * BOTH event reads are PAGED, with a cursor, and the page size is decided here
+ * rather than offered as an argument the caller may leave off. The log only
+ * grows, so an unbounded read is a query that gets slower for the rest of its
+ * life and a response that eventually will not serialize.
+ *
+ * A flow is capped for the same reason a person is, and not merely for
+ * symmetry: one posting may carry hundreds of events — the expiry sweep writes
+ * a burn per lot across a whole batch of wallets under a single `ADJUST`
+ * reference — so "a flow is small" is not true of the flows this system
+ * actually creates. A page with no cursor would drop the rest of a money log
+ * silently, which is the worst way to lose it.
  */
 
 /** The most rows any single event page returns. */
@@ -65,16 +69,21 @@ export function findReference(
   return db.ledgerReference.findUnique({ ...query, where: { id } });
 }
 
-/** A flow's movements, in the order they happened. */
+/**
+ * A flow's movements, in the order they happened, one page at a time. `after`
+ * is the `seq` of the last row the caller already has — oldest-first here,
+ * because a flow is read as a story rather than as a statement.
+ */
 export function findReferenceEvents(
   db: ReadDbClient,
   referenceId: string,
+  after: number | null,
   query: Selection<'LedgerEvent'> = {},
 ) {
   return db.ledgerEvent.findMany({
     orderBy: { seq: 'asc' },
     ...query,
-    where: { referenceId },
+    where: { referenceId, ...(after === null ? {} : { seq: { gt: after } }) },
     take: EVENT_PAGE_SIZE,
   });
 }

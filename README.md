@@ -639,6 +639,10 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   DB, one test per money flow: a top-up and its idempotent replay, an order that
   settles / reverses / splits, a payout held and paid, income converted into
   points, a gift redeemed or returned, the lost race, and the three sweeps.
+  There is deliberately no model-based test here yet — the laws are covered by
+  `ledger.core.prop.test.ts` and the races by the file above, which is where a
+  model test would find most of its value. An `fc.commands` sweep over `post`
+  is the obvious next one to write.
 - **`integrations/schema-constraints.test.ts`** — the DB-side halves: CHECK
   constraints reject out-of-set statuses/states, negative amounts, and the
   ledger's shape rules (a CLOSED flow with no reason, a holder anchored to the

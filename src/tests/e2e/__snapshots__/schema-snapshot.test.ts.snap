@@ -158,6 +158,8 @@ type LedgerReference {
   """Null until the flow closes."""
   closeReason: LedgerCloseReason
   closedAt: String
+
+  """The first 50 movements, oldest first."""
   events: [LedgerEvent!]
 
   """When an untouched flow is voided by the sweep."""
@@ -292,8 +294,10 @@ type Query {
   """One money flow by the id a person can quote."""
   ledgerReference(id: String!): LedgerReference
 
-  """A flow's movements, in the order they happened."""
-  ledgerReferenceEvents(referenceId: String!): [LedgerEvent!]
+  """
+  A flow's movements, in the order they happened. At most 50 at a time: pass the \`seq\` of the last row you have as \`after\` for the next page.
+  """
+  ledgerReferenceEvents(after: Int, referenceId: String!): [LedgerEvent!]
 
   """A user's current point balance (null until the first charge)."""
   pointBalance(userId: Int!): PointBalance

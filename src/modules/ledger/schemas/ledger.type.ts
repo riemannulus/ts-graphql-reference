@@ -1,5 +1,6 @@
 import { builder } from '../../../graphql/builder.js';
 import { parseSwapRateKind, SWAP_RATE_KINDS } from '../ledger.core.js';
+import { EVENT_PAGE_SIZE } from '../ledger.read.repo.js';
 import {
   ACTOR_KINDS,
   CLOSE_REASONS,
@@ -119,7 +120,13 @@ export function registerLedgerTypes(): void {
         description: 'When an untouched flow is voided by the sweep.',
         resolve: (reference) => reference.expiresAt?.toISOString() ?? null,
       }),
-      events: t.relation('events', { query: { orderBy: { seq: 'asc' } } }),
+      // Capped like the top-level read, and for the same reason: one posting can
+      // carry hundreds of events. Walk past the cap with `ledgerReferenceEvents`,
+      // which takes a cursor.
+      events: t.relation('events', {
+        description: `The first ${EVENT_PAGE_SIZE} movements, oldest first.`,
+        query: { orderBy: { seq: 'asc' }, take: EVENT_PAGE_SIZE },
+      }),
       holders: t.relation('holders'),
     }),
   });

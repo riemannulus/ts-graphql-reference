@@ -608,6 +608,53 @@ describe('the sweeps', () => {
     // The staked half is still in the order, which may yet refund it.
     expect(await balance(escrowHolder(order.id), 'PAID_POINT')).toBe(1_000);
     await expect(ledger.verifyTrialBalance()).resolves.toBeDefined();
+    // One wallet, one flow: the cap counts wallets, so it is nowhere near hit.
+    expect(result).toMatchObject({ walletCount: 1 });
+  });
+
+  it('counts wallets against the cap and lots against the burn', async () => {
+    // Two people, three lots between them. The batch caps WALLETS, so a cap of
+    // two is not "hit" here even though three lots die — the distinction the
+    // job's backlog warning depends on.
+    const one = await makeUser('multi-one@example.com');
+    const two = await makeUser('multi-two@example.com');
+    await topUp(one, { paid: 1_000 });
+    await topUp(one, { paid: 2_000 });
+    await topUp(two, { paid: 4_000 });
+
+    const later = new Date('2032-06-01T00:00:00.000Z');
+    const result = await ledger.expireDueLots({ now: later, batchSize: 2 });
+
+    expect(result).toMatchObject({
+      walletCount: 2,
+      batchSize: 2,
+      expiredCount: 3,
+      burnedAmount: 7_000,
+    });
+    expect(await balance(userHolder(one), 'PAID_POINT')).toBe(0);
+    expect(await balance(userHolder(two), 'PAID_POINT')).toBe(0);
+    await expect(ledger.verifyTrialBalance()).resolves.toBeDefined();
+  });
+
+  it('sweeps only as many wallets as its batch allows, leaving the rest', async () => {
+    const first = await makeUser('batch-one@example.com');
+    const second = await makeUser('batch-two@example.com');
+    await topUp(first, { paid: 1_000 });
+    await topUp(second, { paid: 1_000 });
+
+    const later = new Date('2032-06-01T00:00:00.000Z');
+    const result = await ledger.expireDueLots({ now: later, batchSize: 1 });
+
+    // A full batch of wallets is what "there is more waiting" looks like.
+    expect(result).toMatchObject({ walletCount: 1, batchSize: 1, expiredCount: 1 });
+    const remaining =
+      (await balance(userHolder(first), 'PAID_POINT')) +
+      (await balance(userHolder(second), 'PAID_POINT'));
+    expect(remaining).toBe(1_000);
+    // And the next run takes the rest.
+    expect(await ledger.expireDueLots({ now: later, batchSize: 1 })).toMatchObject({
+      expiredCount: 1,
+    });
   });
 
   it('does nothing, cheaply, when nothing is due', async () => {

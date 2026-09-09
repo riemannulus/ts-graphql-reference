@@ -63,10 +63,16 @@ export function registerLedgerQueries(): void {
   builder.queryField('ledgerReferenceEvents', (t) =>
     t.prismaField({
       type: ['LedgerEvent'],
-      description: "A flow's movements, in the order they happened.",
-      args: { referenceId: t.arg.string({ required: true }) },
+      description:
+        "A flow's movements, in the order they happened. At most " +
+        `${ledgerRepo.EVENT_PAGE_SIZE} at a time: pass the \`seq\` of the last ` +
+        'row you have as `after` for the next page.',
+      args: {
+        referenceId: t.arg.string({ required: true }),
+        after: t.arg.int({ required: false }),
+      },
       resolve: (query, _root, args, ctx) =>
-        ledgerRepo.findReferenceEvents(ctx.db, args.referenceId, query),
+        ledgerRepo.findReferenceEvents(ctx.db, args.referenceId, args.after ?? null, query),
     }),
   );
 

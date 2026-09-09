@@ -163,6 +163,20 @@ export interface SweepOptions {
 
 const DEFAULT_BATCH_SIZE = 200;
 
+/** What one expiry run did, and whether it ran out of room to do more. */
+export interface ExpiryResult {
+  /**
+   * Wallets swept. This is what `batchSize` caps, so `walletCount === batchSize`
+   * is what "there is more waiting" looks like — `expiredCount` cannot say it,
+   * because one wallet may hold several lots that all fell due.
+   */
+  readonly walletCount: number;
+  readonly batchSize: number;
+  readonly expiredCount: number;
+  readonly burnedAmount: number;
+  readonly referenceId: string | null;
+}
+
 /** The lots a set of events minted — read back off the log, so a replay agrees. */
 function mintedLotIdsOf(events: readonly LedgerEvent[]): number[] {
   return events
@@ -264,47 +278,44 @@ export function createLedgerService(deps: LedgerServiceDeps) {
    * first read instead would price the burn against a world the plan is never
    * checked against, and one concurrent spend would fail the whole batch.
    */
-  async function expireDueLots(
-    opts: SweepOptions = {},
-  ): Promise<{ expiredCount: number; burnedAmount: number; referenceId: string | null }> {
+  async function expireDueLots(opts: SweepOptions = {}): Promise<ExpiryResult> {
     const now = opts.now ?? clock.now();
-    const candidates = await ledgerRepo.findWalletsWithDueLots(
-      db.rw,
-      now,
-      opts.batchSize ?? DEFAULT_BATCH_SIZE,
-    );
-    if (candidates.length === 0) return { expiredCount: 0, burnedAmount: 0, referenceId: null };
+    const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
+    const wallets = await ledgerRepo.findWalletsWithDueLots(db.rw, now, batchSize);
+    if (wallets.length === 0) {
+      return { walletCount: 0, batchSize, expiredCount: 0, burnedAmount: 0, referenceId: null };
+    }
 
     // The flow carries its own window, so a sweep that dies before its posting
     // lands leaves a reference `voidStaleReferences` can still reclaim rather
     // than an OPEN row nothing will ever close.
     const reference = await openReference({ kind: 'ADJUST', now, expiresAt: now });
-    let expired: readonly { amount: number }[] = [];
 
-    await post({
+    const { events } = await post({
       referenceId: reference.id,
       idempotencyKey: `${reference.id}:expire`,
       actor: { kind: 'SYSTEM', id: null },
-      holders: candidates,
-      decide: (world) => {
-        const due = selectDueLots(world, now);
-        expired = due;
-        return due.map(
+      holders: wallets,
+      decide: (world) =>
+        selectDueLots(world, now).map(
           (lot): Op => ({
             op: 'BURN',
             from: lot.holder,
             tokens: [{ currency: lot.currency, amount: lot.amount, lotId: lot.lotId }],
             reason: 'EXPIRED',
           }),
-        );
-      },
+        ),
       closeAs: 'EXPIRED',
       now,
     });
 
+    // Counted off the EVENTS the posting wrote, not off what `decide` decided:
+    // the log is what happened, and `decide` does not run at all on a replay.
     return {
-      expiredCount: expired.length,
-      burnedAmount: expired.reduce((sum, lot) => sum + lot.amount, 0),
+      walletCount: wallets.length,
+      batchSize,
+      expiredCount: events.length,
+      burnedAmount: events.reduce((sum, event) => sum + event.amount, 0),
       referenceId: reference.id,
     };
   }

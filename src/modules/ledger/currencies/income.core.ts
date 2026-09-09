@@ -14,10 +14,14 @@ import type { ScalarCurrencyPolicy } from '../ledger.core.js';
  * order had settled and not settled at once. Excluding the holder kind makes
  * that unrepresentable rather than merely unwritten.
  *
- * `redeem` has a zero fee because the platform's cut was already taken at
- * settlement (`SWAP_RATES.SETTLE`). Charging again at payout would be the same
- * fee twice — the failure mode of a system where the two are separate features,
- * and here they cannot drift apart because the fee has exactly one home. What
+ * `redeem` has a zero fee because the cut was already taken at settlement
+ * (`SWAP_RATES.SETTLE`). Charging again at payout would be the same fee twice —
+ * the failure mode of a system where the two are separate features, and here
+ * they cannot drift apart because the fee has exactly one home. What was taken
+ * there is recorded as cash and handed straight back as loyalty value, so the
+ * platform's economics are a liability owed rather than revenue booked; that
+ * is a fact about the rate, and it does not change the rule here, which is
+ * simply that a payout takes nothing further. What
  * remains is `minimumAmount`: a payout below the bank's own per-transfer cost is
  * refused, not silently absorbed.
  */
