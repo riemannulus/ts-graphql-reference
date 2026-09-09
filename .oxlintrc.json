@@ -26,6 +26,7 @@
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error",
     "typescript/no-unsafe-type-assertion": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_sum", "_count", "_avg", "_min", "_max"] }],
     "no-restricted-globals": [
       "error",
       {

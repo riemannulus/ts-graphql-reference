@@ -3,6 +3,7 @@ import type { Services } from '../services.js';
 import { createAgenda, type CreateAgendaOptions } from './agenda.js';
 import type { JobSchedule } from './job.js';
 import { registerFeatureFlagJobs } from '../modules/feature-flag/jobs/feature-flag.job.js';
+import { registerLedgerJobs } from '../modules/ledger/jobs/ledger.job.js';
 import { registerPointJobs } from '../modules/point/jobs/point.job.js';
 
 export interface BuildSchedulerOptions extends CreateAgendaOptions {
@@ -37,6 +38,7 @@ export function buildScheduler(options: BuildSchedulerOptions): Scheduler {
   const schedules: JobSchedule[] = [
     ...registerFeatureFlagJobs(agenda, services.featureFlag, options.logger),
     ...registerPointJobs(agenda, services.point, options.logger),
+    ...registerLedgerJobs(agenda, services.ledger, options.logger),
   ];
 
   return {

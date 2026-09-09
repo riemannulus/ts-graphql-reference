@@ -173,6 +173,25 @@ src/
       feature-flag.provider.ts #   the DB-backed OpenFeature Provider (the adapter)
       jobs/                    #   scheduled delivery (peer of schemas/):
         feature-flag.job.ts    #     registerFeatureFlagJobs() → feature-flag:purge-deleted
+    ledger/            # the double-entry money kernel — an OWNER module and a
+                       #   leaf: it names no domain that spends money. `point/`
+                       #   stays the SMALL worked blueprint; this is the same
+                       #   plan pattern taken to a real money model
+      ledger.value.ts        #   pure core: the vocabulary — currencies, holder
+                             #     kinds, reference ids, and their parsers
+      ledger.core.ts         #   pure core: MINT/BURN/MOVE/SWAP, the laws, and
+                             #     planPosting — the whole decision, no I/O
+      currencies/            #   one policy per currency, as DATA the kernel is
+                             #     handed (so the kernel names no currency)
+      ledger.write.repo.ts   #   Prisma: loadLedgerWorld + applyPostingPlan
+      ledger.read.repo.ts    #   Prisma reads: balances, lots, the event log
+      ledger.service.ts      #   use-cases: openReference / post / the sweeps
+      schemas/               #   GraphQL delivery — queries only, ON PURPOSE:
+                             #     moving value is a domain's decision, not a
+                             #     client's, so there is no ledger mutation
+      jobs/
+        ledger.job.ts        #     registerLedgerJobs() → lot expiry, stale-flow
+                             #       void, and the trial balance
     onboarding/        # cross-module use-case (one tx across user + post)
       onboarding.content.ts
       onboarding.service.ts
@@ -217,7 +236,7 @@ return pointRepo.applySpendPlan(tx, userId, input.reason, plan);      // execute
 
 inside one `REPEATABLE READ` transaction on the primary (one snapshot for the
 whole decision — under `READ COMMITTED`, the two reads could straddle a
-concurrent commit and a healthy ledger would look corrupt). The core returns a
+concurrent commit and a healthy balance would look corrupt). The core returns a
 **plan** — pure data describing every write, including the values each UPDATE
 must still see. The repo executes it mechanically; the plan's assumptions
 become optimistic-concurrency guards, and both a missed guard and a
@@ -357,7 +376,7 @@ domain data and the queue.) The pieces mirror the GraphQL assembly:
   the handler and RETURNS its schedules as data, so the recurring registry is
   snapshot-testable without a running queue.
 
-Two worked jobs span the concurrency ladder honestly (no lock where none is
+The worked jobs span the concurrency ladder honestly (no lock where none is
 needed — see CONVENTIONS):
 
 - **`feature-flag:purge-deleted`** — hard-deletes flags soft-deleted past a
@@ -366,9 +385,23 @@ needed — see CONVENTIONS):
 - **`point:balance:verify`** — a read-only, defense-in-depth sweep (crepe's
   clairvoyance balance-check analogue): per user it reads the balance + USABLE
   charges under ONE `uow.snapshot` (rung 3 — the two reads must agree, the same
-  reason `spend` needs it) and the core recomputes the balance the ledger implies
+  reason `spend` needs it) and the core recomputes the balance the charge rows imply
   (`sumUsableBalance`). Drift throws a masked `PointBalanceDriftError`, surfacing
   through agenda's `fail` event rather than being silently "corrected".
+- **`ledger:lot:expire`** — burns the point lots whose deadline has passed while
+  they sat in a wallet. The whole sweep is ONE flow and ONE posting, so the
+  burns and the reference that explains them commit together. Value staked into
+  an escrow is skipped by the QUERY rather than by a branch: it belongs to an
+  order that has not finished, and expiring it would delete money out from under
+  a refund.
+- **`ledger:reference:void-stale`** — closes flows that were opened and never
+  used. One guarded `updateMany` (rung 0): `OPEN` already means "nothing has
+  moved", so the predicate IS the safety check.
+- **`ledger:balance:trial`** — the ledger's counterpart to the point sweep, one
+  level deeper: it recomputes every currency's supply from the append-only event
+  log and compares it with what the balance rows say is held. Read-only, so it
+  takes no lock and never blocks a movement; drift throws
+  `LedgerTrialBalanceError` rather than "correcting" a symptom.
 
 The scheduler is built and started only in `server.ts`, behind
 `SCHEDULER_ENABLED` (default on) — the reference's counterpart to crepe's
@@ -577,15 +610,15 @@ The test *layer* is the filename suffix, the test *module* is the folder:
 
 - **`modules/point/point.core.prop.test.ts`** — the payoff of the plan pattern:
   conservation, paid-first, FIFO, no-overspend, depletion, and totality laws
-  run against hundreds of random ledgers with no database.
+  run against hundreds of random wallets with no database.
 - **`modules/point/point.service.test.ts`** — the shell against the test DB,
   including the lost-race case: a stale plan's guards must roll the whole
   spend back (`CONFLICT`), writing nothing, and the `transfer` cases.
 - **`modules/user/user.service.model.test.ts`**,
   **`modules/point/point.service.model.test.ts`** — model-based PBT: random
   operation sequences stay consistent between an in-memory spec and the real
-  service + DB (user status machine; point ledger, where the balance must always
-  equal the charge ledger it summarizes).
+  service + DB (user status machine; the point module, where the balance must
+  always equal the charge rows it summarizes).
 - **`integrations/concurrency.test.ts`** — the `uow` rungs against the DB: `run`
   commits/rolls back, `snapshot` really runs at REPEATABLE READ, `serialized`
   acquires the advisory locks (visible in `pg_locks`).
@@ -595,9 +628,20 @@ The test *layer* is the filename suffix, the test *module* is the folder:
 - **`modules/user/user.state.prop.test.ts`**, **`user.value.prop.test.ts`**,
   **`modules/auth/oauth.value.prop.test.ts`** — core laws (totality, terminal
   state, agreement, normalization).
+- **`modules/ledger/ledger.core.prop.test.ts`** — the ledger's laws with no
+  database: a move conserves the currency, no account is left holding less than
+  nothing, a stake and its unstake return the very same lots, a swap creates
+  exactly what it destroyed less the fee, and the two vocabulary identities
+  (`parseHolderKey ∘ holderKey` and the reference id's kind) round-trip.
+- **`modules/ledger/ledger.service.test.ts`** — the same kernel against the test
+  DB, one test per money flow: a top-up and its idempotent replay, an order that
+  settles / reverses / splits, a payout held and paid, income converted into
+  points, a gift redeemed or returned, the lost race, and the three sweeps.
 - **`integrations/schema-constraints.test.ts`** — the DB-side halves: CHECK
-  constraints reject out-of-set statuses/states and negative amounts via raw
-  SQL, with no application layer in the way.
+  constraints reject out-of-set statuses/states, negative amounts, and the
+  ledger's shape rules (a CLOSED flow with no reason, a holder anchored to the
+  wrong thing, a MINT that names a source) via raw SQL, with no application
+  layer in the way.
 - **`e2e/db-routing.test.ts`** — the rw/ro proof described above.
 - **`e2e/schema-snapshot.test.ts`** — the assembled SDL as a snapshot, so a
   module dropped from schema.ts's register list fails loudly.

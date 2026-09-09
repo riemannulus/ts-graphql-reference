@@ -4,6 +4,7 @@ import { type Clock, systemClock } from './foundation/clock.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
+import { createLedgerService } from './modules/ledger/ledger.service.js';
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
 import {
@@ -57,6 +58,9 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   const clock = options.clock ?? systemClock;
   const user = createUserService(db);
   const point = createPointService(db, clock);
+  // The ledger takes the currency policies from its own registry by default;
+  // the seam exists so a test can decide against a different set of currencies.
+  const ledger = createLedgerService({ db, clock });
   const auth = createOAuthService({
     users: user,
     google: options.googleOAuth ?? stubGoogleOAuthClient,
@@ -69,7 +73,7 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   // against the code catalog, and the catalog is bound HERE (the job delivery
   // layer is lint-banned from the flag facade, and the service sits below it).
   const featureFlag = createFeatureFlagService(db, clock, Object.keys(FLAGS));
-  return { user, point, auth, onboarding, postSearch, featureFlag };
+  return { user, point, ledger, auth, onboarding, postSearch, featureFlag };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */

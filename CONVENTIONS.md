@@ -671,8 +671,11 @@ modules group by domain, not transport). Two module shapes exist, and the
 distinction organizes the whole graph (`src/modules/README.md`):
 
 - **Owner modules** own tables and their invariants and import no other
-  module: `user`, `post`, `point`, `feature-flag`. They are the graph's
-  leaves.
+  module: `user`, `post`, `point`, `feature-flag`, `ledger`. They are the
+  graph's leaves. `ledger` shows that "owner" is about rows and not about
+  size: it is the largest module here, and still a leaf, because it owns the
+  money rows and names no domain that spends them — a caller hands it a
+  reference id and a set of operations, never the other way round.
 - **Composite modules** own a *capability* over other modules' nouns, hold
   few or no tables of their own, and compose owners one way from above:
   `onboarding` (a cross-module use-case), `search` (an external index

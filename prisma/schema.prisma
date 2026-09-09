@@ -22,16 +22,24 @@ datasource db {
 /// enforced by a DB CHECK constraint (see the migrations), so a corrupt write
 /// fails at the database instead of surfacing later as a bad read.
 model User {
-  id           Int           @id @default(autoincrement())
-  email        String        @unique
-  name         String?
-  status       String        @default("ACTIVE")
-  posts        Post[]
-  pointBalance PointBalance?
-  pointCharges PointCharge[]
-  pointSpends  PointSpend[]
-  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+  id               Int               @id @default(autoincrement())
+  email            String            @unique
+  name             String?
+  status           String            @default("ACTIVE")
+  posts            Post[]
+  pointBalance     PointBalance?
+  pointCharges     PointCharge[]
+  pointSpends      PointSpend[]
+  /// Ledger holders this user IS (their own `USER` wallet and, if one was ever
+  /// needed, their `RECEIVABLE` account). The ledger owns those rows; this is
+  /// the back-relation of `LedgerHolder.user`.
+  ledgerHolders    LedgerHolder[]
+  /// Point lots minted FOR this user. `ownerUserId` is the lot's identity, not
+  /// its location — a staked lot still belongs to the user who bought it.
+  ledgerLots       LedgerLot[]
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
+  ledgerReferences LedgerReference[]
 }
 
 model Post {
@@ -129,4 +137,209 @@ model PointSpend {
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Ledger — the double-entry kernel every currency shares (see
+// src/modules/ledger/). Four currencies (PAID_POINT | FREE_POINT | INCOME |
+// MILEAGE), four primitives (MINT | BURN | MOVE | SWAP), four holder kinds
+// (USER | ESCROW | PAYABLE | RECEIVABLE). Every value set below is additionally
+// enforced by a CHECK constraint in the migration — the code is the single
+// source of truth for the RULES (ledger.core.ts), the database is the floor
+// that a buggy write cannot fall through.
+// ---------------------------------------------------------------------------
+
+/// One money flow, from its first moment: a top-up, an order, a payout, a
+/// conversion, a gift, an admin adjustment. Created BEFORE anything moves, so
+/// its `id` is the external correlation key (a PSP `merchant_uid`, a bank
+/// transfer reference, a store purchase token) AND the id the domain row born
+/// out of it carries. `parentId` nests the flows of one order (its extra
+/// charges, its refund requests) under the reference a human can quote.
+///
+/// Lifecycle (ledger.core.ts `planPosting`): OPEN → FUNDED → CLOSED. A
+/// reference holds no money itself — its ESCROW / PAYABLE holders do — so
+/// "closed" means exactly "those holders are empty" (law L3).
+model LedgerReference {
+  /// Human-quotable, e.g. `OR-7K3M9QX2W4`. Minted by `mintReferenceId`, never
+  /// a sequence: it is handed to third parties before any row exists.
+  id              String            @id
+  kind            String
+  state           String            @default("OPEN")
+  /// Why it closed — SETTLED | REVERSED | SPLIT | VOID. NULL exactly while OPEN
+  /// or FUNDED (a CHECK ties the two columns together).
+  closeReason     String?
+  parent          LedgerReference?  @relation("LedgerReference_parent", fields: [parentId], references: [id])
+  parentId        String?
+  children        LedgerReference[] @relation("LedgerReference_parent")
+  /// Who started the flow. NULL for system-initiated references (a sweep, an
+  /// opening balance).
+  initiator       User?             @relation(fields: [initiatorUserId], references: [id], onDelete: SetNull)
+  initiatorUserId Int?
+  /// When an OPEN reference goes stale (a PSP window, an intent TTL). The
+  /// `ledger:reference:void-stale` job closes it VOID — it never deletes it, so
+  /// a late webhook still finds the row it names.
+  expiresAt       DateTime?         @db.Timestamptz(6)
+  openedAt        DateTime          @db.Timestamptz(6)
+  closedAt        DateTime?         @db.Timestamptz(6)
+
+  holders LedgerHolder[]
+  events  LedgerEvent[]
+  lots    LedgerLot[]    @relation("LedgerLot_mintReference")
+  swaps   LedgerSwap[]
+
+  @@index([state, expiresAt])
+  @@index([parentId])
+}
+
+/// An account that can hold value. `key` is its identity as a pure function of
+/// the holder (`USER:1`, `ESCROW:OR-…`) — so the core can name a holder without
+/// a database read, and a balance row keys off that name directly.
+///
+/// USER is a person's wallet; ESCROW holds an order's stake until it settles or
+/// reverses; PAYABLE holds a withdrawal between "requested" and "the bank took
+/// it"; RECEIVABLE absorbs what a clawback could not recover (an operational
+/// loss made a number instead of a log line).
+model LedgerHolder {
+  key         String           @id
+  kind        String
+  user        User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      Int?
+  reference   LedgerReference? @relation(fields: [referenceId], references: [id])
+  referenceId String?
+  createdAt   DateTime         @db.Timestamptz(6)
+
+  balances    LedgerBalance[]
+  lotBalances LedgerLotBalance[]
+
+  @@index([userId])
+  @@index([referenceId])
+}
+
+/// A minted parcel of a LOTTED currency (the two point currencies), carrying
+/// what makes point balances non-fungible: where it came from, when it expires,
+/// and whether it is still inside its cancellation window.
+///
+/// A lot's identity survives movement (law L4): staking to escrow and back
+/// returns the SAME lot with the same deadlines — which is why a refund does not
+/// need to reconstruct "how much was paid vs free" from a JSON blob.
+model LedgerLot {
+  id               Int             @id @default(autoincrement())
+  currency         String
+  owner            User            @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerUserId      Int
+  mintReference    LedgerReference @relation("LedgerLot_mintReference", fields: [mintReferenceId], references: [id])
+  mintReferenceId  String
+  /// PG | IAP | GIFT_CARD | INCOME_SWAP | ADMIN | EVENT | OPENING. A redeem
+  /// policy can exclude sources (store-bought points are refunded by the store,
+  /// not by us) — that exclusion is why the source is stored, not just logged.
+  source           String
+  originalAmount   Int
+  mintedAt         DateTime        @db.Timestamptz(6)
+  /// After this instant the remainder is swept by `ledger:lot:expire`.
+  validUntil       DateTime        @db.Timestamptz(6)
+  /// Until this instant an INTACT lot may be burned back to its funding source
+  /// (the statutory cooling-off window). NULL = never cancellable.
+  cancellableUntil DateTime?       @db.Timestamptz(6)
+
+  balances LedgerLotBalance[]
+  events   LedgerEvent[]
+
+  @@index([ownerUserId, currency])
+  @@index([validUntil])
+}
+
+/// The append-only ledger: the ONE source of truth. Balances are derived from
+/// it, so `ledger:balance:trial` can recompute them and compare (law L1).
+///
+/// Rows are never updated or deleted. A posting (one atomic call to
+/// `LedgerService.post`) writes several rows sharing an `idempotencyKey`;
+/// `(idempotencyKey, ordinal)` is unique, which makes replay protection a plain
+/// constraint (concurrency ladder rung 1) rather than application logic.
+model LedgerEvent {
+  seq            Int             @id @default(autoincrement())
+  reference      LedgerReference @relation(fields: [referenceId], references: [id])
+  referenceId    String
+  idempotencyKey String
+  /// Position within the posting — makes the idempotency key unique per row
+  /// while the KEY still identifies the posting as a whole.
+  ordinal        Int
+  op             String
+  currency       String
+  /// Always positive: direction is carried by `op` + the holder columns, never
+  /// by a sign. NULL holders are what make MINT/BURN the supply boundary.
+  amount         Int
+  lot            LedgerLot?      @relation(fields: [lotId], references: [id])
+  lotId          Int?
+  fromHolderKey  String?
+  toHolderKey    String?
+  reason         String
+  swap           LedgerSwap?     @relation(fields: [swapId], references: [id])
+  swapId         Int?
+  /// Cash that left the ledger in this event (a fee, a bank transfer). The
+  /// ledger records the amount; the money itself lives in the accounting system.
+  feeKrw         Int             @default(0)
+  /// The external system's own id for this movement (PSP payment id, bank
+  /// sequence number, store transaction id).
+  externalRef    String?
+  actorKind      String
+  actorId        String?
+  createdAt      DateTime        @db.Timestamptz(6)
+
+  @@unique([idempotencyKey, ordinal])
+  @@index([referenceId, seq])
+  @@index([currency, seq])
+  @@index([fromHolderKey, seq])
+  @@index([toHolderKey, seq])
+  @@index([lotId])
+  @@index([swapId])
+}
+
+/// Derived: what one holder holds of one currency. Written in the same
+/// transaction as the events that move it, guarded by the plan's `assumed`
+/// value (optimistic concurrency), and provably equal to the event fold —
+/// `ledger:balance:trial` is the proof.
+model LedgerBalance {
+  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Cascade)
+  holderKey String
+  currency  String
+  amount    Int
+  updatedAt DateTime     @db.Timestamptz(6)
+
+  @@id([holderKey, currency])
+  @@index([currency])
+}
+
+/// Derived: WHERE a lot's remainder currently sits. A lot staked into escrow
+/// has its balance under the escrow holder, not the user — which is how "these
+/// exact lots come back on a refund" is a lookup rather than a reconstruction.
+model LedgerLotBalance {
+  lot       LedgerLot    @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  lotId     Int
+  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Cascade)
+  holderKey String
+  amount    Int
+
+  @@id([lotId, holderKey])
+  @@index([holderKey])
+}
+
+/// The header tying one currency exchange together: its SWAP_BURN events and
+/// its SWAP_MINT events. A swap is a burn plus a mint, never a transfer —
+/// crossing a currency boundary destroys one kind of value and creates another,
+/// and `feeKrw` is the difference that left for the cash books (law L2).
+model LedgerSwap {
+  id           Int             @id @default(autoincrement())
+  reference    LedgerReference @relation(fields: [referenceId], references: [id])
+  referenceId  String
+  /// SETTLE | GIFT_CARD_REDEEM | POINT_CONVERSION — the closed set of edges in
+  /// the currency graph (ledger.core.ts `SWAP_RATES`).
+  rateKind     String
+  burnCurrency String
+  mintCurrency String
+  feePermille  Int
+  feeKrw       Int
+
+  events LedgerEvent[]
+
+  @@index([referenceId])
 }

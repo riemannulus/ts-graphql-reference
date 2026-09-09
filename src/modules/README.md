@@ -3,9 +3,9 @@
 Each feature module owns one vertical slice of the domain: its Prisma access
 (`*.repo.ts`), its pure core (`*.core.ts` / value + state files), its service
 use-cases (`*.service.ts`), and its delivery layer — GraphQL `schemas/`, HTTP
-`routes/` (as in `auth`), and/or scheduled Agenda `jobs/` (as in `point` and
-`feature-flag`). The per-module blueprint and the layer rules live in
-[CONVENTIONS.md](../../CONVENTIONS.md); this file is about how the modules
+`routes/` (as in `auth`), and/or scheduled Agenda `jobs/` (as in `point`,
+`feature-flag` and `ledger`). The per-module blueprint and the layer rules
+live in [CONVENTIONS.md](../../CONVENTIONS.md); this file is about how the modules
 depend on **each other**.
 
 ## Module dependency graph
@@ -25,9 +25,17 @@ depend one way only"):
 | `search → post` | search hydrates external-index hits (ids) through the post repo | value |
 | `auth → user` | auth provisions / looks up a user, but the user service is **injected** (wired in `createServices`); importing values would bypass that seam, so this edge is `import type` only | type-only |
 
-`user`, `post`, `point`, and `feature-flag` import no other module. The open
-arrowhead on `auth → user` marks the type-only edge (erased at compile time);
-solid arrowheads are runtime value imports.
+`user`, `post`, `point`, `feature-flag`, and `ledger` import no other module.
+The open arrowhead on `auth → user` marks the type-only edge (erased at
+compile time); solid arrowheads are runtime value imports.
+
+`ledger` is a leaf by design, not merely by accident of being new. It is the
+one write path into money, so it names no domain: an order, a gift and a
+payout all reach it as a reference id plus a set of operations, and the
+currency rules enter it as injected policy data. An edge from `ledger` to a
+module that spends money would invert that, and the laws in
+`ledger.core.ts` hold globally only because nothing above it can reach around
+them.
 
 ## Changing this graph
 
