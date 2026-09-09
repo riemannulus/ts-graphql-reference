@@ -2,6 +2,7 @@
 // established before the register calls below append fields to them.
 import { builder } from './builder.js';
 
+import { registerLedgerModule } from '../modules/ledger/schemas/index.js';
 import { registerOnboardingModule } from '../modules/onboarding/schemas/index.js';
 import { registerPointModule } from '../modules/point/schemas/index.js';
 import { registerPostModule } from '../modules/post/schemas/index.js';
@@ -20,6 +21,7 @@ import { registerUserModule } from '../modules/user/schemas/index.js';
 registerUserModule();
 registerPostModule();
 registerPointModule();
+registerLedgerModule();
 registerOnboardingModule();
 registerSearchModule();
 

@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), the effect seams `clock.ts` / `random.ts`, `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP); `jobs/*.job.ts` (Agenda) | GraphQL types + `ctx`, Fastify req/reply, or an Agenda job | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`), job-registry + service tests |
 
 ```
@@ -387,6 +387,10 @@ diverge. See `src/tests/modules/user/user.service.model.test.ts`.
 src/
   modules/<name>/
     <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
+                        #   (when it grows: split by SUBJECT, not by size —
+                        #   `.policy.core.ts` for rules as tables, `.plan.core.ts`
+                        #   for the shell's contract, `.errors.core.ts`; see
+                        #   modules/ledger/ for the worked case)
     <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
                         #   (when it grows: split .read.repo.ts / .write.repo.ts)
     <name>.service.ts   # use-cases: read → decide → execute on db.rw
@@ -561,6 +565,17 @@ single `dayjs()` call in ~80 files (and monkey-patches the `Dayjs` prototype in
 `time.ts` for the reasoning — which is what makes time both injectable and
 library-swappable.
 
+### The same argument, for randomness
+
+`foundation/random.ts` is the clock's sibling: drawing unpredictable bytes
+observes something outside the decision the same way reading the wall clock
+does, so it enters the same way. The `Random` port (`{ bytes(count) }`) has one
+production binding (`systemRandom`, the codebase's only `node:crypto` call for
+this), is bound in the composition root beside the clock, and is fenced out of
+cores by the same lint rule. It deals in BYTES, not in ids or tokens: what the
+bytes mean is a domain question, which is why `mintSuffix` lives in the ledger
+and not here.
+
 ### now is a field of the world snapshot
 
 `now` belongs to the **read** phase of read → decide → execute, mixed with the
@@ -671,8 +686,14 @@ modules group by domain, not transport). Two module shapes exist, and the
 distinction organizes the whole graph (`src/modules/README.md`):
 
 - **Owner modules** own tables and their invariants and import no other
-  module: `user`, `post`, `point`, `feature-flag`. They are the graph's
-  leaves.
+  module: `user`, `post`, `point`, `feature-flag`, `ledger`. They are the
+  graph's leaves. `ledger` shows that "owner" is about rows and not about
+  size: it is the largest module here, and still a leaf, because it owns the
+  money rows and names no domain that spends them — a caller hands it a
+  reference id and a set of operations, never the other way round. It also
+  shows that two modules may model the same SUBJECT without either taking an
+  edge, as long as they own disjoint rows (`src/modules/README.md`, "Why
+  `point` and `ledger` both exist").
 - **Composite modules** own a *capability* over other modules' nouns, hold
   few or no tables of their own, and compose owners one way from above:
   `onboarding` (a cross-module use-case), `search` (an external index

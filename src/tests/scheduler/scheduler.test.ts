@@ -3,6 +3,11 @@ import type { Job } from 'agenda';
 import type { Services } from '../../services.js';
 import { buildScheduler } from '../../scheduler/scheduler.js';
 import { FEATURE_FLAG_PURGE_JOB } from '../../modules/feature-flag/jobs/feature-flag.job.js';
+import {
+  LEDGER_BALANCE_TRIAL_JOB,
+  LEDGER_LOT_EXPIRE_JOB,
+  LEDGER_REFERENCE_VOID_STALE_JOB,
+} from '../../modules/ledger/jobs/ledger.job.js';
 import { POINT_BALANCE_VERIFY_JOB } from '../../modules/point/jobs/point.job.js';
 import { fakeAgendaBackend } from '../support/agenda-backend-fake.js';
 
@@ -17,6 +22,9 @@ function servicesWith(overrides: {
   purgeDeleted?: (opts?: { now?: Date; retentionDays?: number }) => Promise<number>;
   reconcile?: () => Promise<{ orphanLive: string[]; killedButDeclared: string[] }>;
   verifyBalances?: () => Promise<{ usersChecked: number }>;
+  expireDueLots?: () => Promise<unknown>;
+  voidStaleReferences?: () => Promise<unknown>;
+  verifyTrialBalance?: () => Promise<unknown>;
 }): Services {
   return {
     featureFlag: {
@@ -25,6 +33,13 @@ function servicesWith(overrides: {
         overrides.reconcile ?? (() => Promise.resolve({ orphanLive: [], killedButDeclared: [] })),
     },
     point: { verifyBalances: overrides.verifyBalances ?? (() => Promise.resolve({ usersChecked: 0 })) },
+    ledger: {
+      expireDueLots:
+        overrides.expireDueLots ??
+        (() => Promise.resolve({ expiredCount: 0, burnedAmount: 0, referenceId: null })),
+      voidStaleReferences: overrides.voidStaleReferences ?? (() => Promise.resolve({ voidedCount: 0 })),
+      verifyTrialBalance: overrides.verifyTrialBalance ?? (() => Promise.resolve({ rows: [] })),
+    },
   } as unknown as Services;
 }
 
@@ -52,14 +67,22 @@ describe('buildScheduler', () => {
   it('defines exactly the modules’ jobs and returns their schedules', () => {
     const scheduler = buildScheduler({ services: servicesWith({}), backend: fakeAgendaBackend() });
 
-    expect(Object.keys(scheduler.agenda.definitions).toSorted()).toEqual([
-      FEATURE_FLAG_PURGE_JOB,
-      POINT_BALANCE_VERIFY_JOB,
-    ]);
+    expect(Object.keys(scheduler.agenda.definitions).toSorted()).toEqual(
+      [
+        FEATURE_FLAG_PURGE_JOB,
+        LEDGER_BALANCE_TRIAL_JOB,
+        LEDGER_LOT_EXPIRE_JOB,
+        LEDGER_REFERENCE_VOID_STALE_JOB,
+        POINT_BALANCE_VERIFY_JOB,
+      ].toSorted(),
+    );
 
     // The recurring registry, as data — guarded like the SDL snapshot.
     expect([...scheduler.schedules].toSorted((a, b) => a.name.localeCompare(b.name))).toEqual([
       { name: FEATURE_FLAG_PURGE_JOB, interval: '0 3 * * *', options: { timezone: 'Asia/Seoul' } },
+      { name: LEDGER_BALANCE_TRIAL_JOB, interval: '1 hour' },
+      { name: LEDGER_LOT_EXPIRE_JOB, interval: '0 4 * * *', options: { timezone: 'Asia/Seoul' } },
+      { name: LEDGER_REFERENCE_VOID_STALE_JOB, interval: '10 minutes' },
       { name: POINT_BALANCE_VERIFY_JOB, interval: '15 minutes' },
     ]);
   });

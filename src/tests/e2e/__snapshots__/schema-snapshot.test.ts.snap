@@ -13,6 +13,205 @@ input CreatePostInput {
   title: String!
 }
 
+"""Who caused a movement."""
+enum LedgerActorKind {
+  STAFF
+  SYSTEM
+  USER
+  WEBHOOK
+}
+
+"""What one account holds of one currency. Derived from the event log."""
+type LedgerBalance {
+  amount: Int
+  currency: LedgerCurrency
+  holder: LedgerHolder
+}
+
+"""How a flow ended. Null while it is still open."""
+enum LedgerCloseReason {
+  EXPIRED
+  REVERSED
+  SETTLED
+  SPLIT
+  VOID
+}
+
+"""
+The kinds of value the ledger holds. PAID_POINT and FREE_POINT are held as dated lots; INCOME and MILEAGE are running balances.
+"""
+enum LedgerCurrency {
+  FREE_POINT
+  INCOME
+  MILEAGE
+  PAID_POINT
+}
+
+"""Which currency to list lots for."""
+enum LedgerCurrencyFilter {
+  FREE_POINT
+  INCOME
+  MILEAGE
+  PAID_POINT
+}
+
+"""
+One movement. Append-only: the amount is always positive and the direction is carried by the op plus the holders, never by a sign.
+"""
+type LedgerEvent {
+  actorKind: LedgerActorKind
+  amount: Int
+  createdAt: String
+  currency: LedgerCurrency
+  externalRef: String
+
+  """Cash that left the ledger with this movement."""
+  feeKrw: Int
+  fromHolderKey: String
+  lot: LedgerLot
+  op: LedgerEventOp
+  reason: String
+  reference: LedgerReference
+
+  """Monotonic position in the log."""
+  seq: ID
+  swap: LedgerSwap
+  toHolderKey: String
+}
+
+"""
+MINT and BURN cross the supply boundary; MOVE conserves value; a SWAP is recorded as its two halves, SWAP_BURN and SWAP_MINT.
+"""
+enum LedgerEventOp {
+  BURN
+  MINT
+  MOVE
+  SWAP_BURN
+  SWAP_MINT
+}
+
+"""An account that can hold value."""
+type LedgerHolder {
+  balances: [LedgerBalance!]
+
+  """The account name, e.g. \`USER:7\`."""
+  key: ID
+  kind: LedgerHolderKind
+  reference: LedgerReference
+  user: User
+}
+
+"""
+What an account belongs to: a person (USER, RECEIVABLE) or a money flow (ESCROW, PAYABLE).
+"""
+enum LedgerHolderKind {
+  ESCROW
+  PAYABLE
+  RECEIVABLE
+  USER
+}
+
+"""
+A minted parcel of a lotted currency. Its identity survives movement, so a refund returns the same deadlines the payment created.
+"""
+type LedgerLot {
+  """
+  Until this instant an untouched lot can go back to what funded it. Null when the funding source does not allow it.
+  """
+  cancellableUntil: String
+  currency: LedgerCurrency
+  id: ID
+  mintReference: LedgerReference
+  mintedAt: String
+  originalAmount: Int
+  owner: User
+  source: LedgerLotSource
+
+  """After this instant the remainder is swept."""
+  validUntil: String
+}
+
+"""Where a lot's remainder currently sits."""
+type LedgerLotBalance {
+  amount: Int
+  holder: LedgerHolder
+  lot: LedgerLot
+}
+
+"""Where a lot's value came from. Decides whether it can be paid out."""
+enum LedgerLotSource {
+  ADMIN
+  EVENT
+  GIFT_CARD
+  IAP
+  INCOME_SWAP
+  OPENING
+  PG
+}
+
+"""
+One money flow, from before anything moved. Its id is what a person quotes to support and what external systems correlate on. The ledger is READ-ONLY over GraphQL by design: value moves only through the domain use-case that is entitled to move it (paying for an order, redeeming a gift), never through a general-purpose mutation.
+"""
+type LedgerReference {
+  children: [LedgerReference!]
+
+  """Null until the flow closes."""
+  closeReason: LedgerCloseReason
+  closedAt: String
+
+  """The first 50 movements, oldest first."""
+  events: [LedgerEvent!]
+
+  """When an untouched flow is voided by the sweep."""
+  expiresAt: String
+  holders: [LedgerHolder!]
+  id: ID
+  initiator: User
+  kind: LedgerReferenceKind
+  openedAt: String
+  parent: LedgerReference
+  state: LedgerReferenceState
+}
+
+"""What kind of money flow a reference is."""
+enum LedgerReferenceKind {
+  ADJUST
+  CHARGE
+  CONVERSION
+  GIFT
+  ORDER
+  PAYOUT
+}
+
+"""OPEN (nothing moved) → FUNDED (money moved) → CLOSED (finished)."""
+enum LedgerReferenceState {
+  CLOSED
+  FUNDED
+  OPEN
+}
+
+"""
+One currency exchange: the burn side destroyed value, the mint side created it, and the difference is the fee that left for the cash books.
+"""
+type LedgerSwap {
+  burnCurrency: LedgerCurrency
+  feeKrw: Int
+  feePermille: Int
+  id: ID
+  mintCurrency: LedgerCurrency
+  rateKind: LedgerSwapRateKind
+  reference: LedgerReference
+}
+
+"""
+The edges of the currency graph. An exchange that is not one of these has no rate and cannot be recorded.
+"""
+enum LedgerSwapRateKind {
+  GIFT_CARD_REDEEM
+  POINT_CONVERSION
+  SETTLE
+}
+
 type Mutation {
   changeUserStatus(id: Int!, status: UserStatus!): User
 
@@ -78,6 +277,27 @@ type Post {
 type Query {
   """Liveness probe — always returns "ok"."""
   health: String
+
+  """A person's balances, one row per currency they have ever held."""
+  ledgerBalances(userId: Int!): [LedgerBalance!]
+
+  """
+  A person's movements across every currency, most recent first — a settlement burns points and mints income, and a statement that showed only one of them would not add up. At most 50 at a time: pass the \`seq\` of the oldest row you have as \`before\` for the next page.
+  """
+  ledgerHolderEvents(before: Int, userId: Int!): [LedgerEvent!]
+
+  """
+  A person's live lots of one currency, in the order they will be spent (earliest deadline first). At most 50: the first page is the one that will be spent.
+  """
+  ledgerLotHoldings(currency: LedgerCurrencyFilter!, userId: Int!): [LedgerLotBalance!]
+
+  """One money flow by the id a person can quote."""
+  ledgerReference(id: String!): LedgerReference
+
+  """
+  A flow's movements, in the order they happened. At most 50 at a time: pass the \`seq\` of the last row you have as \`after\` for the next page.
+  """
+  ledgerReferenceEvents(after: Int, referenceId: String!): [LedgerEvent!]
 
   """A user's current point balance (null until the first charge)."""
   pointBalance(userId: Int!): PointBalance
