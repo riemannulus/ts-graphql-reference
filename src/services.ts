@@ -1,9 +1,11 @@
 import type { Db } from './db/db.js';
 import { FLAGS } from './flags/flag-registry.js';
 import { type Clock, systemClock } from './foundation/clock.js';
+import { type Random, systemRandom } from './foundation/random.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
+import { currencyRegistry } from './modules/ledger/currencies/registry.core.js';
 import { createLedgerService } from './modules/ledger/ledger.service.js';
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
@@ -33,6 +35,11 @@ export interface CreateServicesOptions {
    * deterministic. Bound once here and shared by every service that reads time.
    */
   clock?: Clock;
+  /**
+   * The randomness use-cases draw bytes from (see foundation/random.ts).
+   * Production uses `systemRandom`; tests inject a deterministic source.
+   */
+  random?: Random;
 }
 
 /**
@@ -56,11 +63,13 @@ export interface CreateServicesOptions {
  */
 export function createServices(db: Db, options: CreateServicesOptions = {}) {
   const clock = options.clock ?? systemClock;
+  const random = options.random ?? systemRandom;
   const user = createUserService(db);
   const point = createPointService(db, clock);
-  // The ledger takes the currency policies from its own registry by default;
-  // the seam exists so a test can decide against a different set of currencies.
-  const ledger = createLedgerService({ db, clock });
+  // Which currencies exist is a WIRING question, so the registry is bound here
+  // rather than imported by the kernel — that is what lets `ledger.core.ts`
+  // state the rules without naming a single currency.
+  const ledger = createLedgerService({ db, clock, random, policies: currencyRegistry });
   const auth = createOAuthService({
     users: user,
     google: options.googleOAuth ?? stubGoogleOAuthClient,

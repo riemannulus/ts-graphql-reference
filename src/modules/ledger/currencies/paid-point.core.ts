@@ -31,8 +31,17 @@ export const PAID_POINT_POLICY: LottedCurrencyPolicy = {
   code: 'PAID_POINT',
   accounting: 'DEFERRED_REVENUE',
   holderKinds: ['USER', 'ESCROW', 'PAYABLE', 'RECEIVABLE'],
-  mintReasons: ['PG_CHARGE', 'IAP_CHARGE', 'ADMIN_GRANT', 'LOSS_RECOGNITION', 'OPENING'],
+  mintReasons: [
+    'POINT_CONVERSION',
+    'PG_CHARGE',
+    'IAP_CHARGE',
+    'ADMIN_GRANT',
+    'LOSS_RECOGNITION',
+    'OPENING',
+  ],
   burnReasons: [
+    'SETTLE',
+    'GIFT_CARD_REDEEM',
     'PG_REFUND',
     'BANK_WITHDRAWAL',
     'EXPIRED',
@@ -53,7 +62,11 @@ export const PAID_POINT_POLICY: LottedCurrencyPolicy = {
   redeem: {
     feePermille: 100,
     minimumFee: 1000,
-    minimumAmount: 1000,
+    // The floor is set BY the minimum fee, not independently of it: at 10,000
+    // the flat fee is exactly the rate, so no payout is ever charged more than
+    // the headline 10%. A smaller floor would let the minimum fee quietly
+    // become a 50% charge on a small withdrawal.
+    minimumAmount: 10_000,
     excludeLotSources: ['IAP', 'INCOME_SWAP'],
   },
   lifetimeDays: 365 * 5,

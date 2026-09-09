@@ -26,8 +26,8 @@ export const INCOME_POLICY: ScalarCurrencyPolicy = {
   code: 'INCOME',
   accounting: 'PAYABLE',
   holderKinds: ['USER', 'PAYABLE', 'RECEIVABLE'],
-  mintReasons: ['ADMIN_GRANT', 'LOSS_RECOGNITION', 'OPENING'],
-  burnReasons: ['BANK_WITHDRAWAL', 'ADMIN_REVOKE'],
+  mintReasons: ['SETTLE', 'ADMIN_GRANT', 'LOSS_RECOGNITION', 'OPENING'],
+  burnReasons: ['POINT_CONVERSION', 'BANK_WITHDRAWAL', 'ADMIN_REVOKE'],
   moveReasons: ['PAYOUT_STAKE', 'PAYOUT_UNSTAKE', 'CLAWBACK', 'CLAWBACK_RELEASE'],
   redeem: {
     feePermille: 0,

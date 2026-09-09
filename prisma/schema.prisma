@@ -165,10 +165,10 @@ model LedgerReference {
   id              String            @id
   kind            String
   state           String            @default("OPEN")
-  /// Why it closed — SETTLED | REVERSED | SPLIT | VOID. NULL exactly while OPEN
-  /// or FUNDED (a CHECK ties the two columns together).
+  /// Why it closed — SETTLED | REVERSED | SPLIT | VOID | EXPIRED. NULL exactly
+  /// while OPEN or FUNDED (a CHECK ties the two columns together).
   closeReason     String?
-  parent          LedgerReference?  @relation("LedgerReference_parent", fields: [parentId], references: [id])
+  parent          LedgerReference?  @relation("LedgerReference_parent", fields: [parentId], references: [id], onDelete: Restrict)
   parentId        String?
   children        LedgerReference[] @relation("LedgerReference_parent")
   /// Who started the flow. NULL for system-initiated references (a sweep, an
@@ -202,9 +202,9 @@ model LedgerReference {
 model LedgerHolder {
   key         String           @id
   kind        String
-  user        User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User?            @relation(fields: [userId], references: [id], onDelete: Restrict)
   userId      Int?
-  reference   LedgerReference? @relation(fields: [referenceId], references: [id])
+  reference   LedgerReference? @relation(fields: [referenceId], references: [id], onDelete: Restrict)
   referenceId String?
   createdAt   DateTime         @db.Timestamptz(6)
 
@@ -225,7 +225,7 @@ model LedgerHolder {
 model LedgerLot {
   id               Int             @id @default(autoincrement())
   currency         String
-  owner            User            @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  owner            User            @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
   ownerUserId      Int
   mintReference    LedgerReference @relation("LedgerLot_mintReference", fields: [mintReferenceId], references: [id])
   mintReferenceId  String
@@ -268,12 +268,12 @@ model LedgerEvent {
   /// Always positive: direction is carried by `op` + the holder columns, never
   /// by a sign. NULL holders are what make MINT/BURN the supply boundary.
   amount         Int
-  lot            LedgerLot?      @relation(fields: [lotId], references: [id])
+  lot            LedgerLot?      @relation(fields: [lotId], references: [id], onDelete: Restrict)
   lotId          Int?
   fromHolderKey  String?
   toHolderKey    String?
   reason         String
-  swap           LedgerSwap?     @relation(fields: [swapId], references: [id])
+  swap           LedgerSwap?     @relation(fields: [swapId], references: [id], onDelete: Restrict)
   swapId         Int?
   /// Cash that left the ledger in this event (a fee, a bank transfer). The
   /// ledger records the amount; the money itself lives in the accounting system.
@@ -299,7 +299,7 @@ model LedgerEvent {
 /// value (optimistic concurrency), and provably equal to the event fold —
 /// `ledger:balance:trial` is the proof.
 model LedgerBalance {
-  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Cascade)
+  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Restrict)
   holderKey String
   currency  String
   amount    Int
@@ -313,9 +313,9 @@ model LedgerBalance {
 /// has its balance under the escrow holder, not the user — which is how "these
 /// exact lots come back on a refund" is a lookup rather than a reconstruction.
 model LedgerLotBalance {
-  lot       LedgerLot    @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  lot       LedgerLot    @relation(fields: [lotId], references: [id], onDelete: Restrict)
   lotId     Int
-  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Cascade)
+  holder    LedgerHolder @relation(fields: [holderKey], references: [key], onDelete: Restrict)
   holderKey String
   amount    Int
 

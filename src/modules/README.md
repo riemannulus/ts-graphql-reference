@@ -29,13 +29,34 @@ depend one way only"):
 The open arrowhead on `auth → user` marks the type-only edge (erased at
 compile time); solid arrowheads are runtime value imports.
 
-`ledger` is a leaf by design, not merely by accident of being new. It is the
-one write path into money, so it names no domain: an order, a gift and a
-payout all reach it as a reference id plus a set of operations, and the
-currency rules enter it as injected policy data. An edge from `ledger` to a
-module that spends money would invert that, and the laws in
+`ledger` is a leaf by design, not merely by accident of being new. It names no
+domain: an order, a gift and a payout all reach it as a reference id plus a set
+of operations, and the currency rules enter it as injected policy data. An edge
+from `ledger` to a module that spends money would invert that, and the laws in
 `ledger.core.ts` hold globally only because nothing above it can reach around
 them.
+
+### Why `point` and `ledger` both exist
+
+They own **different rows** and neither is authoritative over the other's, so
+§11's ownership question has a straight answer: `point` owns `PointCharge`,
+`PointSpend` and `PointBalance`; `ledger` owns the `Ledger*` tables. Nothing
+reads or writes across that line, which is why both can be registered at once
+without a cross-module edge.
+
+They are here for different reasons, and a reader should take different things
+from each. `point` is the SMALL worked blueprint — the shortest complete
+example of the layer split and the plan pattern, and the one to copy when
+adding an ordinary module. `ledger` is the same pattern under real pressure: a
+money model with a supply boundary, escrow, lot identity, exchange rates and
+eight numbered laws. It is deliberately larger than any module a reference
+repository needs, because the point of it is what the pattern looks like when
+the domain stops being simple.
+
+A production system would pick one. Migrating `point`'s rows onto the ledger is
+the obvious next change, and it is a separate one: it touches `point`'s public
+mutations, so landing it with the ledger itself would put two independent
+decisions in one diff.
 
 ## Changing this graph
 

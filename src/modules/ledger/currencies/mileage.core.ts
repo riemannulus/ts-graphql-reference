@@ -25,7 +25,7 @@ export const MILEAGE_POLICY: ScalarCurrencyPolicy = {
   code: 'MILEAGE',
   accounting: 'PROVISION',
   holderKinds: ['USER'],
-  mintReasons: ['EVENT', 'ADMIN_GRANT', 'OPENING'],
+  mintReasons: ['SETTLE', 'EVENT', 'ADMIN_GRANT', 'OPENING'],
   burnReasons: ['STORE_PURCHASE', 'ADMIN_REVOKE'],
   moveReasons: [],
   redeem: null,

@@ -2,13 +2,14 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
 import {
+  holdingsOf,
   LedgerLotNotRedeemableError,
   LedgerReferenceClosedError,
   LedgerTrialBalanceError,
-  type Op,
   planPosting,
   redeemFee,
   selectLotsFifo,
+  type Op,
 } from '../../../modules/ledger/ledger.core.js';
 import { createLedgerService } from '../../../modules/ledger/ledger.service.js';
 import * as ledgerRepo from '../../../modules/ledger/ledger.write.repo.js';
@@ -21,7 +22,7 @@ import {
 } from '../../../modules/ledger/ledger.value.js';
 import { fixedClock } from '../../support/clock.js';
 import { makeTestPrisma, resetDb } from '../../support/helpers.js';
-import { NOW, sequentialIds } from './ledger.arbitraries.js';
+import { NOW, sequentialRandom } from './ledger.arbitraries.js';
 
 // The shell, against a real database: the flows a payments system actually has,
 // end to end. Each one is a story someone will have to debug one day, so the
@@ -29,7 +30,7 @@ import { NOW, sequentialIds } from './ledger.arbitraries.js';
 
 const prisma = await makeTestPrisma();
 const db = { rw: prisma, ro: prisma };
-const ledger = createLedgerService({ db, clock: fixedClock(NOW), ids: sequentialIds() });
+const ledger = createLedgerService({ db, clock: fixedClock(NOW), random: sequentialRandom(), policies: currencyRegistry });
 
 async function makeUser(email: string): Promise<number> {
   const user = await prisma.user.create({ data: { email } });
@@ -110,19 +111,7 @@ function stake(referenceId: string, userId: number, currency: 'PAID_POINT' | 'FR
         op: 'MOVE',
         from: userHolder(userId),
         to: escrowHolder(referenceId),
-        tokens: selectLotsFifo(
-          world.lots
-            .map((lot) => ({
-              lot,
-              amount:
-                world.lotBalances.find(
-                  (row) => row.lotId === lot.id && row.holderKey === holderKey(userHolder(userId)),
-                )?.amount ?? 0,
-            }))
-            .filter((holding) => holding.amount > 0),
-          currency,
-          amount,
-        ),
+        tokens: selectLotsFifo(holdingsOf(world, userHolder(userId)), currency, amount),
         reason: 'ORDER_STAKE',
       },
     ],
@@ -336,7 +325,8 @@ describe('a payout', () => {
     expect(await balance(userHolder(seller), 'INCOME')).toBe(0);
     expect(await balance(payableHolder(payout.id), 'INCOME')).toBe(50_000);
 
-    const fee = redeemFee(currencyRegistry.INCOME.redeem!, 50_000);
+    // The caller does NOT name the fee — the kernel takes it from the policy, so
+    // what the payout screen quoted and what the burn charges are one number.
     await ledger.post({
       referenceId: payout.id,
       idempotencyKey: `${payout.id}:settled`,
@@ -347,7 +337,6 @@ describe('a payout', () => {
           from: payableHolder(payout.id),
           tokens: [{ currency: 'INCOME', amount: 50_000, lotId: null }],
           reason: 'BANK_WITHDRAWAL',
-          feeKrw: fee,
           externalRef: 'bank-seq-0001',
         },
       ],
@@ -358,7 +347,8 @@ describe('a payout', () => {
     const burn = await prisma.ledgerEvent.findFirstOrThrow({ where: { op: 'BURN' } });
     expect(burn).toMatchObject({ reason: 'BANK_WITHDRAWAL', externalRef: 'bank-seq-0001' });
     // The platform's cut was taken at settlement, so a payout is not charged twice.
-    expect(fee).toBe(0);
+    expect(burn.feeKrw).toBe(redeemFee(currencyRegistry.INCOME.redeem!, 50_000));
+    expect(burn.feeKrw).toBe(0);
   });
 
   it('gives the money back when the transfer fails — a move, not a compensating entry', async () => {

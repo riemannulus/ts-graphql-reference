@@ -30,8 +30,17 @@ export const FREE_POINT_POLICY: LottedCurrencyPolicy = {
   code: 'FREE_POINT',
   accounting: 'PROVISION',
   holderKinds: ['USER', 'ESCROW', 'RECEIVABLE'],
-  mintReasons: ['PG_BONUS', 'EVENT', 'ADMIN_GRANT', 'LOSS_RECOGNITION', 'OPENING'],
+  mintReasons: [
+    'GIFT_CARD_REDEEM',
+    'PG_BONUS',
+    'EVENT',
+    'ADMIN_GRANT',
+    'LOSS_RECOGNITION',
+    'OPENING',
+  ],
   burnReasons: [
+    'SETTLE',
+    'GIFT_CARD_REDEEM',
     'FORFEIT_ON_REFUND',
     'EXPIRED',
     'IAP_REVOKE',

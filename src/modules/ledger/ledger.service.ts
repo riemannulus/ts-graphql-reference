@@ -1,11 +1,10 @@
-import { randomBytes } from 'node:crypto';
 import type { LedgerEvent, LedgerReference } from '@prisma/client';
 import type { Db } from '../../db/db.js';
 import { isUniqueViolation } from '../../db/prisma-errors.js';
 import { uow } from '../../db/uow.js';
 import type { Clock } from '../../foundation/clock.js';
+import type { Random } from '../../foundation/random.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
-import { currencyRegistry } from './currencies/registry.core.js';
 import {
   assertTrialBalance,
   type CurrencyRegistry,
@@ -13,6 +12,8 @@ import {
   type LedgerWorld,
   type Op,
   planPosting,
+  planStaleVoid,
+  selectDueLots,
   type TrialBalanceRow,
 } from './ledger.core.js';
 import * as ledgerRepo from './ledger.write.repo.js';
@@ -20,22 +21,21 @@ import {
   type Actor,
   type CloseReason,
   type Holder,
-  isLottedCurrency,
   mintReferenceId,
   REFERENCE_ID_ALPHABET,
   REFERENCE_ID_SUFFIX_LENGTH,
   type ReferenceKind,
-  userHolder,
 } from './ledger.value.js';
 
 /**
- * Ledger use-cases — the ONE write path into the money.
+ * Ledger use-cases — the ONE write path into the ledger's own money.
  *
- * Everything a domain does with value goes through `post`: a top-up is a MINT,
- * paying for an order is a MOVE into escrow, settling it is a SWAP out of it, a
- * refund is that MOVE backwards. There is no second way in, which is what makes
- * the laws in `ledger.core.ts` hold globally rather than wherever someone
- * remembered to call the right helper.
+ * Everything a domain does with ledger value goes through `post`: a top-up is a
+ * MINT, paying for an order is a MOVE into escrow, settling it is a SWAP out of
+ * it, a refund is that MOVE backwards. There is no second way into these tables,
+ * which is what makes the laws in `ledger.core.ts` hold globally rather than
+ * wherever someone remembered to call the right helper. (The `point` module
+ * keeps its own, separate rows — `src/modules/README.md` says why both exist.)
  *
  * ## Concurrency
  *
@@ -60,39 +60,31 @@ import {
  */
 
 /**
- * The random half of a reference id. Randomness is an EFFECT, so it enters the
- * same way `now` does: an injected seam with a production binding here and a
- * deterministic one in tests. Not a `*.provider.ts` — that file kind is for
- * external SYSTEMS the module speaks to, and the ledger has none. It is the
- * plain-function seam CONVENTIONS §5 sanctions.
+ * The random half of a reference id, drawn through the app's randomness seam
+ * (`foundation/random.ts`) — an effect the module receives, never one it takes.
+ *
+ * Pure given its bytes: the alphabet is exactly 32 characters, which divides
+ * 256, so masking the low five bits is uniform — no modulo bias, no rejection
+ * loop, and a test that supplies fixed bytes gets a fixed id.
  */
-export interface ReferenceIdSource {
-  suffix(): string;
+export function mintSuffix(random: Random): string {
+  return Array.from(random.bytes(REFERENCE_ID_SUFFIX_LENGTH), (byte) =>
+    REFERENCE_ID_ALPHABET.charAt(byte & 31),
+  ).join('');
 }
-
-/**
- * Production binding: CSPRNG bytes mapped onto the id alphabet. The alphabet is
- * exactly 32 characters, which divides 256, so masking the low five bits is
- * uniform — no modulo bias, no rejection loop.
- */
-export const cryptoReferenceIdSource: ReferenceIdSource = {
-  suffix: () =>
-    Array.from(randomBytes(REFERENCE_ID_SUFFIX_LENGTH), (byte) =>
-      REFERENCE_ID_ALPHABET.charAt(byte & 31),
-    ).join(''),
-};
 
 export interface LedgerServiceDeps {
   db: Db;
   /** The seam every use-case reads "now" through (foundation/clock.ts). */
   clock: Clock;
-  /** Defaults to the CSPRNG binding; tests inject a counter. */
-  ids?: ReferenceIdSource;
+  /** The seam a reference id's random half comes from (foundation/random.ts). */
+  random: Random;
   /**
-   * The currency policies. Injected rather than imported by the kernel, so a
-   * test can hand it a different set and the rules stay currency-agnostic.
+   * The currency policies, bound in the composition root. Required rather than
+   * defaulted: "which currencies exist" is a wiring decision, and a default
+   * here would quietly put it back inside the module.
    */
-  policies?: CurrencyRegistry;
+  policies: CurrencyRegistry;
 }
 
 /** What opening a flow needs. Everything but the kind is optional. */
@@ -179,9 +171,7 @@ function mintedLotIdsOf(events: readonly LedgerEvent[]): number[] {
 }
 
 export function createLedgerService(deps: LedgerServiceDeps) {
-  const { db, clock } = deps;
-  const ids = deps.ids ?? cryptoReferenceIdSource;
-  const policies = deps.policies ?? currencyRegistry;
+  const { db, clock, random, policies } = deps;
 
   /**
    * Opens a flow. Nothing has moved yet — the id exists so it can be handed to a
@@ -190,7 +180,7 @@ export function createLedgerService(deps: LedgerServiceDeps) {
    */
   async function openReference(input: OpenReferenceInput): Promise<LedgerReference> {
     const now = input.now ?? clock.now();
-    const id = mintReferenceId(input.kind, ids.suffix());
+    const id = mintReferenceId(input.kind, mintSuffix(random));
     return uow.run(db, (tx) =>
       ledgerRepo.createReference(tx, {
         id,
@@ -268,54 +258,70 @@ export function createLedgerService(deps: LedgerServiceDeps) {
    *
    * `now` is read ONCE — from `opts.now` (a backfill passing an explicit instant)
    * or the injected clock — and handed to the kernel as data.
+   *
+   * The first read only finds WHICH WALLETS have work; `selectDueLots` then
+   * decides what to burn from the posting's own snapshot. Deciding from the
+   * first read instead would price the burn against a world the plan is never
+   * checked against, and one concurrent spend would fail the whole batch.
    */
   async function expireDueLots(
     opts: SweepOptions = {},
   ): Promise<{ expiredCount: number; burnedAmount: number; referenceId: string | null }> {
     const now = opts.now ?? clock.now();
-    const due = await ledgerRepo.findDueLotHoldings(
+    const candidates = await ledgerRepo.findWalletsWithDueLots(
       db.rw,
       now,
       opts.batchSize ?? DEFAULT_BATCH_SIZE,
     );
-    if (due.length === 0) return { expiredCount: 0, burnedAmount: 0, referenceId: null };
+    if (candidates.length === 0) return { expiredCount: 0, burnedAmount: 0, referenceId: null };
 
-    const reference = await openReference({ kind: 'ADJUST', now });
-    const ops: Op[] = due.map((holding) => ({
-      op: 'BURN',
-      from: userHolder(holding.userId),
-      tokens: [
-        isLottedCurrency(holding.currency)
-          ? { currency: holding.currency, amount: holding.amount, lotId: holding.lotId }
-          : { currency: holding.currency, amount: holding.amount, lotId: null },
-      ],
-      reason: 'EXPIRED',
-    }));
+    // The flow carries its own window, so a sweep that dies before its posting
+    // lands leaves a reference `voidStaleReferences` can still reclaim rather
+    // than an OPEN row nothing will ever close.
+    const reference = await openReference({ kind: 'ADJUST', now, expiresAt: now });
+    let expired: readonly { amount: number }[] = [];
 
     await post({
       referenceId: reference.id,
       idempotencyKey: `${reference.id}:expire`,
       actor: { kind: 'SYSTEM', id: null },
-      ops,
-      closeAs: 'SETTLED',
+      holders: candidates,
+      decide: (world) => {
+        const due = selectDueLots(world, now);
+        expired = due;
+        return due.map(
+          (lot): Op => ({
+            op: 'BURN',
+            from: lot.holder,
+            tokens: [{ currency: lot.currency, amount: lot.amount, lotId: lot.lotId }],
+            reason: 'EXPIRED',
+          }),
+        );
+      },
+      closeAs: 'EXPIRED',
       now,
     });
 
     return {
-      expiredCount: due.length,
-      burnedAmount: due.reduce((sum, holding) => sum + holding.amount, 0),
+      expiredCount: expired.length,
+      burnedAmount: expired.reduce((sum, lot) => sum + lot.amount, 0),
       referenceId: reference.id,
     };
   }
 
   /**
    * Closes flows that were opened and never used — the
-   * `ledger:reference:void-stale` job. One guarded statement (rung 0): `OPEN`
-   * already means "nothing has moved", so the predicate IS the safety check.
+   * `ledger:reference:void-stale` job.
+   *
+   * read → decide → execute like every other use-case, even though the decision
+   * is small: `planStaleVoid` names the transition in the core, and the repo
+   * applies it as ONE guarded statement (rung 0). Encoding the transition in the
+   * `updateMany` instead would put "how a flow ends" in two places.
    */
   async function voidStaleReferences(opts: SweepOptions = {}): Promise<{ voidedCount: number }> {
     const now = opts.now ?? clock.now();
-    return uow.run(db, (tx) => ledgerRepo.voidStaleReferences(tx, now));
+    const plan = planStaleVoid(now); // decide (core)
+    return uow.run(db, (tx) => ledgerRepo.applyStaleVoid(tx, plan)); // execute
   }
 
   /**

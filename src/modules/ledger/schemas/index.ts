@@ -8,13 +8,13 @@ import { registerLedgerTypes } from './ledger.type.js';
  * the layering stay intact.
  *
  * **Queries only, deliberately.** There is no `ledgerPost` mutation, because a
- * movement of value is never a client's decision — it is a domain's. A top-up is
- * the payment module's use-case, settling an order is the order module's; each
- * of them reaches the ledger through `ctx.services.ledger.post`, carrying the
- * gates that make the movement legitimate (who may pay, is the seller verified,
- * has the window closed). Exposing the primitives directly would let a caller
- * mint value with a well-formed request, and no amount of authorization on top
- * would put those gates back.
+ * movement of value is never a client's decision — it is a domain's. Whichever
+ * module owns the reason value is moving (a top-up, an order settling, a gift
+ * redeemed) reaches the ledger through `services.ledger.post`, carrying the
+ * gates that make that particular movement legitimate: who may pay, whether the
+ * seller is verified, whether the window has closed. Exposing the primitives
+ * directly would let a caller mint value with a well-formed request, and no
+ * amount of authorization bolted on top would put those gates back.
  */
 export function registerLedgerModule(): void {
   registerLedgerTypes();

@@ -211,8 +211,11 @@ test.prop([arbWallet, arbMoveAmount])(
     expect(burned).toBe(amount);
     expect(income.amount + swap.feeKrw).toBe(burned);
     expect(rebate?.amount ?? 0).toBe(swap.feeKrw);
-    // The fee is exactly the rate, rounded up.
-    expect(swap.feeKrw).toBe(Math.ceil((burned * SWAP_RATES.SETTLE.feePermille) / 1000));
+    // The fee is exactly the rate, rounded the payer's way.
+    expect(swap.feeKrw).toBe(Math.floor((burned * SWAP_RATES.SETTLE.feePermille) / 1000));
+    // And rounding down is what makes every exchange representable: whatever a
+    // SPLIT leaves behind, settling it mints at least one unit.
+    expect(income.amount).toBeGreaterThan(0);
   },
 );
 

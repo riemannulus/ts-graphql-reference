@@ -35,7 +35,8 @@ CREATE TABLE "LedgerReference" (
     ),
     CONSTRAINT "LedgerReference_state_check" CHECK ("state" IN ('OPEN', 'FUNDED', 'CLOSED')),
     CONSTRAINT "LedgerReference_closeReason_check" CHECK (
-        "closeReason" IS NULL OR "closeReason" IN ('SETTLED', 'REVERSED', 'SPLIT', 'VOID')
+        "closeReason" IS NULL
+        OR "closeReason" IN ('SETTLED', 'REVERSED', 'SPLIT', 'VOID', 'EXPIRED')
     ),
     -- CLOSED and "has a close reason" are the same fact; so are CLOSED and
     -- `closedAt`. Storing them separately without tying them together is how a
@@ -267,20 +268,27 @@ CREATE INDEX "LedgerLotBalance_holderKey_idx" ON "LedgerLotBalance"("holderKey")
 -- CreateIndex
 CREATE INDEX "LedgerSwap_referenceId_idx" ON "LedgerSwap"("referenceId");
 
+-- The money log is APPEND-ONLY, so every reference into it is RESTRICT: a
+-- delete anywhere upstream is refused rather than quietly rewriting a row
+-- that says what happened. A CASCADE from `User` would take a person's
+-- holders and lots while the events that name them survive, leaving the
+-- trial balance permanently broken; a SET NULL on an event's lot would
+-- violate the lot-shape CHECK outright. The one exception is a reference's
+-- `initiatorUserId`, which is a link to a person and not a money row.
 -- AddForeignKey
-ALTER TABLE "LedgerReference" ADD CONSTRAINT "LedgerReference_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "LedgerReference"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "LedgerReference" ADD CONSTRAINT "LedgerReference_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "LedgerReference"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "LedgerReference" ADD CONSTRAINT "LedgerReference_initiatorUserId_fkey" FOREIGN KEY ("initiatorUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerHolder" ADD CONSTRAINT "LedgerHolder_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LedgerHolder" ADD CONSTRAINT "LedgerHolder_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerHolder" ADD CONSTRAINT "LedgerHolder_referenceId_fkey" FOREIGN KEY ("referenceId") REFERENCES "LedgerReference"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "LedgerHolder" ADD CONSTRAINT "LedgerHolder_referenceId_fkey" FOREIGN KEY ("referenceId") REFERENCES "LedgerReference"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerLot" ADD CONSTRAINT "LedgerLot_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LedgerLot" ADD CONSTRAINT "LedgerLot_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "LedgerLot" ADD CONSTRAINT "LedgerLot_mintReferenceId_fkey" FOREIGN KEY ("mintReferenceId") REFERENCES "LedgerReference"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -289,19 +297,19 @@ ALTER TABLE "LedgerLot" ADD CONSTRAINT "LedgerLot_mintReferenceId_fkey" FOREIGN 
 ALTER TABLE "LedgerEvent" ADD CONSTRAINT "LedgerEvent_referenceId_fkey" FOREIGN KEY ("referenceId") REFERENCES "LedgerReference"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerEvent" ADD CONSTRAINT "LedgerEvent_lotId_fkey" FOREIGN KEY ("lotId") REFERENCES "LedgerLot"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "LedgerEvent" ADD CONSTRAINT "LedgerEvent_lotId_fkey" FOREIGN KEY ("lotId") REFERENCES "LedgerLot"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerEvent" ADD CONSTRAINT "LedgerEvent_swapId_fkey" FOREIGN KEY ("swapId") REFERENCES "LedgerSwap"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "LedgerEvent" ADD CONSTRAINT "LedgerEvent_swapId_fkey" FOREIGN KEY ("swapId") REFERENCES "LedgerSwap"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerBalance" ADD CONSTRAINT "LedgerBalance_holderKey_fkey" FOREIGN KEY ("holderKey") REFERENCES "LedgerHolder"("key") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LedgerBalance" ADD CONSTRAINT "LedgerBalance_holderKey_fkey" FOREIGN KEY ("holderKey") REFERENCES "LedgerHolder"("key") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerLotBalance" ADD CONSTRAINT "LedgerLotBalance_lotId_fkey" FOREIGN KEY ("lotId") REFERENCES "LedgerLot"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LedgerLotBalance" ADD CONSTRAINT "LedgerLotBalance_lotId_fkey" FOREIGN KEY ("lotId") REFERENCES "LedgerLot"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LedgerLotBalance" ADD CONSTRAINT "LedgerLotBalance_holderKey_fkey" FOREIGN KEY ("holderKey") REFERENCES "LedgerHolder"("key") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LedgerLotBalance" ADD CONSTRAINT "LedgerLotBalance_holderKey_fkey" FOREIGN KEY ("holderKey") REFERENCES "LedgerHolder"("key") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "LedgerSwap" ADD CONSTRAINT "LedgerSwap_referenceId_fkey" FOREIGN KEY ("referenceId") REFERENCES "LedgerReference"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

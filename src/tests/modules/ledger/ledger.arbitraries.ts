@@ -5,15 +5,16 @@ import type {
   LotBalanceRow,
   LotRow,
 } from '../../../modules/ledger/ledger.core.js';
+import type { Random } from '../../../foundation/random.js';
 import {
   type Currency,
   type Holder,
   holderKey,
+  REFERENCE_ID_ALPHABET,
   type LotSource,
   type LottedCurrency,
   type ReferenceState,
 } from '../../../modules/ledger/ledger.value.js';
-import type { ReferenceIdSource } from '../../../modules/ledger/ledger.service.js';
 
 /**
  * Generators and fixtures for the ledger's laws.
@@ -170,14 +171,21 @@ export const arbWallet = fc
 /** How much of a wallet to move — sometimes more than it holds. */
 export const arbMoveAmount = fc.integer({ min: 1, max: MAX_AMOUNT * 7 });
 
-/** A deterministic id source: `0000000000`, `0000000001`, … */
-export function sequentialIds(): ReferenceIdSource {
+/**
+ * A deterministic `Random`: the bytes it hands back mint the suffixes
+ * `0000000000`, `0000000001`, … so a test can name the reference it just made.
+ *
+ * It maps a counter through the id alphabet the same way the production binding
+ * maps CSPRNG bytes, which is what makes it a stand-in for the seam rather than
+ * a stand-in for the id.
+ */
+export function sequentialRandom(): Random {
   let next = 0;
   return {
-    suffix: () => {
-      const value = String(next).padStart(10, '0');
+    bytes: (count) => {
+      const digits = String(next).padStart(count, '0');
       next += 1;
-      return value;
+      return Uint8Array.from(digits, (digit) => REFERENCE_ID_ALPHABET.indexOf(digit));
     },
   };
 }

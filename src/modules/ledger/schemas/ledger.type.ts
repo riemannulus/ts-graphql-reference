@@ -85,7 +85,10 @@ export function registerLedgerTypes(): void {
   builder.prismaObject('LedgerReference', {
     description:
       'One money flow, from before anything moved. Its id is what a person ' +
-      'quotes to support and what external systems correlate on.',
+      'quotes to support and what external systems correlate on. The ledger is ' +
+      'READ-ONLY over GraphQL by design: value moves only through the domain ' +
+      'use-case that is entitled to move it (paying for an order, redeeming a ' +
+      'gift), never through a general-purpose mutation.',
     fields: (t) => ({
       id: t.exposeID('id'),
       kind: t.field({

@@ -26,7 +26,6 @@
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error",
     "typescript/no-unsafe-type-assertion": "off",
-    "no-underscore-dangle": ["warn", { "allow": ["_sum", "_count", "_avg", "_min", "_max"] }],
     "no-restricted-globals": [
       "error",
       {
@@ -65,10 +64,13 @@
                   "**/flag-registry*",
                   "**/flag-reader*",
                   "**/clock*",
+                  "**/random*",
+                  "node:crypto",
+                  "crypto",
                   "**/*.repo*",
                   "**/*.service*"
                 ],
-                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself, and it never reads the clock: `now` arrives as a parameter (foundation/clock.ts is the shell's seam). Calendar math over that instant is allowed via the pure foundation/time.ts."
+                "message": "Pure modules (*.state.ts / *.value.ts / *.core.ts / *.content.ts) must stay free of I/O, transactions, and framework deps. Decide here; read, lock, and execute in the repo/service shell. A core receives a flag value as passed-in DATA (see point.transfer) — it never reads a flag itself, and it never reads the clock or the random source: `now` and any unpredictable bytes arrive as parameters (foundation/clock.ts and foundation/random.ts are the shell's seams). Calendar math over that instant is allowed via the pure foundation/time.ts."
               }
             ]
           }
@@ -83,7 +85,7 @@
       }
     },
     {
-      "files": ["src/foundation/time.ts", "src/foundation/clock.ts"],
+      "files": ["src/foundation/time.ts", "src/foundation/clock.ts", "src/foundation/random.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -225,6 +227,7 @@
     {
       "files": ["src/**/modules/**/*.repo.ts"],
       "rules": {
+        "no-underscore-dangle": ["error", { "allow": ["_sum", "_count", "_avg", "_min", "_max"] }],
         "no-restricted-imports": [
           "error",
           {

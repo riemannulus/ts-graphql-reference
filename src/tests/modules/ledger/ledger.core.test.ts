@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
 import {
   holdersOf,
+  LedgerBelowPayoutMinimumError,
   LedgerCloseNotEmptyError,
   LedgerCloseReasonRequiredError,
+  LedgerFeeNotAllowedError,
+  LedgerForeignHolderError,
   LedgerInsufficientBalanceError,
   LedgerLotNotCancellableError,
   LedgerLotNotDueError,
   LedgerLotNotRedeemableError,
   LedgerMovementNotAllowedError,
+  LedgerNothingToBurnError,
   LedgerReasonNotAllowedError,
   LedgerReferenceClosedError,
   LedgerSwapNotAllowedError,
@@ -298,7 +302,7 @@ describe('planPosting — moving', () => {
           id: 12,
           currency: 'PAID_POINT',
           ownerUserId: 1,
-          amount: 500,
+          amount: 50_000,
           at: BUYER,
           source: 'IAP',
           cancellableUntil: null,
@@ -314,7 +318,7 @@ describe('planPosting — moving', () => {
               op: 'MOVE',
               from: BUYER,
               to: PAYABLE,
-              tokens: [{ currency: 'PAID_POINT', amount: 500, lotId: 12 }],
+              tokens: [{ currency: 'PAID_POINT', amount: 50_000, lotId: 12 }],
               reason: 'PAYOUT_STAKE',
             },
           ],
@@ -498,7 +502,47 @@ describe('planPosting — burning', () => {
           { referenceId: 'AD-0000000001' },
         ),
       ),
-    ).toThrow(LedgerMovementNotAllowedError);
+    ).toThrow(LedgerFeeNotAllowedError);
+  });
+
+  it('decides a withdrawal fee itself, and refuses to be told one', () => {
+    const world = buildWorld({
+      referenceId: PAYOUT_REF,
+      scalars: [{ holder: PAYABLE, currency: 'INCOME', amount: 50_000 }],
+      referenceHolders: [PAYABLE],
+    });
+    const withdrawal = (feeKrw?: number) =>
+      post(
+        [
+          {
+            op: 'BURN',
+            from: PAYABLE,
+            tokens: [{ currency: 'INCOME', amount: 50_000, lotId: null }],
+            reason: 'BANK_WITHDRAWAL',
+            ...(feeKrw === undefined ? {} : { feeKrw }),
+          },
+        ],
+        { referenceId: PAYOUT_REF, closeAs: 'SETTLED' },
+      );
+
+    // A caller naming its own fee would make the redeem policy decorative.
+    expect(() => plan(world, withdrawal(999_999))).toThrow(LedgerFeeNotAllowedError);
+    // Income's policy takes no cut at payout — the platform's was taken at
+    // settlement — so the kernel computes exactly zero.
+    expect(plan(world, withdrawal()).events[0]!.feeKrw).toBe(0);
+  });
+
+  it('refuses a burn of nothing, which a fee could otherwise ride out on', () => {
+    const world = buildWorld({ referenceId: 'AD-0000000001' });
+    expect(() =>
+      plan(
+        world,
+        post(
+          [{ op: 'BURN', from: BUYER, tokens: [], reason: 'ADMIN_REVOKE' }],
+          { referenceId: 'AD-0000000001' },
+        ),
+      ),
+    ).toThrow(LedgerNothingToBurnError);
   });
 
   it('sends value to the bank only out of a payable', () => {
@@ -816,6 +860,110 @@ describe('planPosting — the flow lifecycle', () => {
     expect(
       plan(world, post([], { referenceId: 'CH-0000000001', closeAs: 'VOID' })).reference,
     ).toMatchObject({ nextState: 'CLOSED', closeReason: 'VOID' });
+  });
+
+  it('refuses VOID on a flow that was funded by an EARLIER posting', () => {
+    // FUNDED means value has already moved under this flow, so calling it an
+    // abandoned checkout is a lie even when THIS posting moves nothing.
+    const funded = buildWorld({ referenceId: 'CH-0000000001', state: 'FUNDED' });
+    expect(() =>
+      plan(funded, post([], { referenceId: 'CH-0000000001', closeAs: 'VOID' })),
+    ).toThrow(LedgerVoidNotEmptyError);
+  });
+
+  it('refuses to touch an escrow that belongs to a different flow', () => {
+    // The hole this closes: staking into another order's escrow puts value
+    // where THIS flow's emptiness check cannot see it and where that flow —
+    // possibly already closed — is the only one that could ever free it.
+    const world = buildWorld({
+      lots: [{ id: 70, currency: 'PAID_POINT', ownerUserId: 1, amount: 500, at: BUYER }],
+    });
+    expect(() =>
+      plan(
+        world,
+        post([
+          {
+            op: 'MOVE',
+            from: BUYER,
+            to: escrowHolder('OR-0000000002'),
+            tokens: [{ currency: 'PAID_POINT', amount: 500, lotId: 70 }],
+            reason: 'ORDER_STAKE',
+          },
+        ]),
+      ),
+    ).toThrow(LedgerForeignHolderError);
+
+    // Its own escrow is fine — the rule is ownership, not the holder kind.
+    expect(() =>
+      plan(
+        world,
+        post([
+          {
+            op: 'MOVE',
+            from: BUYER,
+            to: ESCROW,
+            tokens: [{ currency: 'PAID_POINT', amount: 500, lotId: 70 }],
+            reason: 'ORDER_STAKE',
+          },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses a payable belonging to a different flow, the same way', () => {
+    const world = buildWorld({
+      referenceId: 'PO-0000000002',
+      scalars: [{ holder: BUYER, currency: 'INCOME', amount: 50_000 }],
+    });
+    expect(() =>
+      plan(
+        world,
+        post(
+          [
+            {
+              op: 'MOVE',
+              from: BUYER,
+              to: PAYABLE, // anchored to PAYOUT_REF, not to this flow
+              tokens: [{ currency: 'INCOME', amount: 50_000, lotId: null }],
+              reason: 'PAYOUT_STAKE',
+            },
+          ],
+          { referenceId: 'PO-0000000002' },
+        ),
+      ),
+    ).toThrow(LedgerForeignHolderError);
+  });
+});
+
+describe('planPosting — the payout floor', () => {
+  it('refuses a payout smaller than the policy will send', () => {
+    const world = buildWorld({
+      referenceId: PAYOUT_REF,
+      scalars: [{ holder: BUYER, currency: 'INCOME', amount: 8_000 }],
+    });
+    const payout = (amount: number) =>
+      post(
+        [
+          {
+            op: 'MOVE',
+            from: BUYER,
+            to: PAYABLE,
+            tokens: [{ currency: 'INCOME', amount, lotId: null }],
+            reason: 'PAYOUT_STAKE',
+          },
+        ],
+        { referenceId: PAYOUT_REF },
+      );
+
+    // Refused where the value leaves the wallet, not later at the bank burn:
+    // nobody should watch money sit in a payable that could never be sent.
+    expect(() => plan(world, payout(8_000))).toThrow(LedgerBelowPayoutMinimumError);
+
+    const enough = buildWorld({
+      referenceId: PAYOUT_REF,
+      scalars: [{ holder: BUYER, currency: 'INCOME', amount: 9_000 }],
+    });
+    expect(() => plan(enough, payout(9_000))).not.toThrow();
   });
 });
 

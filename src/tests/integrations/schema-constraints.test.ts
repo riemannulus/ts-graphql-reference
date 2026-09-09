@@ -305,6 +305,23 @@ describe('ledger CHECK constraints', () => {
     ).resolves.toBe(1);
   });
 
+  it('refuses to delete a person who still has money, rather than cascading', async () => {
+    const userId = await makeUser();
+    const referenceId = await makeReference('CH-0000000004', 'CHARGE');
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "LedgerHolder" ("key", "kind", "userId", "createdAt")
+        VALUES ('USER:${userId}', 'USER', ${userId}, CURRENT_TIMESTAMP)`,
+    );
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "LedgerLot"
+        ("id", "currency", "ownerUserId", "mintReferenceId", "source", "originalAmount", "mintedAt", "validUntil")
+        VALUES (900, 'PAID_POINT', ${userId}, '${referenceId}', 'PG', 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    );
+    // A cascade here would take the lot and the holder while the events naming
+    // them survive, and the trial balance would never balance again.
+    await expect(prisma.user.delete({ where: { id: userId } })).rejects.toThrow();
+  });
+
   it('rejects an exchange rate the currency graph does not have an edge for', async () => {
     const referenceId = await makeReference('OR-0000000011');
     await expect(

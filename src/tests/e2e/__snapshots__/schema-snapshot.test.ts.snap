@@ -30,6 +30,7 @@ type LedgerBalance {
 
 """How a flow ended. Null while it is still open."""
 enum LedgerCloseReason {
+  EXPIRED
   REVERSED
   SETTLED
   SPLIT
@@ -149,7 +150,7 @@ enum LedgerLotSource {
 }
 
 """
-One money flow, from before anything moved. Its id is what a person quotes to support and what external systems correlate on.
+One money flow, from before anything moved. Its id is what a person quotes to support and what external systems correlate on. The ledger is READ-ONLY over GraphQL by design: value moves only through the domain use-case that is entitled to move it (paying for an order, redeeming a gift), never through a general-purpose mutation.
 """
 type LedgerReference {
   children: [LedgerReference!]
@@ -279,9 +280,9 @@ type Query {
   ledgerBalances(userId: Int!): [LedgerBalance!]
 
   """
-  A person's movements across every currency, most recent first — a settlement burns points and mints income, and a statement that showed only one of them would not add up.
+  A person's movements across every currency, most recent first — a settlement burns points and mints income, and a statement that showed only one of them would not add up. At most 50 at a time: pass the \`seq\` of the oldest row you have as \`before\` for the next page.
   """
-  ledgerHolderEvents(userId: Int!): [LedgerEvent!]
+  ledgerHolderEvents(before: Int, userId: Int!): [LedgerEvent!]
 
   """
   A person's live lots of one currency, in the order they will be spent (earliest deadline first).

@@ -10,6 +10,7 @@ import {
   type LotPointer,
   type LotRow,
   type PostingPlan,
+  type StaleVoidPlan,
   type TrialBalanceRow,
 } from './ledger.core.js';
 import {
@@ -18,6 +19,7 @@ import {
   type Holder,
   holderKey,
   parseCurrency,
+  parseHolderKey,
   parseLotSource,
   parseLottedCurrency,
   parseReferenceState,
@@ -320,57 +322,50 @@ export function createReference(
  * are closed, never deleted: a webhook arriving late must still find the flow it
  * names.
  */
-export async function voidStaleReferences(
+export async function applyStaleVoid(
   db: DbClient,
-  now: Date,
+  plan: StaleVoidPlan,
 ): Promise<{ voidedCount: number }> {
   const { count } = await db.ledgerReference.updateMany({
-    where: { state: 'OPEN', expiresAt: { lte: now } },
-    data: { state: 'CLOSED', closeReason: 'VOID', closedAt: now },
+    where: { state: plan.assumedState, expiresAt: { lte: plan.expiredBefore } },
+    data: {
+      state: plan.nextState,
+      closeReason: plan.closeReason,
+      closedAt: plan.closedAt,
+    },
   });
   return { voidedCount: count };
 }
 
-/** One lot remainder sitting past its deadline in a person's wallet. */
-export interface DueLotHolding {
-  readonly lotId: number;
-  readonly currency: Currency;
-  readonly holderKey: string;
-  readonly userId: number;
-  readonly amount: number;
-}
-
 /**
- * The lot remainders the expiry sweep must burn: past `validUntil`, still
- * positive, and held by a PERSON.
+ * The WALLETS the expiry sweep has work in — not the work itself.
  *
- * Deliberately not "every lot past its deadline". Value staked into an escrow
- * belongs to a flow that has not finished; expiring it there would delete money
- * out from under an order that may still refund it. It expires once it comes
- * back to a wallet — the deadline is enforced on the holder, not on the parcel.
+ * Deliberately not "every lot past its deadline, with its amount". This read
+ * runs before the posting's transaction, so an amount taken from it could be
+ * stale by the time the plan is checked; it answers only "whose snapshot is
+ * worth loading", and `selectDueLots` decides what to burn from that snapshot.
+ *
+ * Escrows are excluded here rather than by a branch downstream: value staked
+ * into an unfinished flow must not be expired out from under a refund, so the
+ * sweep never even loads those accounts.
  */
-export async function findDueLotHoldings(
+export async function findWalletsWithDueLots(
   db: ReadDbClient,
   now: Date,
   limit: number,
-): Promise<DueLotHolding[]> {
+): Promise<Holder[]> {
   const rows = await db.ledgerLotBalance.findMany({
     where: {
       amount: { gt: 0 },
       lot: { validUntil: { lt: now } },
       holder: { kind: 'USER' },
     },
-    include: { lot: true, holder: true },
-    orderBy: [{ holderKey: 'asc' }, { lotId: 'asc' }],
+    distinct: ['holderKey'],
+    select: { holderKey: true },
+    orderBy: { holderKey: 'asc' },
     take: limit,
   });
-  return rows.map((row) => ({
-    lotId: row.lotId,
-    currency: parseCurrency(row.lot.currency),
-    holderKey: row.holderKey,
-    userId: row.holder.userId ?? 0,
-    amount: row.amount,
-  }));
+  return rows.map((row) => parseHolderKey(row.holderKey));
 }
 
 /**

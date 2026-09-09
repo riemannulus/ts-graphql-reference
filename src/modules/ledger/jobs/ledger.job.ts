@@ -1,6 +1,13 @@
 import type { LedgerService } from '../ledger.service.js';
 import { defineJob, type JobRegistrar } from '../../../scheduler/job.js';
 
+/**
+ * How many due-lot wallets one expiry run may sweep. A cap keeps any single
+ * transaction bounded; the run reports when it hits it, so a backlog that the
+ * daily schedule cannot drain is visible rather than silently permanent.
+ */
+const EXPIRE_BATCH_SIZE = 200;
+
 /** Sweeps lot remainders that have passed their deadline in a wallet. */
 export const LEDGER_LOT_EXPIRE_JOB = 'ledger:lot:expire';
 /** Closes flows that were opened and never used. */
@@ -19,17 +26,33 @@ export const LEDGER_BALANCE_TRIAL_JOB = 'ledger:balance:trial';
  * standing proof that the derived balances still describe the append-only log,
  * and it fails loudly rather than repairing what it finds.
  */
-export const registerLedgerJobs: JobRegistrar<LedgerService> = (agenda, service) => {
+export const registerLedgerJobs: JobRegistrar<LedgerService> = (agenda, service, logger) => {
   defineJob(agenda, LEDGER_LOT_EXPIRE_JOB, async () => {
-    await service.expireDueLots();
+    const result = await service.expireDueLots({ batchSize: EXPIRE_BATCH_SIZE });
+    if (result.expiredCount === 0) return;
+    // What a sweep DESTROYED is the one number an operator will be asked about,
+    // so it is reported rather than discarded. A full batch means there is more
+    // waiting than one daily run can take: a warning, because at this cadence
+    // the backlog would otherwise never drain and nobody would know.
+    const full = result.expiredCount >= EXPIRE_BATCH_SIZE;
+    const line = { job: LEDGER_LOT_EXPIRE_JOB, ...result };
+    if (full) logger?.warn(line, 'ledger expiry hit its batch cap; a backlog remains');
+    else logger?.info(line, 'ledger expiry swept');
   });
 
   defineJob(agenda, LEDGER_REFERENCE_VOID_STALE_JOB, async () => {
-    await service.voidStaleReferences();
+    const result = await service.voidStaleReferences();
+    if (result.voidedCount > 0) {
+      logger?.info({ job: LEDGER_REFERENCE_VOID_STALE_JOB, ...result }, 'ledger voided stale flows');
+    }
   });
 
   defineJob(agenda, LEDGER_BALANCE_TRIAL_JOB, async () => {
-    await service.verifyTrialBalance();
+    // The rows are logged on the way through: the proof that the books balanced
+    // is only worth having if someone can see what it balanced to. Drift throws
+    // out of the service and reaches operators through agenda's `fail` event.
+    const { rows } = await service.verifyTrialBalance();
+    logger?.info({ job: LEDGER_BALANCE_TRIAL_JOB, rows }, 'ledger trial balance holds');
   });
 
   return [

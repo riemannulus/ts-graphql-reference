@@ -11,9 +11,10 @@ import { PAID_POINT_POLICY } from './paid-point.core.js';
  * `flags/flag-registry.ts`.
  *
  * The kernel never imports this: `planPosting` takes the registry as a
- * parameter, so it names no currency and a test can hand it a generated one.
- * The binding happens in the composition root, which is why "what currencies
- * exist" is a wiring question rather than something compiled into the rules.
+ * parameter, so it names no currency. The binding happens in `createServices`
+ * — the same place the clock and the randomness seam are bound — which is what
+ * makes "which currencies exist" a wiring question rather than something
+ * compiled into the rules.
  *
  * `satisfies Record<Currency, …>` makes the record TOTAL: adding a member to
  * `CURRENCIES` without a policy here is a compile error, not a lookup that
@@ -28,8 +29,3 @@ export const CURRENCY_POLICIES = {
 
 /** The registry as the kernel wants it — every currency, one policy each. */
 export const currencyRegistry: CurrencyRegistry = CURRENCY_POLICIES;
-
-/** One currency's policy. Total: the registry covers every member by type. */
-export function policyOf(currency: Currency): CurrencyPolicy {
-  return CURRENCY_POLICIES[currency];
-}

@@ -106,9 +106,10 @@ export class UnknownHolderKeyError extends Error {
 /** Parses a stored holder key back into a `Holder`. The inverse of `holderKey`. */
 export function parseHolderKey(key: string): Holder {
   const separator = key.indexOf(':');
+  if (separator < 0) throw new UnknownHolderKeyError(key);
   const kind = key.slice(0, separator);
   const anchor = key.slice(separator + 1);
-  if (separator < 0 || anchor.length === 0) throw new UnknownHolderKeyError(key);
+  if (anchor.length === 0) throw new UnknownHolderKeyError(key);
   if (kind === 'USER' || kind === 'RECEIVABLE') {
     // A user anchor is a positive integer; anything else is a corrupt row, not
     // a NaN to propagate.
@@ -165,6 +166,12 @@ export const CLOSE_REASONS = [
   'SPLIT',
   /** Nothing ever moved (an abandoned checkout, an expired intent). */
   'VOID',
+  /**
+   * The value ceased to exist where it sat, rather than going anywhere — a lot
+   * swept past its deadline. Its own reason because "settled" would claim the
+   * money reached someone, which is exactly what did not happen.
+   */
+  'EXPIRED',
 ] as const;
 export type CloseReason = (typeof CLOSE_REASONS)[number];
 

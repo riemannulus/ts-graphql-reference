@@ -12,7 +12,16 @@ import type { Currency, Holder } from './ledger.value.js';
  *
  * Everything takes `ReadDbClient` (write methods stripped at the type level).
  * Reads that feed a DECISION live with their executors in ledger.write.repo.ts.
+ *
+ * The event reads are PAGED, and the page size is decided here rather than
+ * offered as an argument the caller may leave off. The event log only grows, so
+ * an unbounded "everything that ever happened to this account" is a query that
+ * gets slower for the rest of its life and a response that eventually will not
+ * serialize. Callers walk it with `before`, newest first.
  */
+
+/** The most rows any single event page returns. */
+export const EVENT_PAGE_SIZE = 50;
 
 /** One holder's balances, one row per currency it has ever held. */
 export function findBalances(
@@ -64,6 +73,7 @@ export function findReferenceEvents(
     orderBy: { seq: 'asc' },
     ...query,
     where: { referenceId },
+    take: EVENT_PAGE_SIZE,
   });
 }
 
@@ -72,16 +82,26 @@ export function findReferenceEvents(
  * "what happened to my money" does not respect currency boundaries: a settlement
  * burns points and mints income, and showing one without the other is how a
  * statement stops adding up.
+ *
+ * One page at a time, walked with `before` (the `seq` of the oldest row the
+ * caller already has). A keyset cursor rather than an offset: the log is
+ * append-only and read newest-first, so `seq < before` is an index range that
+ * costs the same on page one and page a thousand.
  */
 export function findHolderEvents(
   db: ReadDbClient,
   holder: Holder,
+  before: number | null,
   query: Selection<'LedgerEvent'> = {},
 ) {
   const key = holderKey(holder);
   return db.ledgerEvent.findMany({
     orderBy: { seq: 'desc' },
     ...query,
-    where: { OR: [{ fromHolderKey: key }, { toHolderKey: key }] },
+    where: {
+      OR: [{ fromHolderKey: key }, { toHolderKey: key }],
+      ...(before === null ? {} : { seq: { lt: before } }),
+    },
+    take: EVENT_PAGE_SIZE,
   });
 }

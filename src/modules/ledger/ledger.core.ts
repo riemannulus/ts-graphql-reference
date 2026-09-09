@@ -11,6 +11,7 @@ import {
   isLottedCurrency,
   isPersonalHolder,
   type LotSource,
+  parseHolderKey,
   type LottedCurrency,
   parseMember,
   type ReferenceState,
@@ -32,9 +33,15 @@ import {
  *   original expiry instead of being reconstructed from a stored split.
  * - `SWAP` — the only way to cross a currency boundary, and it is a BURN plus a
  *   MINT, never a transfer: settling an order destroys the buyer's points and
- *   creates the seller's income. The difference is the fee, which leaves for the
- *   cash books (`feeKrw`) — a currency's total supply must never be inflated by
- *   an exchange.
+ *   creates the seller's income. The difference between the two is the fee, so
+ *   an exchange can never inflate a currency's supply.
+ *
+ * Where that fee GOES is the rate's business, not the kernel's, and it differs
+ * per edge. On `SETTLE` it is handed straight back to the seller as loyalty
+ * value (`rebate`), so the platform's cut is recorded in `feeKrw` for the cash
+ * books while remaining, economically, a liability owed back — not net revenue.
+ * An edge with `rebate: null` keeps it. Both are one number either way, which
+ * is the point of computing the fee and the grant in one place (law L2).
  *
  * "Stake", "unstake" and "settle" are not primitives — they are a MOVE into
  * escrow, a MOVE out of it, and a SWAP out of it. That collapse is the point:
@@ -47,11 +54,43 @@ import {
  *
  * This file names no currency. Policies (`CurrencyPolicy`) arrive as DATA — the
  * weakest rung of the coupling ladder — so adding a currency is a new file under
- * `currencies/`, never an edit here, and a property test can hammer the kernel
- * with generated policies. The two policy SHAPES (lotted / scalar) are a
+ * `currencies/`, never an edit here, and WHICH currencies exist is decided in
+ * the composition root. The two policy SHAPES (lotted / scalar) are a
  * discriminated union rather than a class hierarchy: the mechanism a lotted
  * currency "inherits" (FIFO selection, expiry, the cancellation window) lives
  * once in this kernel, keyed off `policy.kind`.
+ *
+ * ## The laws
+ *
+ * Everything below serves these. They are numbered because the rest of the
+ * module cites them — the shape tables, the CHECK constraints in the migration,
+ * the property tests — and a citation needs somewhere to point.
+ *
+ * - **L1 conservation** — across a posting, the change in all balances equals
+ *   what was minted minus what was burned, per currency. A `MOVE` therefore
+ *   changes no total, and `ledger:balance:trial` re-proves this hourly against
+ *   the whole event log.
+ * - **L2 swap balance** — an exchange mints exactly what it burned less the
+ *   fee, and where the rate names a rebate, the rebate IS that fee. Both are
+ *   computed here and never supplied, so a caller cannot mint more than it
+ *   destroyed.
+ * - **L3 escrow closure** — a flow closes only when its own accounts hold
+ *   nothing, and it must say why it closed. No money is stranded in a finished
+ *   order; a flow may only touch the escrow and payable accounts it owns.
+ * - **L4 lot identity** — a move carries the SAME lot to the other side, so a
+ *   refund returns the deadlines and the funding source the payment created,
+ *   rather than a reconstruction of them.
+ * - **L5 movement shape** — `MINT` has only a destination, `BURN` only a
+ *   source, `MOVE` both; which holder kinds each may run between is a table
+ *   (`MOVE_SHAPES` / `MINT_SHAPES` / `BURN_SHAPES` / `SWAP_RATES`), never a
+ *   pile of conditionals.
+ * - **L6 non-negativity** — no account is ever left owing. What a clawback
+ *   cannot recover is minted onto a RECEIVABLE account as a recognized loss: a
+ *   positive number in a named place, never an overdrawn wallet.
+ * - **L7 open flow** — a closed reference takes no further postings, and no
+ *   posting may put value into another flow's accounts.
+ * - **L8 idempotency** — one idempotency key writes one movement, enforced by
+ *   a unique index rather than by application logic.
  *
  * ## Decide here, execute in the shell
  *
@@ -155,16 +194,30 @@ const MINT_SHAPES = {
  * back up.
  */
 const BURN_SHAPES = {
-  PG_REFUND: { from: ['USER'], cash: false, lot: 'INTACT' },
-  BANK_WITHDRAWAL: { from: ['PAYABLE'], cash: true, lot: null },
-  EXPIRED: { from: ['USER'], cash: false, lot: 'DUE' },
-  IAP_REVOKE: { from: ['USER'], cash: false, lot: null },
-  ADMIN_REVOKE: { from: ['USER'], cash: false, lot: null },
-  FORFEIT_ON_REFUND: { from: ['USER'], cash: false, lot: null },
-  STORE_PURCHASE: { from: ['USER'], cash: true, lot: null },
+  PG_REFUND: { from: ['USER'], cash: null, lot: 'INTACT' },
+  BANK_WITHDRAWAL: { from: ['PAYABLE'], cash: 'REDEEM_FEE', lot: null },
+  EXPIRED: { from: ['USER'], cash: null, lot: 'DUE' },
+  IAP_REVOKE: { from: ['USER'], cash: null, lot: null },
+  ADMIN_REVOKE: { from: ['USER'], cash: null, lot: null },
+  FORFEIT_ON_REFUND: { from: ['USER'], cash: null, lot: null },
+  STORE_PURCHASE: { from: ['USER'], cash: 'PRICE', lot: null },
 } as const satisfies Record<
   BurnReason,
-  { from: readonly HolderKind[]; cash: boolean; lot: 'INTACT' | 'DUE' | null }
+  {
+    from: readonly HolderKind[];
+    /**
+     * What `feeKrw` means on this burn, and who decides it.
+     *
+     * - `REDEEM_FEE` — the kernel COMPUTES it from the currency's redeem policy
+     *   (`redeemFee`) and refuses a caller-supplied number. A withdrawal fee is
+     *   a rule, so letting the caller name it would make the policy decorative.
+     * - `PRICE` — the caller supplies what the goods cost, because only it
+     *   knows; the kernel only requires it to be positive.
+     * - `null` — no cash leaves, so any fee at all is a mistake.
+     */
+    cash: 'REDEEM_FEE' | 'PRICE' | null;
+    lot: 'INTACT' | 'DUE' | null;
+  }
 >;
 
 // ---------------------------------------------------------------------------
@@ -186,6 +239,8 @@ export const SWAP_RATES = {
   SETTLE: {
     from: ['PAID_POINT', 'FREE_POINT'],
     to: 'INCOME',
+    fromKinds: ['ESCROW'],
+    toKinds: ['USER'],
     rebate: 'MILEAGE',
     mintLotSource: null,
     feePermille: 100,
@@ -194,6 +249,8 @@ export const SWAP_RATES = {
   GIFT_CARD_REDEEM: {
     from: ['PAID_POINT', 'FREE_POINT'],
     to: 'FREE_POINT',
+    fromKinds: ['ESCROW'],
+    toKinds: ['USER'],
     rebate: null,
     mintLotSource: 'GIFT_CARD',
     feePermille: 0,
@@ -202,6 +259,8 @@ export const SWAP_RATES = {
   POINT_CONVERSION: {
     from: ['INCOME'],
     to: 'PAID_POINT',
+    fromKinds: ['USER'],
+    toKinds: ['USER'],
     rebate: null,
     mintLotSource: 'INCOME_SWAP',
     feePermille: 0,
@@ -211,6 +270,9 @@ export const SWAP_RATES = {
   {
     from: readonly Currency[];
     to: Currency;
+    /** Which accounts an exchange may run between — law L5, as for the others. */
+    fromKinds: readonly HolderKind[];
+    toKinds: readonly HolderKind[];
     rebate: Currency | null;
     mintLotSource: LotSource | null;
     feePermille: number;
@@ -261,8 +323,14 @@ interface CurrencyPolicyBase {
   readonly accounting: 'DEFERRED_REVENUE' | 'PROVISION' | 'PAYABLE';
   /** The kinds of account allowed to hold it. */
   readonly holderKinds: readonly HolderKind[];
-  readonly mintReasons: readonly MintReason[];
-  readonly burnReasons: readonly BurnReason[];
+  /**
+   * Every reason this currency may be created for — the primitive reasons AND
+   * the exchange edges that mint it, because a swap's halves are a mint and a
+   * burn like any other and are checked against these same lists. A currency
+   * that omits an edge cannot be produced by it, whatever `SWAP_RATES` says.
+   */
+  readonly mintReasons: readonly (MintReason | SwapRateKind)[];
+  readonly burnReasons: readonly (BurnReason | SwapRateKind)[];
   readonly moveReasons: readonly MoveReason[];
   /** `null` means the currency cannot become cash — a fact, not a convention. */
   readonly redeem: RedeemPolicy | null;
@@ -313,12 +381,8 @@ export type Token =
   | { readonly currency: LottedCurrency; readonly amount: number; readonly lotId: number }
   | { readonly currency: ScalarCurrency; readonly amount: number; readonly lotId: null };
 
-export const scalarToken = (currency: ScalarCurrency, amount: number): Token => ({
-  currency,
-  amount,
-  lotId: null,
-});
-export const lotToken = (currency: LottedCurrency, lotId: number, amount: number): Token => ({
+/** Names one lot's contribution to a movement. `selectLotsFifo` is what mints these. */
+const lotToken = (currency: LottedCurrency, lotId: number, amount: number): Token => ({
   currency,
   amount,
   lotId,
@@ -536,6 +600,59 @@ export interface PostingPlan {
 // ---------------------------------------------------------------------------
 
 /** A posting was addressed to a flow that has already finished. */
+/**
+ * An operation named an escrow or payable account that belongs to a DIFFERENT
+ * money flow. Refused, and not as a matter of taste: an account is owned by the
+ * flow that can close it, so funding someone else's escrow would strand value
+ * where only that flow can free it — and that flow may already be closed.
+ */
+export class LedgerForeignHolderError extends DomainError {
+  constructor(
+    readonly account: string,
+    readonly referenceId: string,
+  ) {
+    super(
+      `Holder ${account} belongs to another flow and cannot be used by ${referenceId}`,
+      'LEDGER_FOREIGN_HOLDER',
+    );
+    this.name = 'LedgerForeignHolderError';
+  }
+}
+
+/** A burn named a cash amount its shape does not allow, or omitted a required one. */
+export class LedgerFeeNotAllowedError extends DomainError {
+  constructor(
+    readonly reason: string,
+    readonly why: string,
+  ) {
+    super(`Burn for ${reason} cannot carry this fee: ${why}`, 'LEDGER_FEE_NOT_ALLOWED');
+    this.name = 'LedgerFeeNotAllowedError';
+  }
+}
+
+/** A payout was asked for less than the currency's policy allows to be sent. */
+export class LedgerBelowPayoutMinimumError extends DomainError {
+  constructor(
+    readonly currency: Currency,
+    readonly amount: number,
+    readonly minimum: number,
+  ) {
+    super(
+      `A ${currency} payout of ${amount} is below the minimum of ${minimum}`,
+      'LEDGER_BELOW_PAYOUT_MINIMUM',
+    );
+    this.name = 'LedgerBelowPayoutMinimumError';
+  }
+}
+
+/** A burn was asked for with no tokens to burn. */
+export class LedgerNothingToBurnError extends DomainError {
+  constructor(readonly reason: string) {
+    super(`Burn for ${reason} names nothing to burn`, 'LEDGER_NOTHING_TO_BURN');
+    this.name = 'LedgerNothingToBurnError';
+  }
+}
+
 export class LedgerReferenceClosedError extends DomainError {
   constructor(readonly referenceId: string) {
     super(`Ledger reference ${referenceId} is closed`, 'LEDGER_REFERENCE_CLOSED');
@@ -681,6 +798,21 @@ export class LedgerVoidNotEmptyError extends DomainError {
       `Reference ${referenceId} cannot be voided: value has moved under it`,
       'LEDGER_VOID_NOT_EMPTY',
     );
+  }
+}
+
+/**
+ * The world handed to the kernel is not the world the posting names. A shell
+ * bug, never a caller's: MASKED, because it means the decision was about to be
+ * made against the wrong flow's balances.
+ */
+export class LedgerWorldMismatchError extends Error {
+  constructor(
+    readonly referenceId: string,
+    readonly worldReferenceId: string,
+  ) {
+    super(`Posting for ${referenceId} was given the world of ${worldReferenceId}`);
+    this.name = 'LedgerWorldMismatchError';
   }
 }
 
@@ -865,9 +997,20 @@ function assertPositiveAmount(amount: number): void {
  * Records a holder the plan touches, creating it if this is its first movement.
  * A holder row is bookkeeping, not a decision — it exists because something is
  * about to be true of it.
+ *
+ * The ONE rule enforced here, at the single point every operation's holders pass
+ * through: a flow-anchored account (ESCROW, PAYABLE) may only be touched by the
+ * flow that owns it. Without it, a posting could stake into another order's
+ * escrow — value that its own reference's L3 check cannot see, that the owning
+ * flow may already have closed over, and that no posting on either flow can
+ * then free. Personal accounts (USER, RECEIVABLE) are anchored to a person and
+ * are reachable by any flow, which is what makes a payment possible at all.
  */
 function touchHolder(work: Working, world: LedgerWorld, holder: Holder): string {
   const key = holderKey(holder);
+  if (!isPersonalHolder(holder) && holder.referenceId !== world.reference.id) {
+    throw new LedgerForeignHolderError(key, world.reference.id);
+  }
   if (world.knownHolderKeys.includes(key) || work.holders.has(key)) return key;
   work.holders.set(key, {
     key,
@@ -979,6 +1122,9 @@ function planMint(
   const { to, target } = args;
   assertPositiveAmount(target.amount);
   const policy = policies[target.currency];
+  if (!(policy.mintReasons as readonly string[]).includes(args.reason)) {
+    throw new LedgerReasonNotAllowedError(target.currency, 'mint', args.reason);
+  }
   assertHoldable(policy, to);
   const key = touchHolder(work, world, to);
 
@@ -1028,11 +1174,19 @@ function planBurn(
   },
   now: Date,
 ): void {
+  if (args.tokens.length === 0) {
+    // A burn of nothing is not a movement, and a fee riding on it would be cash
+    // leaving the ledger with no event to explain it.
+    throw new LedgerNothingToBurnError(args.reason);
+  }
   const key = touchHolder(work, world, args.from);
   let feeLeft = args.feeKrw;
   for (const token of args.tokens) {
     assertPositiveAmount(token.amount);
     const policy = policies[token.currency];
+    if (!(policy.burnReasons as readonly string[]).includes(args.reason)) {
+      throw new LedgerReasonNotAllowedError(token.currency, 'burn', args.reason);
+    }
     assertHoldable(policy, args.from);
 
     if (token.lotId !== null) {
@@ -1076,6 +1230,43 @@ function planBurn(
   }
 }
 
+/**
+ * What cash this burn carries out, by the shape's own rule: computed from the
+ * redeem policy, taken from the caller, or refused.
+ *
+ * The fee is a decision, so it lives here and not in the shell — a payout screen
+ * that shows a number and a burn that charges a different one is the failure
+ * this closes.
+ */
+function burnFee(
+  policies: CurrencyRegistry,
+  cash: 'REDEEM_FEE' | 'PRICE' | null,
+  op: Extract<Op, { op: 'BURN' }>,
+): number {
+  const supplied = op.feeKrw ?? 0;
+  if (cash === null) {
+    if (supplied !== 0) throw new LedgerFeeNotAllowedError(op.reason, 'this burn carries no cash');
+    return 0;
+  }
+  if (cash === 'PRICE') {
+    if (!Number.isInteger(supplied) || supplied <= 0) {
+      throw new LedgerFeeNotAllowedError(op.reason, 'a purchase must name what it cost');
+    }
+    return supplied;
+  }
+  if (op.feeKrw !== undefined) {
+    throw new LedgerFeeNotAllowedError(op.reason, 'the redeem policy decides this fee');
+  }
+  const currency = op.tokens[0]?.currency;
+  if (currency === undefined) throw new LedgerNothingToBurnError(op.reason);
+  const policy = policies[currency];
+  if (policy.redeem === null) {
+    throw new LedgerFeeNotAllowedError(op.reason, `${currency} cannot become cash`);
+  }
+  const total = op.tokens.reduce((sum, token) => sum + token.amount, 0);
+  return redeemFee(policy.redeem, total);
+}
+
 function planMove(
   work: Working,
   world: LedgerWorld,
@@ -1091,6 +1282,19 @@ function planMove(
   }
   const fromKey = touchHolder(work, world, op.from);
   const toKey = touchHolder(work, world, op.to);
+
+  if ('redeemable' in shape) {
+    // A payout below the floor is refused HERE, where the money leaves the
+    // wallet, rather than at the bank burn — a person must not watch value sit
+    // in a payable account only to be told it was always too small to send.
+    const currency = op.tokens[0]?.currency;
+    if (currency === undefined) throw new LedgerNothingToBurnError(op.reason);
+    const redeem = policies[currency].redeem;
+    const total = op.tokens.reduce((sum, token) => sum + token.amount, 0);
+    if (redeem !== null && total < redeem.minimumAmount) {
+      throw new LedgerBelowPayoutMinimumError(currency, total, redeem.minimumAmount);
+    }
+  }
 
   for (const token of op.tokens) {
     assertPositiveAmount(token.amount);
@@ -1154,10 +1358,10 @@ function planSwap(
   if (!(rate.from as readonly Currency[]).includes(burnCurrency)) {
     throw new LedgerSwapNotAllowedError(op.rate, `${burnCurrency} is not an input of this rate`);
   }
-  if (op.from.kind !== 'USER' && op.from.kind !== 'ESCROW') {
-    throw new LedgerMovementNotAllowedError(op.rate, op.from.kind, op.to.kind);
-  }
-  if (op.to.kind !== 'USER') {
+  if (
+    !(rate.fromKinds as readonly HolderKind[]).includes(op.from.kind) ||
+    !(rate.toKinds as readonly HolderKind[]).includes(op.to.kind)
+  ) {
     throw new LedgerMovementNotAllowedError(op.rate, op.from.kind, op.to.kind);
   }
 
@@ -1165,7 +1369,12 @@ function planSwap(
   // Law L2: the fee is the difference between what was destroyed and what was
   // created, and the rebate IS the fee. Computed here, never supplied — a
   // caller cannot mint more than it burned.
-  const feeKrw = Math.ceil((burnTotal * rate.feePermille) / 1000);
+  //
+  // Rounded DOWN, which is what makes the exchange total: at a 10% rate a
+  // one-unit remainder costs nothing and exchanges for one, so a SPLIT that
+  // leaves a single point behind can still be settled. Rounding up would make
+  // the fee eat the whole thing and strand it in the escrow forever.
+  const feeKrw = Math.floor((burnTotal * rate.feePermille) / 1000);
   const mintAmount = burnTotal - feeKrw;
   if (mintAmount <= 0) {
     throw new LedgerSwapNotAllowedError(op.rate, 'the fee consumes the whole exchange');
@@ -1240,17 +1449,8 @@ function planSwap(
  * Decides one posting: validates every operation against the currency policies
  * and the movement laws, then returns the complete set of writes.
  *
- * Laws checked here, each with a property test:
- * - **L1 conservation** — the change in all balances equals what was minted
- *   minus what was burned, per currency. A `MOVE` therefore changes no total.
- * - **L2 swap balance** — burned = minted + fee, and rebate = fee.
- * - **L4 lot identity** — a move carries the same lot to the other side.
- * - **L5 shape** — `MOVE_SHAPES` / `MINT_SHAPES` / `BURN_SHAPES` decide which
- *   holder kinds a movement may run between.
- * - **L6 non-negative** — no holder is ever left owing.
- * - **L7 open flow** — a closed reference takes no further postings.
- * - **L3 close** — a flow closes only when its holders are empty, and it must
- *   say why.
+ * This is where L1 through L7 are enforced (L8 is the unique index the shell
+ * writes through); they are defined once at the top of this file.
  *
  * Total: returns a plan or throws a `DomainError` (the caller's fault) or one of
  * the two masked corruption errors (ours).
@@ -1261,6 +1461,9 @@ export function planPosting(
   policies: CurrencyRegistry,
   now: Date,
 ): PostingPlan {
+  if (posting.referenceId !== world.reference.id) {
+    throw new LedgerWorldMismatchError(posting.referenceId, world.reference.id);
+  }
   if (world.reference.state === 'CLOSED') {
     throw new LedgerReferenceClosedError(world.reference.id);
   }
@@ -1284,9 +1487,6 @@ export function planPosting(
         if (!(shape.to as readonly HolderKind[]).includes(op.to.kind)) {
           throw new LedgerMovementNotAllowedError(op.reason, null, op.to.kind);
         }
-        if (!policies[op.target.currency].mintReasons.includes(op.reason)) {
-          throw new LedgerReasonNotAllowedError(op.target.currency, 'mint', op.reason);
-        }
         planMint(
           work,
           world,
@@ -1308,15 +1508,7 @@ export function planPosting(
         if (!(shape.from as readonly HolderKind[]).includes(op.from.kind)) {
           throw new LedgerMovementNotAllowedError(op.reason, op.from.kind, null);
         }
-        const feeKrw = op.feeKrw ?? 0;
-        if (feeKrw < 0 || (!shape.cash && feeKrw > 0)) {
-          throw new LedgerMovementNotAllowedError(op.reason, op.from.kind, null);
-        }
-        for (const token of op.tokens) {
-          if (!policies[token.currency].burnReasons.includes(op.reason)) {
-            throw new LedgerReasonNotAllowedError(token.currency, 'burn', op.reason);
-          }
-        }
+        const feeKrw = burnFee(policies, shape.cash, op);
         planBurn(
           work,
           world,
@@ -1472,7 +1664,12 @@ function planReferenceTransition(
     };
   }
 
-  if (posting.closeAs === 'VOID' && moved) throw new LedgerVoidNotEmptyError(world.reference.id);
+  // VOID is the claim that nothing ever moved under this flow, so it is refused
+  // both for a posting that moves value and for a flow already FUNDED — which,
+  // by the transition rule above, is exactly what "value has moved" means.
+  if (posting.closeAs === 'VOID' && (moved || world.reference.state === 'FUNDED')) {
+    throw new LedgerVoidNotEmptyError(world.reference.id);
+  }
   // Law L3 — nothing is stranded in a finished flow.
   if (heldAfter > 0) throw new LedgerCloseNotEmptyError(world.reference.id, heldAfter);
   return {
@@ -1480,6 +1677,73 @@ function planReferenceTransition(
     nextState: 'CLOSED',
     closeReason: posting.closeAs,
     closedAt: now,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The sweeps' decisions
+// ---------------------------------------------------------------------------
+
+/** One lot remainder a sweep has decided to burn. */
+export interface DueLot {
+  readonly holder: Holder;
+  readonly currency: LottedCurrency;
+  readonly lotId: number;
+  readonly amount: number;
+}
+
+/**
+ * The lot remainders in this world that have passed their deadline, decided
+ * from the SNAPSHOT the posting is checked against rather than from an earlier
+ * read — so the amount the plan burns is the amount that is actually there.
+ *
+ * Only value in a person's wallet is due. What sits in an escrow belongs to a
+ * flow that has not finished, and expiring it would delete money out from under
+ * a refund; that is a rule about the holder, not about the parcel, which is why
+ * it lives here and not in the query.
+ */
+export function selectDueLots(world: LedgerWorld, now: Date): DueLot[] {
+  const byId = new Map(world.lots.map((lot) => [lot.id, lot]));
+  const due: DueLot[] = [];
+  for (const holding of world.lotBalances) {
+    if (holding.amount <= 0) continue;
+    const lot = byId.get(holding.lotId);
+    if (!lot || now.getTime() <= lot.validUntil.getTime()) continue;
+    const holder = parseHolderKey(holding.holderKey);
+    if (holder.kind !== 'USER') continue;
+    due.push({ holder, currency: lot.currency, lotId: lot.id, amount: holding.amount });
+  }
+  // Deterministic, so a plan is reproducible from the same world.
+  return due.toSorted((a, b) => a.lotId - b.lotId);
+}
+
+/** What closing an untouched flow means, as data the repo applies mechanically. */
+export interface StaleVoidPlan {
+  /** Only a flow in this state may be voided — the guard IS the safety check. */
+  readonly assumedState: ReferenceState;
+  readonly nextState: ReferenceState;
+  readonly closeReason: CloseReason;
+  readonly closedAt: Date;
+  /** Flows whose window closed at or before this instant. */
+  readonly expiredBefore: Date;
+}
+
+/**
+ * How a flow that was opened and never used ends.
+ *
+ * A decision, so it lives in the core beside the other transition rule rather
+ * than inside a repo's `updateMany` — two encodings of "how a flow ends" is
+ * exactly the drift the kernel exists to prevent. `OPEN` already means, by
+ * `planReferenceTransition`'s own rule, that nothing has ever moved under the
+ * flow, so guarding on it is the whole proof that nothing is being discarded.
+ */
+export function planStaleVoid(now: Date): StaleVoidPlan {
+  return {
+    assumedState: 'OPEN',
+    nextState: 'CLOSED',
+    closeReason: 'VOID',
+    closedAt: now,
+    expiredBefore: now,
   };
 }
 

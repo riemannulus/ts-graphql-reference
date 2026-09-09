@@ -76,10 +76,15 @@ export function registerLedgerQueries(): void {
       description:
         "A person's movements across every currency, most recent first — a " +
         'settlement burns points and mints income, and a statement that showed ' +
-        'only one of them would not add up.',
-      args: { userId: t.arg.int({ required: true }) },
+        `only one of them would not add up. At most ${ledgerRepo.EVENT_PAGE_SIZE} ` +
+        'at a time: pass the `seq` of the oldest row you have as `before` for ' +
+        'the next page.',
+      args: {
+        userId: t.arg.int({ required: true }),
+        before: t.arg.int({ required: false }),
+      },
       resolve: (query, _root, args, ctx) =>
-        ledgerRepo.findHolderEvents(ctx.db, userHolder(args.userId), query),
+        ledgerRepo.findHolderEvents(ctx.db, userHolder(args.userId), args.before ?? null, query),
     }),
   );
 }
