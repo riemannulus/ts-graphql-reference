@@ -2,18 +2,24 @@ import { fc, test } from '@fast-check/vitest';
 import { expect } from 'vitest';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
 import {
-  type BalanceWrite,
-  holdersOf,
+  planPosting,
+} from '../../../modules/ledger/ledger.core.js';
+import {
   LedgerConservationError,
   LedgerInsufficientBalanceError,
   LedgerLotCoherenceError,
+} from '../../../modules/ledger/ledger.errors.core.js';
+import {
+  type BalanceWrite,
   type Op,
-  planPosting,
   type PostingPlan,
-  selectLotsFifo,
-  SWAP_RATES,
   type Token,
-} from '../../../modules/ledger/ledger.core.js';
+  holdersOf,
+  selectLotsFifo,
+} from '../../../modules/ledger/ledger.plan.core.js';
+import {
+  SWAP_RATES,
+} from '../../../modules/ledger/ledger.policy.core.js';
 import {
   escrowHolder,
   holderKey,

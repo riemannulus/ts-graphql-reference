@@ -2,9 +2,11 @@
 --
 -- Four currencies (PAID_POINT | FREE_POINT | INCOME | MILEAGE), four primitives
 -- (MINT | BURN | MOVE | SWAP), four holder kinds (USER | ESCROW | PAYABLE |
--- RECEIVABLE). The RULES live in src/modules/ledger/ledger.core.ts (the single
--- source of truth); the constraints below are the floor a buggy write cannot
--- fall through — the same division as User.status / PointCharge.state.
+-- RECEIVABLE). The RULES live in src/modules/ledger/ (the single source of
+-- truth: the vocabulary in ledger.value.ts, the movement tables in
+-- ledger.policy.core.ts, the algorithm in ledger.core.ts); the constraints
+-- below are the floor a buggy write cannot fall through — the same division as
+-- User.status / PointCharge.state.
 --
 -- Every value set here is kept in sync with a `const` array in the core and
 -- guarded by src/tests/integrations/schema-constraints.test.ts, so drift between
@@ -29,7 +31,7 @@ CREATE TABLE "LedgerReference" (
 
     CONSTRAINT "LedgerReference_pkey" PRIMARY KEY ("id"),
     -- Value sets in sync with REFERENCE_KINDS / REFERENCE_STATES /
-    -- CLOSE_REASONS (ledger.core.ts).
+    -- CLOSE_REASONS (ledger.value.ts).
     CONSTRAINT "LedgerReference_kind_check" CHECK (
         "kind" IN ('CHARGE', 'ORDER', 'PAYOUT', 'CONVERSION', 'GIFT', 'ADJUST')
     ),
@@ -59,7 +61,7 @@ CREATE TABLE "LedgerHolder" (
     "createdAt" TIMESTAMPTZ(6) NOT NULL,
 
     CONSTRAINT "LedgerHolder_pkey" PRIMARY KEY ("key"),
-    -- Value set in sync with HOLDER_KINDS (ledger.core.ts).
+    -- Value set in sync with HOLDER_KINDS (ledger.value.ts).
     CONSTRAINT "LedgerHolder_kind_check" CHECK (
         "kind" IN ('USER', 'ESCROW', 'PAYABLE', 'RECEIVABLE')
     ),
@@ -90,9 +92,9 @@ CREATE TABLE "LedgerLot" (
     CONSTRAINT "LedgerLot_pkey" PRIMARY KEY ("id"),
     -- Only the LOTTED currencies have lots — the scalar ones (INCOME, MILEAGE)
     -- are a single running balance, so a lot row for them is a category error.
-    -- In sync with LOTTED_CURRENCIES (ledger.core.ts).
+    -- In sync with LOTTED_CURRENCIES (ledger.value.ts).
     CONSTRAINT "LedgerLot_currency_check" CHECK ("currency" IN ('PAID_POINT', 'FREE_POINT')),
-    -- Value set in sync with LOT_SOURCES (ledger.core.ts).
+    -- Value set in sync with LOT_SOURCES (ledger.value.ts).
     CONSTRAINT "LedgerLot_source_check" CHECK (
         "source" IN ('PG', 'IAP', 'GIFT_CARD', 'INCOME_SWAP', 'ADMIN', 'EVENT', 'OPENING')
     ),
@@ -124,7 +126,7 @@ CREATE TABLE "LedgerEvent" (
     "createdAt" TIMESTAMPTZ(6) NOT NULL,
 
     CONSTRAINT "LedgerEvent_pkey" PRIMARY KEY ("seq"),
-    -- Value sets in sync with EVENT_OPS / CURRENCIES / ACTOR_KINDS (ledger.core.ts).
+    -- Value sets in sync with EVENT_OPS / CURRENCIES / ACTOR_KINDS (ledger.value.ts).
     CONSTRAINT "LedgerEvent_op_check" CHECK (
         "op" IN ('MINT', 'BURN', 'MOVE', 'SWAP_BURN', 'SWAP_MINT')
     ),
@@ -195,7 +197,7 @@ CREATE TABLE "LedgerSwap" (
     "feeKrw" INTEGER NOT NULL,
 
     CONSTRAINT "LedgerSwap_pkey" PRIMARY KEY ("id"),
-    -- Value set in sync with SWAP_RATES' keys (ledger.core.ts). The currency
+    -- Value set in sync with SWAP_RATES' keys (ledger.policy.core.ts). The currency
     -- graph is closed: an edge that is not in this list cannot be recorded.
     CONSTRAINT "LedgerSwap_rateKind_check" CHECK (
         "rateKind" IN ('SETTLE', 'GIFT_CARD_REDEEM', 'POINT_CONVERSION')

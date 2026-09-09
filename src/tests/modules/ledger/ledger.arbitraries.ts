@@ -4,7 +4,7 @@ import type {
   LedgerWorld,
   LotBalanceRow,
   LotRow,
-} from '../../../modules/ledger/ledger.core.js';
+} from '../../../modules/ledger/ledger.plan.core.js';
 import type { Random } from '../../../foundation/random.js';
 import {
   type Currency,

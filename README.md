@@ -181,8 +181,17 @@ src/
                        #   plan pattern taken to a real money model
       ledger.value.ts        #   pure core: the vocabulary — currencies, holder
                              #     kinds, reference ids, and their parsers
-      ledger.core.ts         #   pure core: MINT/BURN/MOVE/SWAP, the laws, and
-                             #     planPosting — the whole decision, no I/O
+      ledger.policy.core.ts  #   pure core: the movement rules AS TABLES — which
+                             #     reasons exist, which accounts each runs
+                             #     between (law L5), which exchanges exist
+      ledger.plan.core.ts    #   pure core: the contract with the shell — what a
+                             #     caller asks for, what the kernel reads, what
+                             #     it returns
+      ledger.errors.core.ts  #   pure core: every refusal, and the masked
+                             #     corruption errors kept apart from them
+      ledger.core.ts         #   pure core: the ALGORITHM — planPosting and the
+                             #     four primitives, no I/O. Exports one function
+      ledger.sweep.core.ts   #   pure core: the three sweeps' own decisions
       currencies/            #   one policy per currency, as DATA the kernel is
                              #     handed (so the kernel names no currency)
       ledger.write.repo.ts   #   Prisma: loadLedgerWorld + applyPostingPlan

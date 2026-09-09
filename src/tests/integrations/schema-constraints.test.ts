@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestPrisma, resetDb } from '../support/helpers.js';
-import { SWAP_RATE_KINDS } from '../../modules/ledger/ledger.core.js';
+import {
+  SWAP_RATE_KINDS,
+} from '../../modules/ledger/ledger.policy.core.js';
 import {
   ACTOR_KINDS,
   CLOSE_REASONS,

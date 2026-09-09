@@ -1,4 +1,6 @@
-import type { ScalarCurrencyPolicy } from '../ledger.core.js';
+import type {
+  ScalarCurrencyPolicy,
+} from '../ledger.policy.core.js';
 
 /**
  * Income — what a seller has earned and we owe them. `PAYABLE` in the books,

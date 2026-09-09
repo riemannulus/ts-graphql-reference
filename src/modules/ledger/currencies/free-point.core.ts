@@ -1,4 +1,6 @@
-import type { LottedCurrencyPolicy } from '../ledger.core.js';
+import type {
+  LottedCurrencyPolicy,
+} from '../ledger.policy.core.js';
 
 /**
  * Free points — value the platform gave away: a top-up bonus, an event reward,

@@ -7,16 +7,22 @@ import { addDays } from '../../foundation/time.js';
 import type { Random } from '../../foundation/random.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import {
-  assertTrialBalance,
-  type CurrencyRegistry,
-  holdersOf,
+  planPosting,
+} from './ledger.core.js';
+import {
   type LedgerWorld,
   type Op,
-  planPosting,
+  holdersOf,
+} from './ledger.plan.core.js';
+import type {
+  CurrencyRegistry,
+} from './ledger.policy.core.js';
+import {
+  type TrialBalanceRow,
+  assertTrialBalance,
   planStaleVoid,
   selectDueLots,
-  type TrialBalanceRow,
-} from './ledger.core.js';
+} from './ledger.sweep.core.js';
 import * as ledgerRepo from './ledger.write.repo.js';
 import {
   type Actor,

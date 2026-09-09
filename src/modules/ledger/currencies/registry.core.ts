@@ -1,4 +1,7 @@
-import type { CurrencyPolicy, CurrencyRegistry } from '../ledger.core.js';
+import type {
+  CurrencyPolicy,
+  CurrencyRegistry,
+} from '../ledger.policy.core.js';
 import type { Currency } from '../ledger.value.js';
 import { FREE_POINT_POLICY } from './free-point.core.js';
 import { INCOME_POLICY } from './income.core.js';

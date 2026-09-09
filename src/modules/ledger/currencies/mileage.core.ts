@@ -1,4 +1,6 @@
-import type { ScalarCurrencyPolicy } from '../ledger.core.js';
+import type {
+  ScalarCurrencyPolicy,
+} from '../ledger.policy.core.js';
 
 /**
  * Mileage — loyalty value, handed back as the rebate on every fee the platform

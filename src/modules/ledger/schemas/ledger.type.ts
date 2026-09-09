@@ -1,5 +1,8 @@
 import { builder } from '../../../graphql/builder.js';
-import { parseSwapRateKind, SWAP_RATE_KINDS } from '../ledger.core.js';
+import {
+  SWAP_RATE_KINDS,
+  parseSwapRateKind,
+} from '../ledger.policy.core.js';
 import { EVENT_PAGE_SIZE } from '../ledger.read.repo.js';
 import {
   ACTOR_KINDS,

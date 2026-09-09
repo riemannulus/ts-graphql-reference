@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
 import {
-  holdersOf,
+  planPosting,
+} from '../../../modules/ledger/ledger.core.js';
+import {
   LedgerBelowPayoutMinimumError,
   LedgerCloseNotEmptyError,
   LedgerCloseReasonRequiredError,
@@ -12,18 +14,22 @@ import {
   LedgerLotNotDueError,
   LedgerLotNotRedeemableError,
   LedgerMovementNotAllowedError,
-  LedgerTokenCurrencyError,
   LedgerReasonNotAllowedError,
   LedgerReferenceClosedError,
   LedgerSwapNotAllowedError,
+  LedgerTokenCurrencyError,
   LedgerVoidNotEmptyError,
+} from '../../../modules/ledger/ledger.errors.core.js';
+import {
   type Op,
-  planPosting,
   type Posting,
-  redeemFee,
+  holdersOf,
   selectLotsFifo,
+} from '../../../modules/ledger/ledger.plan.core.js';
+import {
   SWAP_RATES,
-} from '../../../modules/ledger/ledger.core.js';
+  redeemFee,
+} from '../../../modules/ledger/ledger.policy.core.js';
 import {
   escrowHolder,
   holderKey,

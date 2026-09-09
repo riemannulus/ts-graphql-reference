@@ -2,15 +2,23 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
 import {
-  holdingsOf,
+  planPosting,
+} from '../../../modules/ledger/ledger.core.js';
+import {
   LedgerLotNotRedeemableError,
   LedgerReferenceClosedError,
-  LedgerTrialBalanceError,
-  planPosting,
-  redeemFee,
-  selectLotsFifo,
+} from '../../../modules/ledger/ledger.errors.core.js';
+import {
   type Op,
-} from '../../../modules/ledger/ledger.core.js';
+  holdingsOf,
+  selectLotsFifo,
+} from '../../../modules/ledger/ledger.plan.core.js';
+import {
+  redeemFee,
+} from '../../../modules/ledger/ledger.policy.core.js';
+import {
+  LedgerTrialBalanceError,
+} from '../../../modules/ledger/ledger.sweep.core.js';
 import { createLedgerService } from '../../../modules/ledger/ledger.service.js';
 import * as ledgerRepo from '../../../modules/ledger/ledger.write.repo.js';
 import {

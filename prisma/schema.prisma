@@ -145,7 +145,7 @@ model PointSpend {
 // MILEAGE), four primitives (MINT | BURN | MOVE | SWAP), four holder kinds
 // (USER | ESCROW | PAYABLE | RECEIVABLE). Every value set below is additionally
 // enforced by a CHECK constraint in the migration — the code is the single
-// source of truth for the RULES (ledger.core.ts), the database is the floor
+// source of truth for the RULES (src/modules/ledger/), the database is the floor
 // that a buggy write cannot fall through.
 // ---------------------------------------------------------------------------
 
@@ -332,7 +332,7 @@ model LedgerSwap {
   reference    LedgerReference @relation(fields: [referenceId], references: [id])
   referenceId  String
   /// SETTLE | GIFT_CARD_REDEEM | POINT_CONVERSION — the closed set of edges in
-  /// the currency graph (ledger.core.ts `SWAP_RATES`).
+  /// the currency graph (ledger.policy.core.ts `SWAP_RATES`).
   rateKind     String
   burnCurrency String
   mintCurrency String

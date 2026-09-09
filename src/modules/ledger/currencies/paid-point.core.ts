@@ -1,4 +1,6 @@
-import type { LottedCurrencyPolicy } from '../ledger.core.js';
+import type {
+  LottedCurrencyPolicy,
+} from '../ledger.policy.core.js';
 
 /**
  * Paid points — value a person bought with money.
