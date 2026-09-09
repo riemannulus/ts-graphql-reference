@@ -17,7 +17,9 @@ import type { Currency, Holder } from './ledger.value.js';
  * offered as an argument the caller may leave off. The event log only grows, so
  * an unbounded "everything that ever happened to this account" is a query that
  * gets slower for the rest of its life and a response that eventually will not
- * serialize. Callers walk it with `before`, newest first.
+ * serialize. A person's statement — the one that grows without limit — is
+ * walked newest-first with a `before` cursor; a single flow's events are capped
+ * at the same page but need no cursor, because a flow has an end.
  */
 
 /** The most rows any single event page returns. */

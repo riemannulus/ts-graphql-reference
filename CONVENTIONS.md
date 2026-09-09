@@ -12,7 +12,7 @@ Every module splits into explicit layers with one-way dependencies:
 | ---------------- | ------------------------------------ | ------------------------------- | -------------------------------------------- | -------------------------- |
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
-| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
+| Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), the effect seams `clock.ts` / `random.ts`, `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP); `jobs/*.job.ts` (Agenda) | GraphQL types + `ctx`, Fastify req/reply, or an Agenda job | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`), job-registry + service tests |
 
 ```
@@ -560,6 +560,17 @@ single `dayjs()` call in ~80 files (and monkey-patches the `Dayjs` prototype in
 `lib/dayjs.ts`); the refactor splits them — `clock.now()` for the instant,
 `time.ts` for the reasoning — which is what makes time both injectable and
 library-swappable.
+
+### The same argument, for randomness
+
+`foundation/random.ts` is the clock's sibling: drawing unpredictable bytes
+observes something outside the decision the same way reading the wall clock
+does, so it enters the same way. The `Random` port (`{ bytes(count) }`) has one
+production binding (`systemRandom`, the codebase's only `node:crypto` call for
+this), is bound in the composition root beside the clock, and is fenced out of
+cores by the same lint rule. It deals in BYTES, not in ids or tokens: what the
+bytes mean is a domain question, which is why `mintSuffix` lives in the ledger
+and not here.
 
 ### now is a field of the world snapshot
 

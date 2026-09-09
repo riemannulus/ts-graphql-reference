@@ -127,6 +127,8 @@ src/
     scheduler.ts         # buildScheduler(): calls each module's registerXxxJobs();
                          #   start() applies every() + purge(orphans); stop() drains
   foundation/            # cross-cutting primitives (no I/O, no framework)
+    random.ts            # the Random port + systemRandom — the clock's sibling
+                         #   seam for the other effect a decision must not take
     errors.ts            # DomainError base class (client-safe business errors)
     env.ts               # loads .env (Prisma 7 / Node no longer auto-load it)
   generated/             # Pothos types (git-ignored; `prisma generate`)
@@ -647,6 +649,10 @@ The test *layer* is the filename suffix, the test *module* is the folder:
   module dropped from schema.ts's register list fails loudly.
 - **`e2e/graphql.test.ts`**, **`e2e/oauth.test.ts`** — whole-app flows through
   `app.inject`, including domain-error mapping and the point charge→spend flow.
+- **`e2e/ledger.test.ts`** — the ledger's read surface through the whole app:
+  what a person holds, the lots in the order they will be spent, one flow's
+  whole story from the id they can quote, a paged newest-first statement — and
+  the proof that the schema exposes no way to MOVE value from outside.
 - **`e2e/search.test.ts`** — the external-key pattern end to end: a fake index
   feeds ranked ids, the `hits` prismaField receives the nested selection, and
   the hits come back in rank order with their relations loaded.
