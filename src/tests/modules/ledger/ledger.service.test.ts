@@ -657,6 +657,36 @@ describe('the sweeps', () => {
     });
   });
 
+  it('opens a sweep flow the void sweep cannot close underneath it', async () => {
+    // Opening the flow and posting to it are two transactions, and the void
+    // sweep runs every ten minutes. A sweep flow whose window had already
+    // passed would be closed in that gap, killing the run that created it.
+    const buyer = await makeUser('sweep-race@example.com');
+    await topUp(buyer, { paid: 1_000 });
+    const later = new Date('2032-06-01T00:00:00.000Z');
+
+    // A genuinely abandoned flow, so the void sweep has something to take.
+    const abandoned = await ledger.openReference({
+      kind: 'CHARGE',
+      now: later,
+      expiresAt: later,
+    });
+
+    const result = await ledger.expireDueLots({ now: later });
+    const sweepFlow = await prisma.ledgerReference.findUniqueOrThrow({
+      where: { id: result.referenceId! },
+    });
+    expect(sweepFlow.expiresAt!.getTime()).toBeGreaterThan(later.getTime());
+
+    // A void sweep running at the very same instant takes the abandoned flow
+    // and leaves the expiry sweep's own alone.
+    expect(await ledger.voidStaleReferences({ now: later })).toMatchObject({ voidedCount: 1 });
+    expect(
+      (await prisma.ledgerReference.findUniqueOrThrow({ where: { id: abandoned.id } })).closeReason,
+    ).toBe('VOID');
+    expect(sweepFlow.closeReason).toBe('EXPIRED');
+  });
+
   it('does nothing, cheaply, when nothing is due', async () => {
     const buyer = await makeUser('nothing-due@example.com');
     await topUp(buyer, { paid: 1_000 });

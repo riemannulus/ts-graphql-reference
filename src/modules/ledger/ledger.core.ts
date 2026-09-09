@@ -241,6 +241,7 @@ export const SWAP_RATES = {
     to: 'INCOME',
     fromKinds: ['ESCROW'],
     toKinds: ['USER'],
+    samePerson: false,
     rebate: 'MILEAGE',
     mintLotSource: null,
     feePermille: 100,
@@ -251,6 +252,7 @@ export const SWAP_RATES = {
     to: 'FREE_POINT',
     fromKinds: ['ESCROW'],
     toKinds: ['USER'],
+    samePerson: false,
     rebate: null,
     mintLotSource: 'GIFT_CARD',
     feePermille: 0,
@@ -261,6 +263,7 @@ export const SWAP_RATES = {
     to: 'PAID_POINT',
     fromKinds: ['USER'],
     toKinds: ['USER'],
+    samePerson: true,
     rebate: null,
     mintLotSource: 'INCOME_SWAP',
     feePermille: 0,
@@ -273,6 +276,16 @@ export const SWAP_RATES = {
     /** Which accounts an exchange may run between — law L5, as for the others. */
     fromKinds: readonly HolderKind[];
     toKinds: readonly HolderKind[];
+    /**
+     * Whether both ends must belong to the SAME person.
+     *
+     * The two cross-person edges run out of an escrow, so the value they hand
+     * over was staked into a flow that can still reverse it. An edge that runs
+     * wallet to wallet has no such flow, and without this it would be a
+     * person-to-person transfer wearing an exchange's name — the exact thing
+     * `MOVE_SHAPES` refuses by having no `USER → USER` shape at all.
+     */
+    samePerson: boolean;
     rebate: Currency | null;
     mintLotSource: LotSource | null;
     feePermille: number;
@@ -1383,6 +1396,14 @@ function planSwap(
     !(rate.toKinds as readonly HolderKind[]).includes(op.to.kind)
   ) {
     throw new LedgerMovementNotAllowedError(op.rate, op.from.kind, op.to.kind);
+  }
+  if (
+    rate.samePerson &&
+    isPersonalHolder(op.from) &&
+    isPersonalHolder(op.to) &&
+    op.from.userId !== op.to.userId
+  ) {
+    throw new LedgerSwapNotAllowedError(op.rate, 'both sides must be the same person');
   }
 
   const burnTotal = op.tokens.reduce((sum, token) => sum + token.amount, 0);

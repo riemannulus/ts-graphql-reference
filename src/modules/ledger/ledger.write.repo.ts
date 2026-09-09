@@ -354,14 +354,18 @@ export async function findWalletsWithDueLots(
   now: Date,
   limit: number,
 ): Promise<Holder[]> {
-  const rows = await db.ledgerLotBalance.findMany({
+  // `groupBy`, not `findMany({ distinct })`. Prisma applies `distinct` in the
+  // client, so the emitted SQL carries no LIMIT and the whole expired-lot set is
+  // materialized in Node before all but `limit` wallets are thrown away — which
+  // is the opposite of what a batch cap is for. `groupBy` pushes both the
+  // grouping and the limit into the query.
+  const rows = await db.ledgerLotBalance.groupBy({
+    by: ['holderKey'],
     where: {
       amount: { gt: 0 },
       lot: { validUntil: { lt: now } },
       holder: { kind: 'USER' },
     },
-    distinct: ['holderKey'],
-    select: { holderKey: true },
     orderBy: { holderKey: 'asc' },
     take: limit,
   });

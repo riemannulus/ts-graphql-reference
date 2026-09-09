@@ -3,6 +3,7 @@ import type { Db } from '../../db/db.js';
 import { isUniqueViolation } from '../../db/prisma-errors.js';
 import { uow } from '../../db/uow.js';
 import type { Clock } from '../../foundation/clock.js';
+import { addDays } from '../../foundation/time.js';
 import type { Random } from '../../foundation/random.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import {
@@ -163,6 +164,13 @@ export interface SweepOptions {
 
 const DEFAULT_BATCH_SIZE = 200;
 
+/**
+ * How long a sweep's own flow stays reclaimable-but-alive. It must outlive the
+ * gap between opening the flow and posting to it, or the void sweep closes the
+ * run that is still using it.
+ */
+const SWEEP_FLOW_LIFETIME_DAYS = 1;
+
 /** What one expiry run did, and whether it ran out of room to do more. */
 export interface ExpiryResult {
   /**
@@ -289,7 +297,18 @@ export function createLedgerService(deps: LedgerServiceDeps) {
     // The flow carries its own window, so a sweep that dies before its posting
     // lands leaves a reference `voidStaleReferences` can still reclaim rather
     // than an OPEN row nothing will ever close.
-    const reference = await openReference({ kind: 'ADJUST', now, expiresAt: now });
+    //
+    // The window is a DAY, not `now`. Opening the flow and posting to it are two
+    // transactions, and the void sweep runs every ten minutes: a window that has
+    // already passed would let that sweep close this flow in the gap between
+    // them, killing the very run that created it. A day is longer than any
+    // posting and still short enough that an abandoned one is reclaimed by
+    // tomorrow.
+    const reference = await openReference({
+      kind: 'ADJUST',
+      now,
+      expiresAt: addDays(now, SWEEP_FLOW_LIFETIME_DAYS),
+    });
 
     const { events } = await post({
       referenceId: reference.id,

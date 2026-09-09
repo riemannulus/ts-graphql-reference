@@ -649,6 +649,32 @@ describe('planPosting — swapping', () => {
     expect(result.reference).toMatchObject({ nextState: 'CLOSED', closeReason: 'SETTLED' });
   });
 
+  it("refuses to turn one person's income into another person's points", () => {
+    // The wallet-to-wallet edge is the one exchange with no escrow behind it,
+    // so without the same-person rule it is a person-to-person transfer wearing
+    // an exchange's name — nothing staked, nothing to reverse, no fee.
+    const world = buildWorld({
+      referenceId: 'CO-0000000001',
+      scalars: [{ holder: BUYER, currency: 'INCOME', amount: 50_000 }],
+    });
+    const convert = (to: typeof BUYER) =>
+      post(
+        [
+          {
+            op: 'SWAP',
+            from: BUYER,
+            to,
+            tokens: [{ currency: 'INCOME', amount: 50_000, lotId: null }],
+            rate: 'POINT_CONVERSION',
+          },
+        ],
+        { referenceId: 'CO-0000000001', closeAs: 'SETTLED' },
+      );
+
+    expect(() => plan(world, convert(SELLER))).toThrow(LedgerSwapNotAllowedError);
+    expect(() => plan(world, convert(BUYER))).not.toThrow();
+  });
+
   it('refuses a currency the rate does not take as input', () => {
     // The graph is closed at runtime as well as at the type level: `SETTLE`
     // takes points, so offering it income is not an exchange that exists.
