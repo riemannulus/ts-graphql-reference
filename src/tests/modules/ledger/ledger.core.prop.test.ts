@@ -1,9 +1,7 @@
 import { fc, test } from '@fast-check/vitest';
 import { expect } from 'vitest';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
-import {
-  planPosting,
-} from '../../../modules/ledger/ledger.core.js';
+import { planPosting } from '../../../modules/ledger/ledger.core.js';
 import {
   LedgerConservationError,
   LedgerInsufficientBalanceError,
@@ -17,9 +15,7 @@ import {
   holdersOf,
   selectLotsFifo,
 } from '../../../modules/ledger/ledger.plan.core.js';
-import {
-  SWAP_RATES,
-} from '../../../modules/ledger/ledger.policy.core.js';
+import { SWAP_RATES } from '../../../modules/ledger/ledger.policy.core.js';
 import {
   escrowHolder,
   holderKey,

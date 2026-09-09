@@ -221,6 +221,35 @@ export const SWAP_RATES = {
 >;
 
 export type SwapRateKind = keyof typeof SWAP_RATES;
+export type SwapRate = (typeof SWAP_RATES)[SwapRateKind];
+
+/** What one exchange destroys, creates, and charges. */
+export interface SwapSplit {
+  readonly feeKrw: number;
+  readonly mintAmount: number;
+}
+
+/**
+ * Law L2, as arithmetic: an exchange creates exactly what it destroyed, less
+ * the fee. Both numbers are computed from the rate and never supplied, so a
+ * caller cannot mint more than it burned.
+ *
+ * The fee rounds DOWN, which is what makes every exchange representable: at a
+ * 10% rate a one-unit remainder costs nothing and exchanges for one, so a SPLIT
+ * that leaves a single point behind can still be settled. Rounding up would let
+ * the fee eat the whole thing and strand it in the escrow forever.
+ *
+ * It lives beside `SWAP_RATES` rather than in the planner because `feePermille`
+ * is the only input it reads, and a rate whose arithmetic sits three hundred
+ * lines away is a rate whose rounding nobody checks when the rate changes.
+ * Returns `null` when the fee would consume the exchange; the caller decides
+ * what to say about that.
+ */
+export function swapSplit(rate: SwapRate, burnTotal: number): SwapSplit | null {
+  const feeKrw = Math.floor((burnTotal * rate.feePermille) / 1000);
+  const mintAmount = burnTotal - feeKrw;
+  return mintAmount <= 0 ? null : { feeKrw, mintAmount };
+}
 export const SWAP_RATE_KINDS = Object.keys(SWAP_RATES) as readonly SwapRateKind[];
 /** Parses `LedgerSwap.rateKind` back off the row (parse, don't validate). */
 export const parseSwapRateKind = (value: string): SwapRateKind =>

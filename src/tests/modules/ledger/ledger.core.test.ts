@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { currencyRegistry } from '../../../modules/ledger/currencies/registry.core.js';
-import {
-  planPosting,
-} from '../../../modules/ledger/ledger.core.js';
+import { planPosting } from '../../../modules/ledger/ledger.core.js';
 import {
   LedgerBelowPayoutMinimumError,
   LedgerCloseNotEmptyError,

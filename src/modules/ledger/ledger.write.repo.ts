@@ -2,9 +2,7 @@ import type { LedgerEvent } from '@prisma/client';
 import type { DbClient, ReadDbClient } from '../../db/db.js';
 import { isUniqueViolation } from '../../db/prisma-errors.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
-import {
-  LedgerReferenceNotFoundError,
-} from './ledger.errors.core.js';
+import { LedgerReferenceNotFoundError } from './ledger.errors.core.js';
 import type {
   BalanceRow,
   LedgerWorld,

@@ -6,17 +6,13 @@ import type { Clock } from '../../foundation/clock.js';
 import { addDays } from '../../foundation/time.js';
 import type { Random } from '../../foundation/random.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
-import {
-  planPosting,
-} from './ledger.core.js';
+import { planPosting } from './ledger.core.js';
 import {
   type LedgerWorld,
   type Op,
   holdersOf,
 } from './ledger.plan.core.js';
-import type {
-  CurrencyRegistry,
-} from './ledger.policy.core.js';
+import type { CurrencyRegistry } from './ledger.policy.core.js';
 import {
   type TrialBalanceRow,
   assertTrialBalance,

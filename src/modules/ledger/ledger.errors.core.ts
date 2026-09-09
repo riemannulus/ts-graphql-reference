@@ -2,7 +2,8 @@ import { DomainError } from '../../foundation/errors.js';
 import type { Currency, HolderKind, LotSource } from './ledger.value.js';
 
 /**
- * Every way the ledger refuses, in one place.
+ * Every way a POSTING can be refused, and every corruption planning one can
+ * detect.
  *
  * Split from the kernel because a refusal is a fact about the DOMAIN, not about
  * the algorithm that happens to detect it: "a payout below the minimum" means
@@ -14,8 +15,16 @@ import type { Currency, HolderKind, LotSource } from './ledger.value.js';
  *   what the ledger will not do and why.
  * - A plain `Error` is OURS — a state a correct kernel cannot reach. It is
  *   MASKED at the edge rather than surfaced, because a client can do nothing
- *   with "the books do not balance" except lose confidence. These are the last
- *   line before a wrong number reaches the database.
+ *   with "the plan does not conserve value" except lose confidence. These are
+ *   the last line before a wrong number reaches the database.
+ *
+ * What decides whether an error belongs here is not its kind but its
+ * VOCABULARY. This file is the leaf every other core file imports, so it may
+ * name only `ledger.value.ts` types. `LedgerTrialBalanceError` reports
+ * `TrialBalanceRow`s and therefore lives with the sweep that computes them
+ * (`ledger.sweep.core.ts`) — moving it here would close the cycle
+ * errors → sweep → plan → errors. An error that needs a plan-shaped or
+ * policy-shaped type belongs with that shape, for the same reason.
  */
 
 /**

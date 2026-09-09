@@ -41,6 +41,7 @@ import {
   MOVE_SHAPES,
   redeemFee,
   SWAP_RATES,
+  swapSplit,
 } from './ledger.policy.core.js';
 import type {
   BalanceWrite,
@@ -103,7 +104,7 @@ import type {
  *   permits.
  * - `ledger.plan.core.ts` — the contract with the shell: what a caller asks
  *   for, what the kernel reads, what it returns.
- * - `ledger.errors.core.ts` — every refusal, and the masked corruption errors.
+ * - `ledger.errors.core.ts` — the refusals and corruptions planning can raise.
  * - `ledger.sweep.core.ts` — the scheduled sweeps' own small decisions.
  *
  * ## Currency-agnostic by construction
@@ -112,9 +113,12 @@ import type {
  * weakest rung of the coupling ladder — so adding a currency is a new file under
  * `currencies/`, never an edit here, and WHICH currencies exist is decided in
  * the composition root. The two policy SHAPES (lotted / scalar) are a
- * discriminated union rather than a class hierarchy: the mechanism a lotted
- * currency "inherits" (FIFO selection, expiry, the cancellation window) lives
- * once in this kernel, keyed off `policy.kind`.
+ * discriminated union rather than a class hierarchy: what a lotted currency
+ * "inherits" is written ONCE and keyed off `policy.kind`, never per currency.
+ * Which file holds each piece follows what it is for — the cancellation window
+ * and a lot's deadlines are decided while planning and live here; choosing lots
+ * to spend is something a CALLER does (`ledger.plan.core.ts`); finding the ones
+ * past their deadline is a sweep's job (`ledger.sweep.core.ts`).
  *
  * ## The laws
  *
@@ -588,19 +592,14 @@ function planSwap(
   }
 
   const burnTotal = op.tokens.reduce((sum, token) => sum + token.amount, 0);
-  // Law L2: the fee is the difference between what was destroyed and what was
-  // created, and the rebate IS the fee. Computed here, never supplied — a
-  // caller cannot mint more than it burned.
-  //
-  // Rounded DOWN, which is what makes the exchange total: at a 10% rate a
-  // one-unit remainder costs nothing and exchanges for one, so a SPLIT that
-  // leaves a single point behind can still be settled. Rounding up would make
-  // the fee eat the whole thing and strand it in the escrow forever.
-  const feeKrw = Math.floor((burnTotal * rate.feePermille) / 1000);
-  const mintAmount = burnTotal - feeKrw;
-  if (mintAmount <= 0) {
+  // Law L2 is the rate's arithmetic, so it lives with the rate. The rebate that
+  // hands this fee back is planned below, which is what keeps "what we charged"
+  // and "what we granted" one number.
+  const split = swapSplit(rate, burnTotal);
+  if (split === null) {
     throw new LedgerSwapNotAllowedError(op.rate, 'the fee consumes the whole exchange');
   }
+  const { feeKrw, mintAmount } = split;
 
   const ref = work.swaps.length;
   work.swaps.push({

@@ -387,6 +387,10 @@ diverge. See `src/tests/modules/user/user.service.model.test.ts`.
 src/
   modules/<name>/
     <name>.core.ts      # pure: decisions, plans, invariants (alt: .state.ts / .value.ts)
+                        #   (when it grows: split by SUBJECT, not by size —
+                        #   `.policy.core.ts` for rules as tables, `.plan.core.ts`
+                        #   for the shell's contract, `.errors.core.ts`; see
+                        #   modules/ledger/ for the worked case)
     <name>.repo.ts      # Prisma: projections (accept `query`) + plan executors
                         #   (when it grows: split .read.repo.ts / .write.repo.ts)
     <name>.service.ts   # use-cases: read → decide → execute on db.rw

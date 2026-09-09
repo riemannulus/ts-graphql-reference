@@ -187,8 +187,8 @@ src/
       ledger.plan.core.ts    #   pure core: the contract with the shell — what a
                              #     caller asks for, what the kernel reads, what
                              #     it returns
-      ledger.errors.core.ts  #   pure core: every refusal, and the masked
-                             #     corruption errors kept apart from them
+      ledger.errors.core.ts  #   pure core: the refusals and corruptions that
+                             #     planning raises, the two kinds side by side
       ledger.core.ts         #   pure core: the ALGORITHM — planPosting and the
                              #     four primitives, no I/O. Exports one function
       ledger.sweep.core.ts   #   pure core: the three sweeps' own decisions
