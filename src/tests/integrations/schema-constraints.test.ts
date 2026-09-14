@@ -16,7 +16,7 @@ async function makeUser(): Promise<number> {
   return user.id;
 }
 
-async function makeFinancialWorld() {
+async function makeFinancialWorld(opts: { targetAmount?: number } = {}) {
   const holder = await prisma.financialHolder.create({
     data: { bindingNamespace: 'user', bindingKey: 'ledger-owner' },
   });
@@ -37,7 +37,7 @@ async function makeFinancialWorld() {
       holderId: holder.id,
       purpose: 'COMMISSION_PAYMENT',
       currency: 'POINT',
-      targetAmount: 100,
+      targetAmount: opts.targetAmount ?? 100,
     },
   });
   const escrow = await prisma.financialAccount.create({
@@ -388,11 +388,7 @@ describe('database CHECK constraints', () => {
   });
 
   it('rejects allocating more than the source lot originally contained', async () => {
-    const world = await makeFinancialWorld();
-    await prisma.financialReservation.update({
-      where: { id: world.reservation.id },
-      data: { targetAmount: 101 },
-    });
+    const world = await makeFinancialWorld({ targetAmount: 101 });
     await expect(
       prisma.$transaction(async (tx) => {
         const transfer = await tx.financialTransfer.create({
@@ -417,7 +413,7 @@ describe('database CHECK constraints', () => {
         where: { id: world.reservation.id },
         data: { targetAmount: 99 },
       }),
-    ).rejects.toThrow(/FinancialReservation_transfer_basis_immutable/);
+    ).rejects.toThrow(/FinancialReservation_basis_immutable/);
   });
 
   it('rejects moving an allocated lot to a different account', async () => {
@@ -427,7 +423,7 @@ describe('database CHECK constraints', () => {
         where: { id: world.lot.id },
         data: { accountId: world.otherAvailable.id },
       }),
-    ).rejects.toThrow(/PointLot_allocation_basis_immutable/);
+    ).rejects.toThrow(/PointLot_basis_immutable/);
   });
 
   it('rejects changing ownership of an account used by a committed transfer', async () => {
@@ -440,6 +436,67 @@ describe('database CHECK constraints', () => {
         where: { id: world.available.id },
         data: { holderId: replacementHolder.id },
       }),
-    ).rejects.toThrow(/FinancialAccount_transfer_basis_immutable/);
+    ).rejects.toThrow(/FinancialAccount_basis_immutable/);
+  });
+
+  it('rejects changing a reservation reference or immutable binding', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.financialReservation.update({
+        where: { id: world.reservation.id },
+        data: { referenceId: 'changed', bindingKey: 'changed' },
+      }),
+    ).rejects.toThrow(/FinancialReservation_basis_immutable/);
+  });
+
+  it('rejects reassigning an append-only transfer to another reservation', async () => {
+    const world = await makeCommittedTransfer();
+    const otherReservation = await prisma.financialReservation.create({
+      data: {
+        referenceId: 'payment:reassignment-target',
+        bindingNamespace: 'order-payment',
+        bindingKey: 'reassignment-target',
+        holderId: world.holder.id,
+        purpose: 'COMMISSION_PAYMENT',
+        currency: 'POINT',
+        targetAmount: 100,
+      },
+    });
+    const otherEscrow = await prisma.financialAccount.create({
+      data: { reservationId: otherReservation.id, currency: 'POINT', purpose: 'ESCROW' },
+    });
+    const transfer = await prisma.financialTransfer.findUniqueOrThrow({
+      where: { reservationId: world.reservation.id },
+    });
+    await expect(
+      prisma.financialTransfer.update({
+        where: { id: transfer.id },
+        data: { reservationId: otherReservation.id, toAccountId: otherEscrow.id },
+      }),
+    ).rejects.toThrow(/FinancialTransfer_append_only/);
+  });
+
+  it('rejects rewriting or deleting an append-only transfer allocation', async () => {
+    const world = await makeCommittedTransfer();
+    const transfer = await prisma.financialTransfer.findUniqueOrThrow({
+      where: { reservationId: world.reservation.id },
+    });
+    const where = { transferId_lotId: { transferId: transfer.id, lotId: world.lot.id } };
+    await expect(
+      prisma.financialTransferAllocation.update({ where, data: { amount: 99 } }),
+    ).rejects.toThrow(/FinancialTransferAllocation_append_only/);
+    await expect(prisma.financialTransferAllocation.delete({ where })).rejects.toThrow(
+      /FinancialTransferAllocation_append_only/,
+    );
+  });
+
+  it('rejects reclassifying immutable paid/free lot provenance', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.pointLot.update({
+        where: { id: world.lot.id },
+        data: { sourceKind: 'FREE' },
+      }),
+    ).rejects.toThrow(/PointLot_basis_immutable/);
   });
 });

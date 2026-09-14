@@ -189,4 +189,78 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
     expect(await clients.first.contract.count()).toBe(1);
     expect(await clients.first.checkoutCommand.count()).toBe(1);
   });
+
+  it('rejects a reservation basis update while its first transfer is uncommitted', async () => {
+    const clients = requireClients();
+    const holder = await clients.first.financialHolder.create({
+      data: { bindingNamespace: 'user', bindingKey: 'concurrent-ledger-owner' },
+    });
+    const available = await clients.first.financialAccount.create({
+      data: { holderId: holder.id, currency: 'POINT', purpose: 'AVAILABLE' },
+    });
+    const reservation = await clients.first.financialReservation.create({
+      data: {
+        referenceId: 'concurrent-ledger-payment',
+        bindingNamespace: 'order-payment',
+        bindingKey: 'concurrent-ledger-payment',
+        holderId: holder.id,
+        purpose: 'COMMISSION_PAYMENT',
+        currency: 'POINT',
+        targetAmount: 100,
+      },
+    });
+    const escrow = await clients.first.financialAccount.create({
+      data: { reservationId: reservation.id, currency: 'POINT', purpose: 'ESCROW' },
+    });
+    const lot = await clients.first.pointLot.create({
+      data: {
+        accountId: available.id,
+        sourceKind: 'PAID',
+        originalAmount: 100,
+        remainingAmount: 100,
+      },
+    });
+    let markTransferInserted!: () => void;
+    let releaseTransfer!: () => void;
+    const transferInserted = new Promise<void>((resolve) => {
+      markTransferInserted = resolve;
+    });
+    const transferRelease = new Promise<void>((resolve) => {
+      releaseTransfer = resolve;
+    });
+    const transferRequest = clients.first.$transaction(async (tx) => {
+      await tx.pointLot.update({ where: { id: lot.id }, data: { remainingAmount: 0 } });
+      const transfer = await tx.financialTransfer.create({
+        data: {
+          reservationId: reservation.id,
+          fromAccountId: available.id,
+          toAccountId: escrow.id,
+          amount: 100,
+        },
+      });
+      await tx.financialTransferAllocation.create({
+        data: { transferId: transfer.id, lotId: lot.id, amount: 100 },
+      });
+      markTransferInserted();
+      await transferRelease;
+    });
+
+    await transferInserted;
+    const updateError = await clients.second.financialReservation
+      .update({ where: { id: reservation.id }, data: { targetAmount: 99 } })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    releaseTransfer();
+    await transferRequest;
+
+    expect(String(updateError)).toMatch(/FinancialReservation_basis_immutable/);
+    expect(
+      await clients.first.financialReservation.findUniqueOrThrow({
+        where: { id: reservation.id },
+      }),
+    ).toMatchObject({ targetAmount: 100 });
+    expect(await clients.first.financialTransfer.count()).toBe(1);
+  });
 });

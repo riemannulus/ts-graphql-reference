@@ -248,29 +248,30 @@ CREATE TRIGGER "FinancialTransferAllocation_conservation_check"
 AFTER INSERT OR UPDATE OR DELETE ON "FinancialTransferAllocation"
 FOR EACH ROW EXECUTE FUNCTION check_financial_allocation_row();
 
-CREATE FUNCTION keep_reservation_transfer_basis_immutable()
+CREATE FUNCTION keep_financial_reservation_basis_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
   IF (
-    NEW."holderId" IS DISTINCT FROM OLD."holderId"
+    NEW."referenceId" IS DISTINCT FROM OLD."referenceId"
+    OR NEW."bindingNamespace" IS DISTINCT FROM OLD."bindingNamespace"
+    OR NEW."bindingKey" IS DISTINCT FROM OLD."bindingKey"
+    OR NEW."holderId" IS DISTINCT FROM OLD."holderId"
     OR NEW."purpose" IS DISTINCT FROM OLD."purpose"
     OR NEW."currency" IS DISTINCT FROM OLD."currency"
     OR NEW."targetAmount" IS DISTINCT FROM OLD."targetAmount"
-  ) AND EXISTS (
-    SELECT 1 FROM "FinancialTransfer" WHERE "reservationId" = OLD."id"
   ) THEN
-    RAISE EXCEPTION 'FinancialReservation_transfer_basis_immutable: reservation % already has a transfer', OLD."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'FinancialReservation_transfer_basis_immutable';
+    RAISE EXCEPTION 'FinancialReservation_basis_immutable: reservation % basis is immutable', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialReservation_basis_immutable';
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "FinancialReservation_transfer_basis_immutable"
+CREATE TRIGGER "FinancialReservation_basis_immutable"
 BEFORE UPDATE ON "FinancialReservation"
-FOR EACH ROW EXECUTE FUNCTION keep_reservation_transfer_basis_immutable();
+FOR EACH ROW EXECUTE FUNCTION keep_financial_reservation_basis_immutable();
 
-CREATE FUNCTION keep_transfer_account_basis_immutable()
+CREATE FUNCTION keep_financial_account_basis_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
   IF (
@@ -278,38 +279,57 @@ BEGIN
     OR NEW."purpose" IS DISTINCT FROM OLD."purpose"
     OR NEW."holderId" IS DISTINCT FROM OLD."holderId"
     OR NEW."reservationId" IS DISTINCT FROM OLD."reservationId"
-  ) AND EXISTS (
-    SELECT 1
-    FROM "FinancialTransfer"
-    WHERE "fromAccountId" = OLD."id" OR "toAccountId" = OLD."id"
   ) THEN
-    RAISE EXCEPTION 'FinancialAccount_transfer_basis_immutable: account % is used by a transfer', OLD."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'FinancialAccount_transfer_basis_immutable';
+    RAISE EXCEPTION 'FinancialAccount_basis_immutable: account % basis is immutable', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialAccount_basis_immutable';
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "FinancialAccount_transfer_basis_immutable"
+CREATE TRIGGER "FinancialAccount_basis_immutable"
 BEFORE UPDATE ON "FinancialAccount"
-FOR EACH ROW EXECUTE FUNCTION keep_transfer_account_basis_immutable();
+FOR EACH ROW EXECUTE FUNCTION keep_financial_account_basis_immutable();
 
-CREATE FUNCTION keep_allocated_lot_basis_immutable()
+CREATE FUNCTION keep_point_lot_basis_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
   IF (
     NEW."accountId" IS DISTINCT FROM OLD."accountId"
+    OR NEW."sourceKind" IS DISTINCT FROM OLD."sourceKind"
     OR NEW."originalAmount" IS DISTINCT FROM OLD."originalAmount"
-  ) AND EXISTS (
-    SELECT 1 FROM "FinancialTransferAllocation" WHERE "lotId" = OLD."id"
   ) THEN
-    RAISE EXCEPTION 'PointLot_allocation_basis_immutable: lot % already has an allocation', OLD."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_allocation_basis_immutable';
+    RAISE EXCEPTION 'PointLot_basis_immutable: lot % basis is immutable', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_basis_immutable';
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "PointLot_allocation_basis_immutable"
+CREATE TRIGGER "PointLot_basis_immutable"
 BEFORE UPDATE ON "PointLot"
-FOR EACH ROW EXECUTE FUNCTION keep_allocated_lot_basis_immutable();
+FOR EACH ROW EXECUTE FUNCTION keep_point_lot_basis_immutable();
+
+CREATE FUNCTION reject_financial_transfer_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'FinancialTransfer_append_only: transfer % cannot be changed', OLD."id"
+    USING ERRCODE = '23514', CONSTRAINT = 'FinancialTransfer_append_only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "FinancialTransfer_append_only"
+BEFORE UPDATE OR DELETE ON "FinancialTransfer"
+FOR EACH ROW EXECUTE FUNCTION reject_financial_transfer_mutation();
+
+CREATE FUNCTION reject_financial_transfer_allocation_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'FinancialTransferAllocation_append_only: allocation cannot be changed'
+    USING ERRCODE = '23514', CONSTRAINT = 'FinancialTransferAllocation_append_only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "FinancialTransferAllocation_append_only"
+BEFORE UPDATE OR DELETE ON "FinancialTransferAllocation"
+FOR EACH ROW EXECUTE FUNCTION reject_financial_transfer_allocation_mutation();
