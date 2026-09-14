@@ -14,6 +14,16 @@
  */
 import { defineLocks } from './locks.js';
 
+/** Stable FNV-1a mapping for string identifiers; collisions only add contention. */
+function stringLockId(value: string): number {
+  let hash = 0x811c9dc5;
+  for (const char of value) {
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash | 0;
+}
+
 /**
  * The ONLY way to construct a lock key. Add an entry (namespace → id-to-`objid`
  * mapper) to register a new lockable entity; see the ordering rule above.
@@ -21,6 +31,20 @@ import { defineLocks } from './locks.js';
 export const lockKey = defineLocks({
   /** Serializes all point movement for one user (balance + charge ledger). */
   pointBalance: (userId: number) => userId,
+  /** PROTOTYPE: serializes one initial payment and its replay result. */
+  orderPayment: (orderPaymentId: number) => orderPaymentId,
+  /** PROTOTYPE: serializes all generic financial movement for one holder. */
+  financialHolder: (holderId: number) => holderId,
+  /** PROTOTYPE: serializes commission checkout against occupation of one commission slot. */
+  commissionSlot: (slotId: number) => slotId,
+  /** PROTOTYPE: claims one commission-checkout command key before any economic write. */
+  commissionCheckoutCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: serializes settlement of one formed commission. */
+  commissionContract: (contractId: number) => contractId,
+  /** PROTOTYPE: claims one INCOME-withdrawal command before creating its flow. */
+  incomeWithdrawalCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: claims one commission-settlement command before creating its operation. */
+  commissionSettlementCommand: (commandKey: string) => stringLockId(commandKey),
 });
 
 /** The registered lock namespaces, derived from the registry. */

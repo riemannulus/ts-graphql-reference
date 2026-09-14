@@ -1,0 +1,125 @@
+import type { DbClient, ReadDbClient } from '../../db/db.js';
+import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
+import { OrderPaymentNotFoundError } from './order.core.js';
+
+export async function findCommissionCheckoutLockTargets(
+  db: ReadDbClient,
+  orderPaymentId: number,
+) {
+  const row = await db.orderPayment.findUnique({
+    where: { id: orderPaymentId },
+    select: { order: { select: { buyerId: true, slotId: true } } },
+  });
+  if (!row) throw new OrderPaymentNotFoundError(orderPaymentId);
+  return row.order;
+}
+
+export async function loadCommissionCheckoutPaymentFacts(
+  db: ReadDbClient,
+  orderPaymentId: number,
+) {
+  const row = await db.orderPayment.findUnique({
+    where: { id: orderPaymentId },
+    select: {
+      id: true,
+      flowId: true,
+      order: {
+        select: {
+          id: true,
+          buyerId: true,
+          commissionTypeId: true,
+          slotId: true,
+          flowId: true,
+          amount: true,
+          currency: true,
+          state: true,
+        },
+      },
+      amount: true,
+      currency: true,
+      state: true,
+    },
+  });
+  if (!row) throw new OrderPaymentNotFoundError(orderPaymentId);
+  return {
+    orderId: row.order.id,
+    orderPaymentId: row.id,
+    buyerId: row.order.buyerId,
+    commissionTypeId: row.order.commissionTypeId,
+    slotId: row.order.slotId,
+    flowId: row.flowId,
+    orderAmount: row.order.amount,
+    paymentAmount: row.amount,
+    orderCurrency: row.order.currency,
+    paymentCurrency: row.currency,
+    orderState: row.order.state,
+    paymentState: row.state,
+  };
+}
+
+export async function loadCommissionSettlementOrderFacts(db: ReadDbClient, orderId: number) {
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      flowId: true,
+      buyerId: true,
+      state: true,
+      amount: true,
+      currency: true,
+      payments: {
+        where: { state: 'PAID' },
+        orderBy: { id: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          state: true,
+          amount: true,
+          currency: true,
+          financialLink: { select: { flowId: true, reservationId: true } },
+        },
+      },
+    },
+  });
+  const payment = order?.payments[0];
+  if (!order || !payment?.financialLink) {
+    throw new DomainError(`Paid commission Order ${orderId} does not exist`, 'PAID_ORDER_NOT_FOUND');
+  }
+  return {
+    orderId: order.id,
+    orderFlowId: order.flowId,
+    orderBuyerId: order.buyerId,
+    orderState: order.state,
+    orderAmount: order.amount,
+    orderCurrency: order.currency,
+    orderPaymentId: payment.id,
+    paymentState: payment.state,
+    paymentAmount: payment.amount,
+    paymentCurrency: payment.currency,
+    linkedReservationId: payment.financialLink.reservationId,
+    linkedReservationFlowId: payment.financialLink.flowId,
+  };
+}
+
+export async function applyCommissionCheckoutPayment(
+  db: DbClient,
+  input: { orderId: number; orderPaymentId: number; flowId: string; reservationId: number },
+): Promise<void> {
+  const payment = await db.orderPayment.updateMany({
+    where: { id: input.orderPaymentId, orderId: input.orderId, state: 'PENDING' },
+    data: { state: 'PAID' },
+  });
+  if (payment.count !== 1) throw new ConcurrentUpdateError(`OrderPayment ${input.orderPaymentId}`);
+  const order = await db.order.updateMany({
+    where: { id: input.orderId, state: 'REQUESTED' },
+    data: { state: 'PAID' },
+  });
+  if (order.count !== 1) throw new ConcurrentUpdateError(`Order ${input.orderId}`);
+  await db.orderFinancialLink.create({
+    data: {
+      orderPaymentId: input.orderPaymentId,
+      flowId: input.flowId,
+      reservationId: input.reservationId,
+    },
+  });
+}

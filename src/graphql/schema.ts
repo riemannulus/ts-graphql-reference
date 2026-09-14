@@ -3,6 +3,9 @@
 import { builder } from './builder.js';
 
 import { registerOnboardingModule } from '../modules/onboarding/schemas/index.js';
+import { registerCommissionCheckoutModule } from '../modules/commission-checkout/schemas/index.js';
+import { registerCommissionSettlementModule } from '../modules/commission-settlement/schemas/index.js';
+import { registerIncomeWithdrawalModule } from '../modules/income-withdrawal/schemas/index.js';
 import { registerPointModule } from '../modules/point/schemas/index.js';
 import { registerPostModule } from '../modules/post/schemas/index.js';
 import { registerSearchModule } from '../modules/search/schemas/index.js';
@@ -20,6 +23,9 @@ import { registerUserModule } from '../modules/user/schemas/index.js';
 registerUserModule();
 registerPostModule();
 registerPointModule();
+registerCommissionCheckoutModule();
+registerCommissionSettlementModule();
+registerIncomeWithdrawalModule();
 registerOnboardingModule();
 registerSearchModule();
 

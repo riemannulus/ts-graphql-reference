@@ -2,6 +2,15 @@
 
 A type-safe, modular GraphQL server reference.
 
+> **Commission checkout ledger PoC:** the `codex/ledger-checkout-poc` branch contains a
+> throwaway vertical slice that reserves internal POINT and forms a commission
+> Contract atomically. See
+> [`src/modules/commission-checkout/NOTES.md`](./src/modules/commission-checkout/NOTES.md) for the
+> question, run commands, architecture result, and deliberate limitations.
+> The public transaction identity and extension rule are recorded in
+> [`CONTEXT.md`](./CONTEXT.md) and
+> [`ADR 0001`](./docs/adr/0001-typed-financial-flow-identifiers.md).
+
 | Layer        | Library                                                              |
 | ------------ | -------------------------------------------------------------------- |
 | Language     | TypeScript (ESM, `NodeNext`)                                        |

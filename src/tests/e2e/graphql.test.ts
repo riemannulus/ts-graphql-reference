@@ -31,6 +31,41 @@ async function gql(query: string, variables?: Record<string, unknown>): Promise<
   return res.json() as GqlResult;
 }
 
+async function seedCommissionCheckoutGraphqlWorld() {
+  const buyer = await prisma.user.create({ data: { email: 'gql-commission-checkout-buyer@example.com' } });
+  const worker = await prisma.user.create({ data: { email: 'gql-commission-checkout-worker@example.com' } });
+  const commissionType = await prisma.commissionType.create({
+    data: { workerId: worker.id, title: 'portrait', price: 500 },
+  });
+  const slot = await prisma.commissionSlot.create({ data: { workerId: worker.id } });
+  const flow = await prisma.transactionFlow.create({
+    data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+  });
+  const order = await prisma.order.create({
+    data: {
+      flowId: flow.id,
+      buyerId: buyer.id,
+      commissionTypeId: commissionType.id,
+      slotId: slot.id,
+      titleSnapshot: commissionType.title,
+      amount: commissionType.price,
+    },
+  });
+  const payment = await prisma.orderPayment.create({
+    data: { orderId: order.id, flowId: flow.id, amount: order.amount },
+  });
+  const holder = await prisma.financialHolder.create({
+    data: { bindingNamespace: 'user', bindingKey: String(buyer.id) },
+  });
+  const account = await prisma.financialAccount.create({
+    data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
+  });
+  await prisma.financialLot.create({
+    data: { accountId: account.id, sourceKind: 'PAID', originalAmount: 1_000, remainingAmount: 1_000 },
+  });
+  return { buyer, order, payment };
+}
+
 beforeEach(() => resetDb(prisma));
 afterAll(async () => {
   await app.close();
@@ -38,6 +73,36 @@ afterAll(async () => {
 });
 
 describe('GraphQL API', () => {
+  it('checks out a commission and replays the same result through GraphQL', async () => {
+    const world = await seedCommissionCheckoutGraphqlWorld();
+    const mutation = `mutation CommissionCheckout($payment: Int!, $actor: Int!, $key: String!) {
+      checkoutCommission(input: { orderPaymentId: $payment, actorId: $actor, commandKey: $key }) {
+        orderId orderPaymentId contractId reservationId referenceId commandId operationId replayed
+      }
+    }`;
+    const variables = { payment: world.payment.id, actor: world.buyer.id, key: 'gql-pay-1' };
+
+    const first = await gql(mutation, variables);
+    const second = await gql(mutation, variables);
+
+    expect(first.errors).toBeUndefined();
+    expect(first.data?.checkoutCommission).toEqual({
+      orderId: world.order.id,
+      orderPaymentId: world.payment.id,
+      contractId: 1,
+      reservationId: 1,
+      referenceId: expect.stringMatching(/^COMMISSION-[0-9a-f-]{36}$/),
+      commandId: expect.stringMatching(/^CMD-PAY-[0-9a-f-]{36}$/),
+      operationId: expect.stringMatching(/^OP-PAY-[0-9a-f-]{36}$/),
+      replayed: false,
+    });
+    expect(second.errors).toBeUndefined();
+    expect(second.data?.checkoutCommission).toEqual({
+      ...first.data?.checkoutCommission,
+      replayed: true,
+    });
+  });
+
   it('signUp creates a user with a welcome post', async () => {
     const res = await gql(
       'mutation ($e: String!) { signUp(input: { email: $e, name: "Alice" }) { id email posts { title } } }',

@@ -29,6 +29,7 @@ test.prop([arbCreatePostFields])(
     expect(found?.title).toBe(fields.title);
     expect(found?.content).toBe(fields.content);
   },
+  15_000, // 100 runs × DB reset and real repository round-trips; allow for parallel CI load
 );
 
 test.prop([fc.array(fc.tuple(arbCreatePostFields, fc.boolean()), { maxLength: 8 })])(
@@ -49,4 +50,5 @@ test.prop([fc.array(fc.tuple(arbCreatePostFields, fc.boolean()), { maxLength: 8 
     expect(onlyPublished.every((p) => p.published)).toBe(true);
     expect(onlyPublished).toHaveLength(seeds.filter(([, published]) => published).length);
   },
+  15_000, // 100 runs × DB reset and up to eight writes; allow for parallel CI load
 );

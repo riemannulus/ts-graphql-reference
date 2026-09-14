@@ -41,8 +41,13 @@ per-file lint cannot:
   is the sanctioned cycle breaker (`builder.ts` → `context.ts`,
   `context.ts` → `services.ts`), so only value edges count.
 - **Cross-module dependencies come from an explicit allowlist** — today
-  `onboarding → {user, post}`, `search → post`, and `auth → user` (types
-  only; the service arrives injected). Two modules can entangle with no
+  `onboarding → {user, post}`, `search → post`, `auth → user` (types
+  only; the service arrives injected), and `commission-checkout → {commission-type,
+  contract, financial-ledger, order, slot, transaction-flow}`,
+  `commission-settlement → {contract, financial-ledger, order, transaction-flow}`,
+  and `income-withdrawal → {financial-ledger, transaction-flow}` (reviewed repo/core files only;
+  composite services import owner repos directly and owner modules never point back).
+  Two modules can entangle with no
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
   which `import/no-cycle` cannot see — the allowlist can, and since its
   sanctioned edges form a DAG by construction, module-level acyclicity holds
@@ -83,6 +88,13 @@ See `point.core.ts` (`planSpend`) / `point.write.repo.ts` (`applySpendPlan`) /
 `point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
 (`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
 `user.service.ts` (`changeStatus`) for the single-row degenerate case.
+
+A composite transaction follows the same rule without adding owner-specific
+port adapters: its service imports the reviewed owner repos directly, passes the
+same transaction handle as the first argument, builds the complete plan in pure
+core functions, and calls owner `apply*` executors. Dependency-cruiser narrows
+the cross-module edge to those repo/core files and keeps every owner from
+pointing back at the composite.
 
 ### The concurrency ladder
 
@@ -675,11 +687,12 @@ distinction organizes the whole graph (`src/modules/README.md`):
   leaves.
 - **Composite modules** own a *capability* over other modules' nouns, hold
   few or no tables of their own, and compose owners one way from above:
-  `onboarding` (a cross-module use-case), `search` (an external index
+  `onboarding` and `commission-checkout` (cross-module use-cases), `search` (an external index
   hydrated through the post repo), `auth` (an external protocol over the
   injected user service). Nothing imports a composite — it is reached only
   at the composition points (`graphql/schema.ts`, `services.ts`, `app.ts`,
-  `scheduler/scheduler.ts`) — and the graph rules keep that true
+  `scheduler/scheduler.ts`) — and
+  the graph rules keep that true
   mechanically: owners fall under the default-deny rule, each composite has
   a reaches-only rule, and everything else in `src/` is fenced by
   `modules-enter-at-composition-points`.

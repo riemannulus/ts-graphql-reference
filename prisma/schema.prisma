@@ -16,22 +16,42 @@ datasource db {
   provider = "postgresql"
 }
 
+enum TransactionFlowKind {
+  COMMISSION
+  WITHDRAWAL
+}
+
+enum FinancialCommandKind {
+  PAY
+  EXTRA_PAY
+  SETTLE
+  REFUND
+  CANCEL
+  WITHDRAW
+}
+
 /// A user of the system. `status` is a state machine (see user.state.ts):
 /// ACTIVE | SUSPENDED | DEACTIVATED. The *transition rules* live in code (the
 /// single source of truth, user.state.ts); the *value set* is additionally
 /// enforced by a DB CHECK constraint (see the migrations), so a corrupt write
 /// fails at the database instead of surfacing later as a bad read.
 model User {
-  id           Int           @id @default(autoincrement())
-  email        String        @unique
-  name         String?
-  status       String        @default("ACTIVE")
-  posts        Post[]
-  pointBalance PointBalance?
-  pointCharges PointCharge[]
-  pointSpends  PointSpend[]
-  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+  id                      Int                   @id @default(autoincrement())
+  email                   String                @unique
+  name                    String?
+  status                  String                @default("ACTIVE")
+  posts                   Post[]
+  pointBalance            PointBalance?
+  pointCharges            PointCharge[]
+  pointSpends             PointSpend[]
+  commissionTypesAsWorker CommissionType[]      @relation("CommissionTypeWorker")
+  commissionSlotsAsWorker CommissionSlot[]      @relation("CommissionSlotWorker")
+  ordersAsBuyer           Order[]               @relation("OrderBuyer")
+  contractsAsBuyer        Contract[]            @relation("ContractBuyer")
+  contractsAsWorker       Contract[]            @relation("ContractWorker")
+  financialCommands       FinancialCommandRun[]
+  createdAt               DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
 }
 
 model Post {
@@ -129,4 +149,365 @@ model PointSpend {
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt])
+}
+
+/// PROTOTYPE — a purchasable commission offering. A completed initial payment
+/// forms one Contract; prepayment state belongs to Order.
+model CommissionType {
+  id       Int     @id @default(autoincrement())
+  workerId Int
+  worker   User    @relation("CommissionTypeWorker", fields: [workerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  title    String
+  price    Int
+  orders   Order[]
+
+  @@index([workerId])
+}
+
+/// PROTOTYPE — capacity reserved by an Order and occupied when commission checkout commits.
+model CommissionSlot {
+  id       Int    @id @default(autoincrement())
+  workerId Int
+  worker   User   @relation("CommissionSlotWorker", fields: [workerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  state    String @default("AVAILABLE")
+  order    Order?
+
+  @@index([workerId, state])
+}
+
+/// PROTOTYPE — owns all facts that exist before a commission/Contract forms.
+model Order {
+  id               Int             @id @default(autoincrement())
+  buyerId          Int
+  buyer            User            @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  commissionTypeId Int
+  commissionType   CommissionType  @relation(fields: [commissionTypeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  slotId           Int             @unique
+  slot             CommissionSlot  @relation(fields: [slotId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  flowId           String          @unique @db.Uuid
+  flow             TransactionFlow @relation(fields: [flowId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  titleSnapshot    String
+  amount           Int
+  currency         String          @default("POINT")
+  state            String          @default("REQUESTED")
+  payments         OrderPayment[]
+  contract         Contract?
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, flowId])
+  @@index([buyerId, state])
+  @@index([commissionTypeId])
+}
+
+/// PROTOTYPE — one immutable initial-payment request owned by Order.
+model OrderPayment {
+  id                Int                 @id @default(autoincrement())
+  orderId           Int
+  flowId            String              @db.Uuid
+  order             Order               @relation(fields: [orderId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  amount            Int
+  currency          String              @default("POINT")
+  state             String              @default("PENDING")
+  financialLink     OrderFinancialLink?
+  /// Deprecated physical column from the preceding unshipped PoC migration.
+  /// Public references come from Order.flow(kind + UUID).
+  legacyReferenceId String?             @unique @map("referenceId")
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, flowId])
+  @@index([orderId, state])
+}
+
+/// PROTOTYPE — finance-owned principal identified by an opaque external binding.
+model FinancialHolder {
+  id               Int                    @id @default(autoincrement())
+  bindingNamespace String
+  bindingKey       String
+  accounts         FinancialAccount[]
+  reservations     FinancialReservation[]
+  settlementSwaps  FinancialSwapAction[]
+
+  @@unique([bindingNamespace, bindingKey])
+}
+
+/// PROTOTYPE — generic hold. It intentionally has no product-domain foreign key.
+model FinancialReservation {
+  id                Int                  @id @default(autoincrement())
+  flowId            String               @db.Uuid
+  flow              TransactionFlow      @relation(fields: [flowId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  /// Deprecated storage; new writes leave it NULL and use flowId.
+  legacyReferenceId String?              @unique @map("referenceId")
+  bindingNamespace  String
+  bindingKey        String
+  holderId          Int
+  holder            FinancialHolder      @relation(fields: [holderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  purpose           String
+  currency          String
+  targetAmount      Int
+  state             String               @default("HELD")
+  escrowAccount     FinancialAccount?
+  transfer          FinancialTransfer?
+  orderLink         OrderFinancialLink?
+  withdrawal        FinancialWithdrawal?
+  settlementSwap    FinancialSwapAction?
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@unique([bindingNamespace, bindingKey])
+  @@unique([id, flowId])
+  @@index([holderId, state])
+}
+
+/// PROTOTYPE — AVAILABLE belongs to a holder; ESCROW belongs to a reservation.
+model FinancialAccount {
+  id            Int                   @id @default(autoincrement())
+  currency      String
+  purpose       String
+  holderId      Int?
+  holder        FinancialHolder?      @relation(fields: [holderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reservationId Int?                  @unique
+  reservation   FinancialReservation? @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  lots          FinancialLot[]
+  outgoing      FinancialTransfer[]   @relation("FinancialTransferFrom")
+  incoming      FinancialTransfer[]   @relation("FinancialTransferTo")
+  swapOutgoing  FinancialSwapLeg[]    @relation("FinancialSwapLegFrom")
+  swapIncoming  FinancialSwapLeg[]    @relation("FinancialSwapLegTo")
+
+  @@unique([holderId, currency, purpose])
+  @@unique([id, currency])
+}
+
+/// PROTOTYPE — Currency provenance and remaining spendable amount.
+model FinancialLot {
+  id                  Int                           @id @default(autoincrement())
+  accountId           Int
+  currency            String                        @default("POINT")
+  account             FinancialAccount              @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  sourceKind          String
+  sourceOperationId   String?                       @db.Uuid
+  sourceSwapActionId  String?                       @unique @db.Uuid
+  sourceFlowId        String?                       @db.Uuid
+  sourceFlowKind      TransactionFlowKind?
+  sourceOperationKind FinancialCommandKind?
+  sourceOperation     FinancialOperation?           @relation(fields: [sourceOperationId, sourceFlowId, sourceOperationKind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  sourceFlow          TransactionFlow?              @relation("FinancialLotSourceFlow", fields: [sourceFlowId, sourceFlowKind], references: [id, kind], onDelete: Restrict, onUpdate: NoAction)
+  sourceSwapAction    FinancialSwapAction?          @relation(fields: [sourceSwapActionId, sourceOperationId, sourceFlowId], references: [id, operationId, flowId], onDelete: Restrict, onUpdate: NoAction)
+  originalAmount      Int
+  remainingAmount     Int
+  allocations         FinancialTransferAllocation[]
+  createdAt           DateTime                      @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, accountId, currency])
+  @@unique([sourceOperationId])
+  @@unique([sourceSwapActionId, sourceOperationId, sourceFlowId])
+  @@index([accountId, createdAt, id])
+}
+
+/// PROTOTYPE — append-only transfer from AVAILABLE to reservation ESCROW.
+model FinancialTransfer {
+  id            Int                           @id @default(autoincrement())
+  reservationId Int                           @unique
+  flowId        String                        @db.Uuid
+  reservation   FinancialReservation          @relation(fields: [reservationId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  currency      String                        @default("POINT")
+  fromAccountId Int
+  fromAccount   FinancialAccount              @relation("FinancialTransferFrom", fields: [fromAccountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  toAccountId   Int
+  toAccount     FinancialAccount              @relation("FinancialTransferTo", fields: [toAccountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  amount        Int
+  actionId      String                        @unique @db.Uuid
+  action        FinancialTransferAction       @relation(fields: [actionId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  allocations   FinancialTransferAllocation[]
+  createdAt     DateTime                      @default(now()) @db.Timestamptz(6)
+
+  @@unique([reservationId, flowId])
+  @@unique([actionId, flowId])
+  @@unique([id, fromAccountId, currency])
+}
+
+model FinancialTransferAllocation {
+  transferId    Int
+  fromAccountId Int
+  currency      String
+  transfer      FinancialTransfer @relation(fields: [transferId, fromAccountId, currency], references: [id, fromAccountId, currency], onDelete: Restrict, onUpdate: NoAction)
+  lotId         Int
+  lot           FinancialLot      @relation(fields: [lotId, fromAccountId, currency], references: [id, accountId, currency], onDelete: Restrict, onUpdate: NoAction)
+  amount        Int
+
+  @@id([transferId, lotId])
+}
+
+/// PROTOTYPE — product-owned mapping; its FK points into finance, never back.
+model OrderFinancialLink {
+  orderPaymentId Int                  @id
+  flowId         String               @db.Uuid
+  orderPayment   OrderPayment         @relation(fields: [orderPaymentId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  reservationId  Int                  @unique
+  reservation    FinancialReservation @relation(fields: [reservationId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([orderPaymentId, flowId])
+  @@unique([reservationId, flowId])
+}
+
+/// PROTOTYPE — a formed commission. There is no Contract before commission checkout.
+model Contract {
+  id       Int      @id @default(autoincrement())
+  orderId  Int      @unique
+  flowId   String   @db.Uuid
+  order    Order    @relation(fields: [orderId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  buyerId  Int
+  buyer    User     @relation("ContractBuyer", fields: [buyerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  workerId Int
+  worker   User     @relation("ContractWorker", fields: [workerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  formedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([orderId, flowId])
+  @@index([buyerId])
+  @@index([workerId])
+}
+
+/// PROTOTYPE — the business transaction spine. Public references are derived
+/// from kind + opaque id, so their prefix cannot disagree with persisted data.
+model TransactionFlow {
+  id            String                 @id @default(uuid()) @db.Uuid
+  kind          TransactionFlowKind
+  orders        Order[]
+  reservations  FinancialReservation[]
+  commands      FinancialCommandRun[]
+  policies      FlowCommandPolicy[]
+  withdrawals   FinancialWithdrawal[]
+  generatedLots FinancialLot[]         @relation("FinancialLotSourceFlow")
+  createdAt     DateTime               @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, kind])
+}
+
+/// Explicit allow-list owned by each flow instance. A new flow family cannot
+/// accept a command until its creator records that command kind here.
+model FlowCommandPolicy {
+  flowId      String                @db.Uuid
+  commandKind FinancialCommandKind
+  flow        TransactionFlow       @relation(fields: [flowId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  commands    FinancialCommandRun[]
+
+  @@id([flowId, commandKind])
+}
+
+/// One idempotent command attempt. A second key may point at an existing
+/// operation, but the composite FK still requires the same flow and kind.
+model FinancialCommandRun {
+  id                  String               @id @default(uuid()) @db.Uuid
+  flowId              String               @db.Uuid
+  flowKind            TransactionFlowKind
+  kind                FinancialCommandKind
+  principalId         Int
+  principal           User                 @relation(fields: [principalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  idempotencyKey      String
+  payloadHash         String
+  subjectNamespace    String
+  subjectKey          String
+  resultOperationId   String?              @db.Uuid
+  flow                TransactionFlow      @relation(fields: [flowId, flowKind], references: [id, kind], onDelete: Restrict, onUpdate: NoAction)
+  policy              FlowCommandPolicy    @relation(fields: [flowId, kind], references: [flowId, commandKind], onDelete: Restrict, onUpdate: NoAction)
+  originatedOperation FinancialOperation?  @relation("OriginatingCommand")
+  resultOperation     FinancialOperation?  @relation("CommandResult", fields: [resultOperationId, flowId, kind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@unique([principalId, kind, idempotencyKey])
+  @@unique([id, flowId, kind])
+  @@index([subjectNamespace, subjectKey, kind, createdAt])
+}
+
+/// One committed financial operation. Its composite FK guarantees that it has
+/// the same flow and kind as the command that originated it.
+model FinancialOperation {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  flowId               String                    @db.Uuid
+  kind                 FinancialCommandKind
+  originatingCommandId String                    @unique @db.Uuid
+  originatingCommand   FinancialCommandRun       @relation("OriginatingCommand", fields: [originatingCommandId, flowId, kind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  resultCommands       FinancialCommandRun[]     @relation("CommandResult")
+  transferActions      FinancialTransferAction[]
+  swapAction           FinancialSwapAction?
+  generatedLots        FinancialLot[]
+  postedAt             DateTime                  @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, flowId, kind])
+  @@unique([id, flowId])
+  @@unique([originatingCommandId, flowId, kind])
+}
+
+/// A structurally typed TRANSFER effect. Other action families get their own
+/// subtype table, so a FinancialTransfer cannot reference SWAP/BURN by mistake.
+model FinancialTransferAction {
+  id            String               @id @default(uuid()) @db.Uuid
+  flowId        String               @db.Uuid
+  operationId   String               @unique @db.Uuid
+  operationKind FinancialCommandKind @default(PAY)
+  operation     FinancialOperation   @relation(fields: [operationId, flowId, operationKind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  transfer      FinancialTransfer?
+  withdrawal    FinancialWithdrawal?
+  createdAt     DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, flowId])
+  @@unique([id, operationId, flowId, operationKind])
+}
+
+/// A SETTLE effect with exactly one POINT leg and one INCOME leg.
+model FinancialSwapAction {
+  id                  String               @id @default(uuid()) @db.Uuid
+  flowId              String               @db.Uuid
+  operationId         String               @unique @db.Uuid
+  operationKind       FinancialCommandKind @default(SETTLE)
+  operation           FinancialOperation   @relation(fields: [operationId, flowId, operationKind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  reservationId       Int                  @unique
+  reservation         FinancialReservation @relation(fields: [reservationId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  beneficiaryHolderId Int
+  beneficiaryHolder   FinancialHolder      @relation(fields: [beneficiaryHolderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  legs                FinancialSwapLeg[]
+  generatedLot        FinancialLot?
+  createdAt           DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, flowId])
+  @@unique([operationId, flowId])
+  @@unique([operationId, flowId, operationKind])
+  @@unique([id, operationId, flowId])
+  @@unique([reservationId, flowId])
+}
+
+model FinancialSwapLeg {
+  id            Int                 @id @default(autoincrement())
+  actionId      String              @db.Uuid
+  flowId        String              @db.Uuid
+  action        FinancialSwapAction @relation(fields: [actionId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  currency      String
+  fromAccountId Int
+  fromAccount   FinancialAccount    @relation("FinancialSwapLegFrom", fields: [fromAccountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  toAccountId   Int
+  toAccount     FinancialAccount    @relation("FinancialSwapLegTo", fields: [toAccountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  amount        Int
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@unique([actionId, currency])
+  @@index([flowId])
+}
+
+/// One withdrawal request whose financial hold is owned by a WITHDRAWAL flow.
+model FinancialWithdrawal {
+  id               String                  @id @default(uuid()) @db.Uuid
+  flowId           String                  @unique @db.Uuid
+  flowKind         TransactionFlowKind     @default(WITHDRAWAL)
+  flow             TransactionFlow         @relation(fields: [flowId, flowKind], references: [id, kind], onDelete: Restrict, onUpdate: NoAction)
+  operationId      String                  @unique @db.Uuid
+  operationKind    FinancialCommandKind    @default(WITHDRAW)
+  transferActionId String                  @unique @db.Uuid
+  transferAction   FinancialTransferAction @relation(fields: [transferActionId, operationId, flowId, operationKind], references: [id, operationId, flowId, operationKind], onDelete: Restrict, onUpdate: NoAction)
+  reservationId    Int                     @unique
+  reservation      FinancialReservation    @relation(fields: [reservationId, flowId], references: [id, flowId], onDelete: Restrict, onUpdate: NoAction)
+  createdAt        DateTime                @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, flowId])
+  @@unique([transferActionId, operationId, flowId, operationKind])
+  @@unique([reservationId, flowId])
 }

@@ -4,8 +4,11 @@ import { type Clock, systemClock } from './foundation/clock.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
 import { createOAuthService } from './modules/auth/oauth.service.js';
 import { createFeatureFlagService } from './modules/feature-flag/feature-flag.service.js';
+import { createCommissionCheckoutService } from './modules/commission-checkout/commission-checkout.service.js';
+import { createCommissionSettlementService } from './modules/commission-settlement/commission-settlement.service.js';
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
+import { createIncomeWithdrawalService } from './modules/income-withdrawal/income-withdrawal.service.js';
 import {
   type PostSearchIndex,
   stubPostSearchIndex,
@@ -69,7 +72,20 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   // against the code catalog, and the catalog is bound HERE (the job delivery
   // layer is lint-banned from the flag facade, and the service sits below it).
   const featureFlag = createFeatureFlagService(db, clock, Object.keys(FLAGS));
-  return { user, point, auth, onboarding, postSearch, featureFlag };
+  const commissionCheckout = createCommissionCheckoutService(db);
+  const commissionSettlement = createCommissionSettlementService(db);
+  const incomeWithdrawal = createIncomeWithdrawalService(db);
+  return {
+    user,
+    point,
+    auth,
+    onboarding,
+    postSearch,
+    featureFlag,
+    commissionCheckout,
+    commissionSettlement,
+    incomeWithdrawal,
+  };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */
