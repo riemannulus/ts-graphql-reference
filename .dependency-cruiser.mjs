@@ -14,7 +14,7 @@
  *   under the default ban, so they can never point back. A module-level cycle
  *   can therefore only enter by editing this file, which is the review point;
  * - where non-module code may enter src/modules at all: only the composition
- *   points (schema.ts, services.ts, app.ts, scheduler.ts) — CONVENTIONS §11.
+ *   points (schema.ts, services.ts, app.ts, scheduler.ts, composition/) — CONVENTIONS §11.
  */
 
 /** @type {import('dependency-cruiser').IConfiguration} */
@@ -125,7 +125,8 @@ export default {
       comment:
         'Non-module code reaches src/modules only at the composition points: ' +
         'graphql/schema.ts (register functions), services.ts (the container), ' +
-        'app.ts (routes + providers), scheduler/scheduler.ts (jobs). A Yoga ' +
+        'app.ts (routes + providers), scheduler/scheduler.ts (jobs), and reviewed ' +
+        'composition adapters for transaction-bound owner ports. A Yoga ' +
         'plugin or a db/flags/foundation helper importing a module — owner or ' +
         'composite — would invert the architecture: modules are delivered and ' +
         'composed, they are not libraries (CONVENTIONS §11).',
@@ -138,6 +139,7 @@ export default {
           '^src/services\\.ts$',
           '^src/graphql/schema\\.ts$',
           '^src/scheduler/scheduler\\.ts$',
+          '^src/composition/',
         ],
       },
       to: { path: '^src/modules/' },

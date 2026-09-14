@@ -688,10 +688,17 @@ distinction organizes the whole graph (`src/modules/README.md`):
   hydrated through the post repo), `auth` (an external protocol over the
   injected user service). Nothing imports a composite — it is reached only
   at the composition points (`graphql/schema.ts`, `services.ts`, `app.ts`,
-  `scheduler/scheduler.ts`) — and the graph rules keep that true
+  `scheduler/scheduler.ts`, or a reviewed adapter under `composition/`) — and
+  the graph rules keep that true
   mechanically: owners fall under the default-deny rule, each composite has
   a reaches-only rule, and everything else in `src/` is fenced by
   `modules-enter-at-composition-points`.
+
+`composition/` is reserved for adapters that bind one shared infrastructure
+capability, such as a transaction, to several owner-specific ports while keeping
+the composite module free of owner implementation imports. Each adapter needs a
+target-side sole-importer rule and an exact outbound allowlist; adding the
+directory here does not make it a general module import escape hatch.
 
 Code with no Prisma model and no domain rule is not a module at all: shared
 machinery lives in `foundation/` / `db/` / `flags/`. A "utils" or "common"
