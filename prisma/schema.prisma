@@ -22,16 +22,21 @@ datasource db {
 /// enforced by a DB CHECK constraint (see the migrations), so a corrupt write
 /// fails at the database instead of surfacing later as a bad read.
 model User {
-  id           Int           @id @default(autoincrement())
-  email        String        @unique
-  name         String?
-  status       String        @default("ACTIVE")
-  posts        Post[]
-  pointBalance PointBalance?
-  pointCharges PointCharge[]
-  pointSpends  PointSpend[]
-  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+  id                      Int              @id @default(autoincrement())
+  email                   String           @unique
+  name                    String?
+  status                  String           @default("ACTIVE")
+  posts                   Post[]
+  pointBalance            PointBalance?
+  pointCharges            PointCharge[]
+  pointSpends             PointSpend[]
+  commissionTypesAsWorker CommissionType[] @relation("CommissionTypeWorker")
+  commissionSlotsAsWorker CommissionSlot[] @relation("CommissionSlotWorker")
+  ordersAsBuyer           Order[]          @relation("OrderBuyer")
+  contractsAsBuyer        Contract[]       @relation("ContractBuyer")
+  contractsAsWorker       Contract[]       @relation("ContractWorker")
+  createdAt               DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime         @updatedAt @db.Timestamptz(6)
 }
 
 model Post {
@@ -129,4 +134,190 @@ model PointSpend {
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt])
+}
+
+/// PROTOTYPE — a purchasable commission offering. A completed initial payment
+/// forms one Contract; prepayment state belongs to Order.
+model CommissionType {
+  id       Int     @id @default(autoincrement())
+  workerId Int
+  worker   User    @relation("CommissionTypeWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  title    String
+  price    Int
+  orders   Order[]
+
+  @@index([workerId])
+}
+
+/// PROTOTYPE — capacity reserved by an Order and occupied when checkout commits.
+model CommissionSlot {
+  id       Int     @id @default(autoincrement())
+  workerId Int
+  worker   User    @relation("CommissionSlotWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  state    String  @default("AVAILABLE")
+  order    Order?
+
+  @@index([workerId, state])
+}
+
+/// PROTOTYPE — owns all facts that exist before a commission/Contract forms.
+model Order {
+  id               Int             @id @default(autoincrement())
+  buyerId          Int
+  buyer            User            @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  commissionTypeId Int
+  commissionType   CommissionType  @relation(fields: [commissionTypeId], references: [id], onDelete: Restrict)
+  slotId           Int             @unique
+  slot             CommissionSlot  @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  titleSnapshot    String
+  amount           Int
+  currency         String          @default("POINT")
+  state            String          @default("REQUESTED")
+  payments         OrderPayment[]
+  contract         Contract?
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+
+  @@index([buyerId, state])
+  @@index([commissionTypeId])
+}
+
+/// PROTOTYPE — one immutable initial-payment request owned by Order.
+model OrderPayment {
+  id            Int                 @id @default(autoincrement())
+  orderId       Int
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  referenceId   String              @unique
+  amount        Int
+  currency      String              @default("POINT")
+  state         String              @default("PENDING")
+  financialLink OrderFinancialLink?
+  commands      CheckoutCommand[]
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@index([orderId, state])
+}
+
+/// PROTOTYPE — finance-owned principal identified by an opaque external binding.
+model FinancialHolder {
+  id               Int                    @id @default(autoincrement())
+  bindingNamespace String
+  bindingKey       String
+  accounts         FinancialAccount[]
+  reservations     FinancialReservation[]
+
+  @@unique([bindingNamespace, bindingKey])
+}
+
+/// PROTOTYPE — generic hold. It intentionally has no product-domain foreign key.
+model FinancialReservation {
+  id               Int                  @id @default(autoincrement())
+  referenceId      String               @unique
+  bindingNamespace String
+  bindingKey       String
+  holderId         Int
+  holder           FinancialHolder      @relation(fields: [holderId], references: [id], onDelete: Restrict)
+  currency         String
+  targetAmount     Int
+  state            String               @default("HELD")
+  escrowAccount    FinancialAccount?
+  transfer         FinancialTransfer?
+  orderLink        OrderFinancialLink?
+  commands         CheckoutCommand[]
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@unique([bindingNamespace, bindingKey])
+  @@index([holderId, state])
+}
+
+/// PROTOTYPE — AVAILABLE belongs to a holder; ESCROW belongs to a reservation.
+model FinancialAccount {
+  id              Int                    @id @default(autoincrement())
+  currency        String
+  purpose         String
+  holderId        Int?
+  holder          FinancialHolder?       @relation(fields: [holderId], references: [id], onDelete: Restrict)
+  reservationId   Int?                   @unique
+  reservation     FinancialReservation?  @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  lots            PointLot[]
+  outgoing        FinancialTransfer[]    @relation("FinancialTransferFrom")
+  incoming        FinancialTransfer[]    @relation("FinancialTransferTo")
+
+  @@unique([holderId, currency, purpose])
+}
+
+/// PROTOTYPE — POINT provenance and remaining spendable amount.
+model PointLot {
+  id              Int                             @id @default(autoincrement())
+  accountId       Int
+  account         FinancialAccount                @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  sourceKind      String
+  originalAmount  Int
+  remainingAmount Int
+  allocations     FinancialTransferAllocation[]
+  createdAt       DateTime                        @default(now()) @db.Timestamptz(6)
+
+  @@index([accountId, createdAt, id])
+}
+
+/// PROTOTYPE — append-only transfer from AVAILABLE to reservation ESCROW.
+model FinancialTransfer {
+  id            Int                             @id @default(autoincrement())
+  reservationId Int                             @unique
+  reservation   FinancialReservation            @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  fromAccountId Int
+  fromAccount   FinancialAccount                @relation("FinancialTransferFrom", fields: [fromAccountId], references: [id], onDelete: Restrict)
+  toAccountId   Int
+  toAccount     FinancialAccount                @relation("FinancialTransferTo", fields: [toAccountId], references: [id], onDelete: Restrict)
+  amount        Int
+  allocations   FinancialTransferAllocation[]
+  createdAt     DateTime                        @default(now()) @db.Timestamptz(6)
+}
+
+model FinancialTransferAllocation {
+  transferId Int
+  transfer   FinancialTransfer @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  lotId      Int
+  lot        PointLot          @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  amount     Int
+
+  @@id([transferId, lotId])
+}
+
+/// PROTOTYPE — product-owned mapping; its FK points into finance, never back.
+model OrderFinancialLink {
+  orderPaymentId Int                  @id
+  orderPayment   OrderPayment         @relation(fields: [orderPaymentId], references: [id], onDelete: Restrict)
+  reservationId  Int                  @unique
+  reservation    FinancialReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+}
+
+/// PROTOTYPE — a formed commission. There is no Contract before checkout.
+model Contract {
+  id        Int               @id @default(autoincrement())
+  orderId   Int               @unique
+  order     Order             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  buyerId   Int
+  buyer     User              @relation("ContractBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  workerId  Int
+  worker    User              @relation("ContractWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  commands  CheckoutCommand[]
+  formedAt  DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@index([buyerId])
+  @@index([workerId])
+}
+
+/// PROTOTYPE — complete replay result for one checkout command.
+model CheckoutCommand {
+  commandKey     String               @id
+  payloadHash    String
+  orderPaymentId Int
+  orderPayment   OrderPayment         @relation(fields: [orderPaymentId], references: [id], onDelete: Restrict)
+  reservationId  Int
+  reservation    FinancialReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  contractId     Int
+  contract       Contract             @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(6)
 }

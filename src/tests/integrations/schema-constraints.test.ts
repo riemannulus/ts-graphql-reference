@@ -125,4 +125,68 @@ describe('database CHECK constraints', () => {
         VALUES ('dup', 'DEV', CURRENT_TIMESTAMP)`,
     ).rejects.toThrow(/FeatureFlag_name_live_key/);
   });
+
+  it('rejects reusing one financial reservation binding', async () => {
+    const holderId = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "FinancialHolder" ("bindingNamespace", "bindingKey")
+      VALUES ('user', '1') RETURNING "id"
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO "FinancialReservation"
+        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
+      VALUES ('payment:1', 'order-payment', '1', ${holderId[0]!.id}, 'POINT', 100)
+    `;
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "FinancialReservation"
+          ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
+        VALUES ('payment:2', 'order-payment', '1', ${holderId[0]!.id}, 'POINT', 100)
+      `,
+    ).rejects.toThrow(/FinancialReservation_bindingNamespace_bindingKey_key/);
+  });
+
+  it('rejects forming two contracts from one order', async () => {
+    const buyerId = await makeUser();
+    const worker = await prisma.user.create({ data: { email: 'worker-checks@example.com' } });
+    const commissionType = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "CommissionType" ("workerId", "title", "price")
+      VALUES (${worker.id}, 'portrait', 100) RETURNING "id"
+    `;
+    const slot = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "CommissionSlot" ("workerId") VALUES (${worker.id}) RETURNING "id"
+    `;
+    const order = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "Order" ("buyerId", "commissionTypeId", "slotId", "titleSnapshot", "amount")
+      VALUES (${buyerId}, ${commissionType[0]!.id}, ${slot[0]!.id}, 'portrait', 100) RETURNING "id"
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO "Contract" ("orderId", "buyerId", "workerId")
+      VALUES (${order[0]!.id}, ${buyerId}, ${worker.id})
+    `;
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "Contract" ("orderId", "buyerId", "workerId")
+        VALUES (${order[0]!.id}, ${buyerId}, ${worker.id})
+      `,
+    ).rejects.toThrow(/Contract_orderId_key/);
+  });
+
+  it('rejects a financial account with both holder and reservation ownership', async () => {
+    const holder = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "FinancialHolder" ("bindingNamespace", "bindingKey")
+      VALUES ('user', 'account-owner') RETURNING "id"
+    `;
+    const reservation = await prisma.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO "FinancialReservation"
+        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
+      VALUES ('payment:account', 'order-payment', 'account', ${holder[0]!.id}, 'POINT', 100)
+      RETURNING "id"
+    `;
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "FinancialAccount" ("currency", "purpose", "holderId", "reservationId")
+        VALUES ('POINT', 'AVAILABLE', ${holder[0]!.id}, ${reservation[0]!.id})
+      `,
+    ).rejects.toThrow(/FinancialAccount_owner_check/);
+  });
 });
