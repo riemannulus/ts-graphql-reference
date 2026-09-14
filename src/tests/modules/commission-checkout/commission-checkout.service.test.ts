@@ -50,7 +50,7 @@ async function seedCommissionCheckoutWorld(opts: { balance?: number; slotState?:
   const account = await prisma.financialAccount.create({
     data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
   });
-  const lot = await prisma.pointLot.create({
+  const lot = await prisma.financialLot.create({
     data: {
       accountId: account.id,
       sourceKind: 'PAID',
@@ -112,7 +112,7 @@ describe('CommissionCheckoutService.complete', () => {
     expect(await prisma.commissionSlot.findUniqueOrThrow({ where: { id: world.slot.id } })).toMatchObject({
       state: 'OCCUPIED',
     });
-    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+    expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 500,
     });
     expect(await prisma.contract.count()).toBe(1);
@@ -128,7 +128,7 @@ describe('CommissionCheckoutService.complete', () => {
 
   it('preserves exact FIFO lot provenance across a multi-lot reservation', async () => {
     const world = await seedCommissionCheckoutWorld({ balance: 200 });
-    const secondLot = await prisma.pointLot.create({
+    const secondLot = await prisma.financialLot.create({
       data: {
         accountId: world.account.id,
         sourceKind: 'FREE',
@@ -180,7 +180,7 @@ describe('CommissionCheckoutService.complete', () => {
       ],
     });
     expect(
-      await prisma.pointLot.findMany({
+      await prisma.financialLot.findMany({
         where: { id: { in: [world.lot.id, secondLot.id] } },
         orderBy: { id: 'asc' },
         select: { id: true, remainingAmount: true },
@@ -212,7 +212,7 @@ describe('CommissionCheckoutService.complete', () => {
       expect(await prisma.financialOperation.count()).toBe(0);
       expect(await prisma.financialTransferAction.count()).toBe(0);
       expect(await prisma.financialAccount.count({ where: { purpose: 'ESCROW' } })).toBe(0);
-      expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+      expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
         remainingAmount: 1_000,
       });
       expect(await prisma.order.findUniqueOrThrow({ where: { id: world.order.id } })).toMatchObject({
@@ -239,7 +239,7 @@ describe('CommissionCheckoutService.complete', () => {
     expect(await prisma.financialCommandRun.count()).toBe(1);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
-    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+    expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 500,
     });
   });
@@ -289,7 +289,7 @@ describe('CommissionCheckoutService.complete', () => {
     expect(await prisma.financialCommandRun.count()).toBe(2);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
-    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+    expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 500,
     });
   });
@@ -340,9 +340,52 @@ describe('CommissionCheckoutService.complete', () => {
     const operation = await prisma.financialOperation.create({
       data: { flowId: otherFlow.id, kind: 'PAY', originatingCommandId: command.id },
     });
-    await prisma.financialCommandRun.update({
-      where: { id: command.id },
-      data: { resultOperationId: operation.id },
+    const action = await prisma.financialTransferAction.create({
+      data: { flowId: otherFlow.id, operationId: operation.id, operationKind: 'PAY' },
+    });
+    await prisma.$transaction(async (tx) => {
+      const reservation = await tx.financialReservation.create({
+        data: {
+          flowId: otherFlow.id,
+          bindingNamespace: 'test-other-flow',
+          bindingKey: String(world.payment.id),
+          holderId: world.holder.id,
+          purpose: 'COMMISSION_PAYMENT',
+          currency: 'POINT',
+          targetAmount: 500,
+        },
+      });
+      const escrow = await tx.financialAccount.create({
+        data: { reservationId: reservation.id, currency: 'POINT', purpose: 'ESCROW' },
+      });
+      await tx.financialLot.update({
+        where: { id: world.lot.id },
+        data: { remainingAmount: 500 },
+      });
+      const transfer = await tx.financialTransfer.create({
+        data: {
+          reservationId: reservation.id,
+          flowId: otherFlow.id,
+          currency: 'POINT',
+          fromAccountId: world.account.id,
+          toAccountId: escrow.id,
+          amount: 500,
+          actionId: action.id,
+        },
+      });
+      await tx.financialTransferAllocation.create({
+        data: {
+          transferId: transfer.id,
+          fromAccountId: world.account.id,
+          currency: 'POINT',
+          lotId: world.lot.id,
+          amount: 500,
+        },
+      });
+      await tx.financialCommandRun.update({
+        where: { id: command.id },
+        data: { resultOperationId: operation.id },
+      });
     });
 
     await expect(
@@ -368,7 +411,7 @@ describe('CommissionCheckoutService.complete', () => {
     expect(await prisma.financialReservation.count()).toBe(0);
     expect(await prisma.contract.count()).toBe(0);
     expect(await prisma.financialCommandRun.count()).toBe(0);
-    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+    expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 499,
     });
   });

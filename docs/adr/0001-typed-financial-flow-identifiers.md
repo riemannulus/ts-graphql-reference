@@ -13,6 +13,7 @@ Short examples such as `TX-COMMISSION-01`, `CMD-PAY-01`, and `OP-PAY-01` explain
 Persist opaque UUID primary keys and enum kind columns. Derive public identifiers at the boundary:
 
 - `COMMISSION-<flow UUID>`
+- `WITHDRAWAL-<flow UUID>`
 - `CMD-PAY-<command UUID>`
 - `OP-PAY-<operation UUID>`
 
@@ -24,6 +25,6 @@ This unmerged PoC migration is fresh-database only and deliberately does not bac
 
 ## Consequences
 
-Prefixes become trustworthy projections of typed data, while UUIDs remove coordination and collision concerns. Queries can follow one commission across payment and later operations by `flowId`. Same-key retries return one command; a different key may create an alias command for the same operation without repeating the economic effect.
+Prefixes become trustworthy projections of typed data, while UUIDs remove coordination and collision concerns. Queries can follow one commission across payment and settlement by `flowId`; a withdrawal follows its allocated INCOME lots back to one or more commission flow ids. Same-key retries return one command; a different key may create an alias command for the same operation without repeating the economic effect.
 
 The public strings are longer than the illustrative `-01` aliases. User interfaces may show a shortened suffix for readability, but APIs, logs, and reconciliation exports use the full derived identifier.

@@ -1,5 +1,5 @@
 import type { DbClient, ReadDbClient } from '../../db/db.js';
-import { ConcurrentUpdateError } from '../../foundation/errors.js';
+import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
 import { OrderPaymentNotFoundError } from './order.core.js';
 
 export async function findCommissionCheckoutLockTargets(
@@ -54,6 +54,50 @@ export async function loadCommissionCheckoutPaymentFacts(
     paymentCurrency: row.currency,
     orderState: row.order.state,
     paymentState: row.state,
+  };
+}
+
+export async function loadCommissionSettlementOrderFacts(db: ReadDbClient, orderId: number) {
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      flowId: true,
+      buyerId: true,
+      state: true,
+      amount: true,
+      currency: true,
+      payments: {
+        where: { state: 'PAID' },
+        orderBy: { id: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          state: true,
+          amount: true,
+          currency: true,
+          financialLink: { select: { flowId: true, reservationId: true } },
+        },
+      },
+    },
+  });
+  const payment = order?.payments[0];
+  if (!order || !payment?.financialLink) {
+    throw new DomainError(`Paid commission Order ${orderId} does not exist`, 'PAID_ORDER_NOT_FOUND');
+  }
+  return {
+    orderId: order.id,
+    orderFlowId: order.flowId,
+    orderBuyerId: order.buyerId,
+    orderState: order.state,
+    orderAmount: order.amount,
+    orderCurrency: order.currency,
+    orderPaymentId: payment.id,
+    paymentState: payment.state,
+    paymentAmount: payment.amount,
+    paymentCurrency: payment.currency,
+    linkedReservationId: payment.financialLink.reservationId,
+    linkedReservationFlowId: payment.financialLink.flowId,
   };
 }
 

@@ -98,26 +98,39 @@ export function startCommand(db: DbClient, input: FinancialCommandRequest) {
   });
 }
 
-export async function createTransferOperation(
+export function createFlow(
+  db: DbClient,
+  input: { kind: TransactionFlowKind; allowedCommands: readonly FinancialCommandKind[] },
+) {
+  return db.transactionFlow.create({
+    data: {
+      kind: input.kind,
+      policies: { createMany: { data: input.allowedCommands.map((commandKind) => ({ commandKind })) } },
+    },
+    select: { id: true, kind: true },
+  });
+}
+
+export function createOperation(
   db: DbClient,
   input: Pick<FinancialCommandRequest, 'flowId' | 'kind'> & {
     commandId: string;
-    actionKind: 'TRANSFER';
   },
 ) {
-  const operation = await db.financialOperation.create({
+  return db.financialOperation.create({
     data: { flowId: input.flowId, kind: input.kind, originatingCommandId: input.commandId },
     select: { id: true, flowId: true, kind: true },
   });
-  const action = await db.financialTransferAction.create({
-    data: { operationId: operation.id, flowId: operation.flowId },
-    select: { id: true, flowId: true },
-  });
-  await db.financialCommandRun.update({
+}
+
+export function completeCommand(
+  db: DbClient,
+  input: { commandId: string; operationId: string },
+) {
+  return db.financialCommandRun.update({
     where: { id: input.commandId },
-    data: { resultOperationId: operation.id },
+    data: { resultOperationId: input.operationId },
   });
-  return { operation, action };
 }
 
 export function saveCommandAlias(
@@ -128,4 +141,10 @@ export function saveCommandAlias(
     data: input,
     select: { id: true, flowId: true, flowKind: true, kind: true },
   });
+}
+
+export async function assertCommandEffectCompleteness(db: DbClient) {
+  await db.$executeRawUnsafe(
+    'SET CONSTRAINTS "FinancialCommand_effect_completeness_check", "FinancialTransfer_command_completion_check" IMMEDIATE',
+  );
 }

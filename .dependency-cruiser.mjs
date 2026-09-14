@@ -10,7 +10,7 @@
  *   pulls Context as a type only, context.ts pulls Services as a type only);
  * - which module may depend on which (the cross-module allowlist below). The
  *   allowlisted edges — onboarding → {user, post}, search → post,
- *   auth → user (type-only), commission-checkout → its reviewed owner repos plus transaction-flow — form a DAG by construction:
+ *   auth → user (type-only), and the three commission financial composites → reviewed owner repos — form a DAG by construction:
  *   owner modules fall
  *   under the default ban, so they can never point back. A module-level cycle
  *   can therefore only enter by editing this file, which is the review point;
@@ -40,7 +40,8 @@ export default {
       severity: 'error',
       from: {
         path: '^src/modules/([^/]+)/',
-        pathNot: '^src/modules/(auth|commission-checkout|onboarding|search)/',
+        pathNot:
+          '^src/modules/(auth|commission-checkout|commission-settlement|income-withdrawal|onboarding|search)/',
       },
       to: { path: '^src/modules/', pathNot: '^src/modules/$1/' },
     },
@@ -115,6 +116,67 @@ export default {
       to: {
         path: '^src/modules/(commission-type|contract|financial-ledger|order|slot|transaction-flow)/',
       },
+    },
+    {
+      name: 'commission-settlement-reaches-reviewed-owners-only',
+      comment:
+        'Commission settlement composes Contract and Order facts, generic flow identity, and ledger SWAP writes in one transaction.',
+      severity: 'error',
+      from: { path: '^src/modules/commission-settlement/' },
+      to: {
+        path: '^src/modules/',
+        pathNot:
+          '^src/modules/(commission-settlement|contract|financial-ledger|order|transaction-flow)/',
+      },
+    },
+    {
+      name: 'commission-settlement-imports-owner-repos-only',
+      severity: 'error',
+      from: { path: '^src/modules/commission-settlement/' },
+      to: {
+        path: '^src/modules/(contract|financial-ledger|order|transaction-flow)/',
+        pathNot:
+          '^src/modules/(contract/contract\\.repo|financial-ledger/financial-ledger\\.repo|order/order\\.repo|transaction-flow/transaction-flow\\.(core|repo))\\.ts$',
+      },
+    },
+    {
+      name: 'commission-settlement-owner-imports-live-in-service',
+      severity: 'error',
+      from: {
+        path: '^src/modules/commission-settlement/',
+        pathNot: '^src/modules/commission-settlement/commission-settlement\\.service\\.ts$',
+      },
+      to: { path: '^src/modules/(contract|financial-ledger|order|transaction-flow)/' },
+    },
+    {
+      name: 'income-withdrawal-reaches-reviewed-owners-only',
+      comment:
+        'Income withdrawal composes generic flow identity with FIFO INCOME reservation writes in one transaction.',
+      severity: 'error',
+      from: { path: '^src/modules/income-withdrawal/' },
+      to: {
+        path: '^src/modules/',
+        pathNot: '^src/modules/(income-withdrawal|financial-ledger|transaction-flow)/',
+      },
+    },
+    {
+      name: 'income-withdrawal-imports-owner-repos-only',
+      severity: 'error',
+      from: { path: '^src/modules/income-withdrawal/' },
+      to: {
+        path: '^src/modules/(financial-ledger|transaction-flow)/',
+        pathNot:
+          '^src/modules/(financial-ledger/financial-ledger\\.repo|transaction-flow/transaction-flow\\.(core|repo))\\.ts$',
+      },
+    },
+    {
+      name: 'income-withdrawal-owner-imports-live-in-service',
+      severity: 'error',
+      from: {
+        path: '^src/modules/income-withdrawal/',
+        pathNot: '^src/modules/income-withdrawal/income-withdrawal\\.service\\.ts$',
+      },
+      to: { path: '^src/modules/(financial-ledger|transaction-flow)/' },
     },
     {
       name: 'composition-root-is-the-top',
@@ -228,6 +290,8 @@ export default {
             { criteria: { source: '^src/modules/auth' }, attributes: { fillcolor: '#fdf2f8', color: '#ec4899' } },
             { criteria: { source: '^src/modules/onboarding' }, attributes: { fillcolor: '#fefce8', color: '#eab308' } },
             { criteria: { source: '^src/modules/commission-checkout' }, attributes: { fillcolor: '#eef2ff', color: '#6366f1' } },
+            { criteria: { source: '^src/modules/commission-settlement' }, attributes: { fillcolor: '#f5f3ff', color: '#7c3aed' } },
+            { criteria: { source: '^src/modules/income-withdrawal' }, attributes: { fillcolor: '#ecfeff', color: '#0891b2' } },
             { criteria: { source: '^src/modules/financial-ledger' }, attributes: { fillcolor: '#ecfdf5', color: '#10b981' } },
             { criteria: { source: '^src/modules/order' }, attributes: { fillcolor: '#fff7ed', color: '#ea580c' } },
             { criteria: { source: '^src/modules/contract' }, attributes: { fillcolor: '#fdf4ff', color: '#c026d3' } },
@@ -246,6 +310,8 @@ export default {
             { criteria: { resolved: '^src/modules/auth' }, attributes: { color: '#ec4899' } },
             { criteria: { resolved: '^src/modules/onboarding' }, attributes: { color: '#eab308' } },
             { criteria: { resolved: '^src/modules/commission-checkout' }, attributes: { color: '#6366f1' } },
+            { criteria: { resolved: '^src/modules/commission-settlement' }, attributes: { color: '#7c3aed' } },
+            { criteria: { resolved: '^src/modules/income-withdrawal' }, attributes: { color: '#0891b2' } },
             { criteria: { resolved: '^src/modules/financial-ledger' }, attributes: { color: '#10b981' } },
             { criteria: { resolved: '^src/modules/order' }, attributes: { color: '#ea580c' } },
             { criteria: { resolved: '^src/modules/contract' }, attributes: { color: '#c026d3' } },

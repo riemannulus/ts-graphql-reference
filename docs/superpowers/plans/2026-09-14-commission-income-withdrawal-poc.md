@@ -32,11 +32,11 @@
 **Interfaces:**
 - Produces: generic `FinancialLot`, Currency-explicit transfers/allocations, `FinancialSwapAction`, and `FinancialSwapLeg`.
 
-- [ ] Add failing schema-constraint tests for cross-Currency transfers, wrong-account lot allocations, malformed SWAPs, mutable INCOME lineage, and non-SETTLE INCOME sources.
-- [ ] Run the focused constraint suite and confirm each new assertion fails because the models or constraints are absent.
-- [ ] Replace `PointLot` with `FinancialLot`, add composite Currency keys, and add SWAP models to Prisma.
-- [ ] Regenerate the fresh-only migration SQL, then restore the reviewed handwritten append-only and deferred SWAP constraints.
-- [ ] Generate Prisma and run the focused constraints until green.
+- [x] Add failing schema-constraint tests for cross-Currency transfers, wrong-account lot allocations, malformed SWAPs, mutable INCOME lineage, and non-SETTLE INCOME sources.
+- [x] Run the focused constraint suite and confirm each new assertion fails because the models or constraints are absent.
+- [x] Replace `PointLot` with `FinancialLot`, add composite Currency keys, and add SWAP models to Prisma.
+- [x] Regenerate the fresh-only migration SQL, then restore the reviewed handwritten append-only and deferred SWAP constraints.
+- [x] Generate Prisma and run the focused constraints until green.
 
 ### Task 2: Separate generic operation creation from action storage
 
@@ -50,10 +50,10 @@
 - Produces: `createOperation`, `completeCommand`, and financial-ledger action writers.
 - Consumes: `FinancialOperation` and action models from Task 1.
 
-- [ ] Add a failing checkout test that observes generic operation creation followed by the ledger-owned TRANSFER action.
-- [ ] Run it and confirm failure against the coupled `createTransferOperation` path.
-- [ ] Move TRANSFER action creation to `financial-ledger.repo.ts`; leave flow identity writes generic.
-- [ ] Run checkout unit/integration tests and confirm replay behavior remains green.
+- [x] Add a failing checkout test that observes generic operation creation followed by the ledger-owned TRANSFER action.
+- [x] Run it and confirm failure against the coupled `createTransferOperation` path.
+- [x] Move TRANSFER action creation to `financial-ledger.repo.ts`; leave flow identity writes generic.
+- [x] Run checkout unit/integration tests and confirm replay behavior remains green.
 
 ### Task 3: Settle a commission into INCOME
 
@@ -73,12 +73,12 @@
 - Produces: `planCommissionSettlement(facts, input)` and `createCommissionSettlementService(db).settle(input)`.
 - Consumes: worker/commission/reservation facts, generic operation creation, SWAP and FinancialLot writers.
 
-- [ ] Write failing core tests for worker authorization, paid/held state, POINT input, fixed quote, and the complete SETTLE plan.
-- [ ] Run the core tests and confirm missing behavior failures.
-- [ ] Implement the pure settlement plan.
-- [ ] Write failing service tests for first settlement, replay, alias replay, and immutable commission source lineage.
-- [ ] Implement read → plan → apply under ordered locks, including both SWAP legs and the INCOME lot.
-- [ ] Register and snapshot the GraphQL mutation; run the module tests until green.
+- [x] Write failing core tests for worker authorization, paid/held state, POINT input, fixed quote, and the complete SETTLE plan.
+- [x] Run the core tests and confirm missing behavior failures.
+- [x] Implement the pure settlement plan.
+- [x] Write failing service tests for first settlement, replay, alias replay, and immutable commission source lineage.
+- [x] Implement read → plan → apply under ordered locks, including both SWAP legs and the INCOME lot.
+- [x] Register and snapshot the GraphQL mutation; run the module tests until green.
 
 ### Task 4: Reserve a multi-commission INCOME withdrawal
 
@@ -99,11 +99,11 @@
 - Produces: `planIncomeWithdrawal`, an idempotent withdrawal service, and an audit projection from withdrawal allocations to source commission flows.
 - Consumes: generic lot FIFO allocation, WITHDRAWAL flow creation, and TRANSFER action writers.
 
-- [ ] Write failing core tests for positive amount, FIFO selection, and insufficient INCOME.
-- [ ] Implement the pure withdrawal plan and make the focused tests green.
-- [ ] Write failing service tests that settle two commissions, withdraw across both lots, replay safely, and query exact source-flow amounts.
-- [ ] Implement atomic WITHDRAWAL flow/policy/request/operation/reservation/transfer creation and guarded lot decrements.
-- [ ] Register the GraphQL mutation and audit fields; run the focused tests until green.
+- [x] Write failing core tests for positive amount, FIFO selection, and insufficient INCOME.
+- [x] Implement the pure withdrawal plan and make the focused tests green.
+- [x] Write failing service tests that settle two commissions, withdraw across both lots, replay safely, and query exact source-flow amounts.
+- [x] Implement atomic WITHDRAWAL flow/policy/request/operation/reservation/transfer creation and guarded lot decrements.
+- [x] Register the GraphQL mutation and audit fields; run the focused tests until green.
 
 ### Task 5: PostgreSQL races, module graph, and documentation
 
@@ -120,11 +120,11 @@
 - Consumes: all prior tasks.
 - Produces: fresh-PostgreSQL evidence, an explicit DAG, and durable terminology.
 
-- [ ] Add a PostgreSQL-only test for malformed deferred SWAP rejection and concurrent withdrawal of the same INCOME.
-- [ ] Run it against a fresh PostgreSQL database and confirm the missing protections fail first.
-- [ ] Complete migration triggers/locks until exactly one concurrent withdrawal succeeds and malformed SWAPs fail.
-- [ ] Add only the two composite-to-owner edges, regenerate module graphs, and document the rationale.
-- [ ] Update the glossary and ADR with settlement/withdrawal lineage and payout-batch extension.
-- [ ] Run Prisma validation/drift, typecheck, lint, graph check, build, full tests, and `git diff --check`.
-- [ ] Obtain independent architecture and data-integrity approval, respond to every critique, and record the final verdicts in the PR.
+- [x] Add a PostgreSQL-only test for malformed deferred SWAP rejection and concurrent withdrawal of the same INCOME.
+- [x] Run it against a fresh PostgreSQL database and confirm the missing protections fail first.
+- [x] Complete migration triggers/locks until exactly one concurrent withdrawal succeeds and malformed SWAPs fail.
+- [x] Add only the two composite-to-owner edges, regenerate module graphs, and document the rationale.
+- [x] Update the glossary and ADR with settlement/withdrawal lineage and payout-batch extension.
+- [x] Run Prisma validation/drift, typecheck, lint, graph check, build, full tests, and `git diff --check`.
+- [x] Obtain independent architecture and data-integrity approval, respond to every critique, and record the final verdicts in the PR.
 - [ ] Commit, push, update PR #17, update the hosted explanation site, and confirm GitHub CI.

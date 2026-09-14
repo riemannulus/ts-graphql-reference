@@ -60,7 +60,7 @@ async function seedCommissionCheckoutGraphqlWorld() {
   const account = await prisma.financialAccount.create({
     data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
   });
-  await prisma.pointLot.create({
+  await prisma.financialLot.create({
     data: { accountId: account.id, sourceKind: 'PAID', originalAmount: 1_000, remainingAmount: 1_000 },
   });
   return { buyer, order, payment };

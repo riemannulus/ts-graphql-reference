@@ -164,7 +164,7 @@ async function seedCommissionCheckoutWorld(
     const account = await first.financialAccount.create({
       data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
     });
-    await first.pointLot.create({
+    await first.financialLot.create({
       data: {
         accountId: account.id,
         sourceKind: 'PAID',
@@ -301,7 +301,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
     const escrow = await clients.first.financialAccount.create({
       data: { reservationId: reservation.id, currency: 'POINT', purpose: 'ESCROW' },
     });
-    const lot = await clients.first.pointLot.create({
+    const lot = await clients.first.financialLot.create({
       data: {
         accountId: available.id,
         sourceKind: 'PAID',
@@ -318,7 +318,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
       releaseTransfer = resolve;
     });
     const transferRequest = clients.first.$transaction(async (tx) => {
-      await tx.pointLot.update({ where: { id: lot.id }, data: { remainingAmount: 0 } });
+      await tx.financialLot.update({ where: { id: lot.id }, data: { remainingAmount: 0 } });
       const transfer = await tx.financialTransfer.create({
         data: {
           reservationId: reservation.id,
@@ -330,10 +330,14 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
         },
       });
       await tx.financialTransferAllocation.create({
-        data: { transferId: transfer.id, lotId: lot.id, amount: 100 },
+        data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: lot.id, amount: 100 },
       });
       markTransferInserted();
       await transferRelease;
+      await tx.financialCommandRun.update({
+        where: { id: command.id },
+        data: { resultOperationId: operation.id },
+      });
     });
 
     await transferInserted;

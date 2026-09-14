@@ -57,18 +57,18 @@ CREATE TABLE "FinancialAccount" (
   CONSTRAINT "FinancialAccount_holderId_currency_purpose_key" UNIQUE ("holderId", "currency", "purpose")
 );
 
-CREATE TABLE "PointLot" (
+CREATE TABLE "FinancialLot" (
   "id" SERIAL PRIMARY KEY,
   "accountId" INTEGER NOT NULL REFERENCES "FinancialAccount"("id") ON DELETE RESTRICT,
   "sourceKind" TEXT NOT NULL,
   "originalAmount" INTEGER NOT NULL,
   "remainingAmount" INTEGER NOT NULL,
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "PointLot_sourceKind_check" CHECK ("sourceKind" IN ('PAID', 'FREE')),
-  CONSTRAINT "PointLot_originalAmount_check" CHECK ("originalAmount" > 0),
-  CONSTRAINT "PointLot_remainingAmount_check" CHECK ("remainingAmount" >= 0 AND "remainingAmount" <= "originalAmount")
+  CONSTRAINT "FinancialLot_sourceKind_check" CHECK ("sourceKind" IN ('PAID', 'FREE')),
+  CONSTRAINT "FinancialLot_originalAmount_check" CHECK ("originalAmount" > 0),
+  CONSTRAINT "FinancialLot_remainingAmount_check" CHECK ("remainingAmount" >= 0 AND "remainingAmount" <= "originalAmount")
 );
-CREATE INDEX "PointLot_accountId_createdAt_id_idx" ON "PointLot"("accountId", "createdAt", "id");
+CREATE INDEX "FinancialLot_accountId_createdAt_id_idx" ON "FinancialLot"("accountId", "createdAt", "id");
 
 CREATE TABLE "Order" (
   "id" SERIAL PRIMARY KEY,
@@ -116,7 +116,7 @@ CREATE TABLE "FinancialTransfer" (
 
 CREATE TABLE "FinancialTransferAllocation" (
   "transferId" INTEGER NOT NULL REFERENCES "FinancialTransfer"("id") ON DELETE RESTRICT,
-  "lotId" INTEGER NOT NULL REFERENCES "PointLot"("id") ON DELETE RESTRICT,
+  "lotId" INTEGER NOT NULL REFERENCES "FinancialLot"("id") ON DELETE RESTRICT,
   "amount" INTEGER NOT NULL,
   PRIMARY KEY ("transferId", "lotId"),
   CONSTRAINT "FinancialTransferAllocation_amount_check" CHECK ("amount" > 0)
@@ -173,7 +173,7 @@ BEGIN
   JOIN "FinancialAccount" source ON source."id" = transfer."fromAccountId"
   JOIN "FinancialAccount" destination ON destination."id" = transfer."toAccountId"
   LEFT JOIN "FinancialTransferAllocation" allocation ON allocation."transferId" = transfer."id"
-  LEFT JOIN "PointLot" lot ON lot."id" = allocation."lotId"
+  LEFT JOIN "FinancialLot" lot ON lot."id" = allocation."lotId"
   WHERE transfer."id" = checked_transfer_id
   GROUP BY transfer."id", reservation."id", source."id", destination."id";
 
@@ -204,14 +204,14 @@ DECLARE
 BEGIN
   SELECT lot."remainingAmount" + COALESCE(SUM(allocation."amount"), 0) <> lot."originalAmount"
   INTO violates
-  FROM "PointLot" lot
+  FROM "FinancialLot" lot
   LEFT JOIN "FinancialTransferAllocation" allocation ON allocation."lotId" = lot."id"
   WHERE lot."id" = checked_lot_id
   GROUP BY lot."id";
 
   IF violates THEN
-    RAISE EXCEPTION 'PointLot_conservation_check: lot % remaining value and allocations do not equal its original amount', checked_lot_id
-      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_conservation_check';
+    RAISE EXCEPTION 'FinancialLot_conservation_check: lot % remaining value and allocations do not equal its original amount', checked_lot_id
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialLot_conservation_check';
   END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -224,8 +224,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE CONSTRAINT TRIGGER "PointLot_conservation_check"
-AFTER UPDATE ON "PointLot"
+CREATE CONSTRAINT TRIGGER "FinancialLot_conservation_check"
+AFTER UPDATE ON "FinancialLot"
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION check_point_lot_row();
 
@@ -299,15 +299,15 @@ BEGIN
     OR NEW."sourceKind" IS DISTINCT FROM OLD."sourceKind"
     OR NEW."originalAmount" IS DISTINCT FROM OLD."originalAmount"
   ) THEN
-    RAISE EXCEPTION 'PointLot_basis_immutable: lot % basis is immutable', OLD."id"
-      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_basis_immutable';
+    RAISE EXCEPTION 'FinancialLot_basis_immutable: lot % basis is immutable', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialLot_basis_immutable';
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "PointLot_basis_immutable"
-BEFORE UPDATE ON "PointLot"
+CREATE TRIGGER "FinancialLot_basis_immutable"
+BEFORE UPDATE ON "FinancialLot"
 FOR EACH ROW EXECUTE FUNCTION keep_point_lot_basis_immutable();
 
 CREATE FUNCTION reject_financial_transfer_mutation()

@@ -1,10 +1,11 @@
-export type TransactionFlowKind = 'COMMISSION';
+export type TransactionFlowKind = 'COMMISSION' | 'WITHDRAWAL';
 export type FinancialCommandKind =
   | 'PAY'
   | 'EXTRA_PAY'
   | 'SETTLE'
   | 'REFUND'
-  | 'CANCEL';
+  | 'CANCEL'
+  | 'WITHDRAW';
 
 export function formatTransactionReference(input: {
   kind: TransactionFlowKind;

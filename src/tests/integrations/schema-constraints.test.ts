@@ -65,7 +65,7 @@ async function makeFinancialWorld(opts: { targetAmount?: number } = {}) {
   const escrow = await prisma.financialAccount.create({
     data: { reservationId: reservation.id, currency: 'POINT', purpose: 'ESCROW' },
   });
-  const lot = await prisma.pointLot.create({
+  const lot = await prisma.financialLot.create({
     data: {
       accountId: available.id,
       sourceKind: 'PAID',
@@ -73,7 +73,7 @@ async function makeFinancialWorld(opts: { targetAmount?: number } = {}) {
       remainingAmount: 100,
     },
   });
-  const otherLot = await prisma.pointLot.create({
+  const otherLot = await prisma.financialLot.create({
     data: {
       accountId: otherAvailable.id,
       sourceKind: 'PAID',
@@ -99,7 +99,7 @@ async function makeFinancialWorld(opts: { targetAmount?: number } = {}) {
 async function makeCommittedTransfer() {
   const world = await makeFinancialWorld();
   await prisma.$transaction(async (tx) => {
-    await tx.pointLot.update({ where: { id: world.lot.id }, data: { remainingAmount: 0 } });
+    await tx.financialLot.update({ where: { id: world.lot.id }, data: { remainingAmount: 0 } });
     const transfer = await tx.financialTransfer.create({
       data: {
         reservationId: world.reservation.id,
@@ -111,7 +111,11 @@ async function makeCommittedTransfer() {
       },
     });
     await tx.financialTransferAllocation.create({
-      data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+      data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 100 },
+    });
+    await tx.financialCommandRun.update({
+      where: { id: world.command.id },
+      data: { resultOperationId: world.operation.id },
     });
   });
   return world;
@@ -320,7 +324,7 @@ describe('database CHECK constraints', () => {
     });
     await expect(
       prisma.order.update({ where: { id: order.id }, data: { flowId: reservationFlow.id } }),
-    ).rejects.toThrow(/Order_flow_immutable/);
+    ).rejects.toThrow(/Order_basis_immutable/);
     const payment = await prisma.orderPayment.create({
       data: { orderId: order.id, flowId: orderFlow.id, amount: order.amount },
     });
@@ -453,7 +457,7 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.lot.id, amount: 99 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 99 },
         });
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
@@ -474,7 +478,7 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.otherLot.id, amount: 100 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.otherLot.id, amount: 100 },
         });
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
@@ -513,7 +517,7 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 100 },
         });
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
@@ -534,7 +538,7 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.lot.id, amount: 99 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 99 },
         });
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
@@ -555,7 +559,7 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.otherLot.id, amount: 100 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.otherLot.id, amount: 100 },
         });
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
@@ -576,10 +580,10 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 100 },
         });
       }),
-    ).rejects.toThrow(/PointLot_conservation_check/);
+    ).rejects.toThrow(/FinancialLot_conservation_check/);
   });
 
   it('rejects allocating more than the source lot originally contained', async () => {
@@ -597,10 +601,10 @@ describe('database CHECK constraints', () => {
           },
         });
         await tx.financialTransferAllocation.create({
-          data: { transferId: transfer.id, lotId: world.lot.id, amount: 101 },
+          data: { transferId: transfer.id, fromAccountId: transfer.fromAccountId, currency: transfer.currency, lotId: world.lot.id, amount: 101 },
         });
       }),
-    ).rejects.toThrow(/PointLot_conservation_check/);
+    ).rejects.toThrow(/FinancialLot_conservation_check/);
   });
 
   it('rejects changing a reservation amount after its transfer is committed', async () => {
@@ -616,11 +620,11 @@ describe('database CHECK constraints', () => {
   it('rejects moving an allocated lot to a different account', async () => {
     const world = await makeCommittedTransfer();
     await expect(
-      prisma.pointLot.update({
+      prisma.financialLot.update({
         where: { id: world.lot.id },
         data: { accountId: world.otherAvailable.id },
       }),
-    ).rejects.toThrow(/PointLot_basis_immutable/);
+    ).rejects.toThrow(/FinancialLot_basis_immutable/);
   });
 
   it('rejects changing ownership of an account used by a committed transfer', async () => {
@@ -658,7 +662,7 @@ describe('database CHECK constraints', () => {
   });
 
   it('allows one command result link and then freezes the command history', async () => {
-    const world = await makeFinancialWorld();
+    const world = await makeCommittedTransfer();
     await expect(
       prisma.financialCommandRun.update({
         where: { id: world.command.id },
@@ -666,12 +670,9 @@ describe('database CHECK constraints', () => {
       }),
     ).rejects.toThrow(/FinancialCommandRun_append_only/);
 
-    await expect(
-      prisma.financialCommandRun.update({
-        where: { id: world.command.id },
-        data: { resultOperationId: world.operation.id },
-      }),
-    ).resolves.toMatchObject({ resultOperationId: world.operation.id });
+    expect(
+      await prisma.financialCommandRun.findUniqueOrThrow({ where: { id: world.command.id } }),
+    ).toMatchObject({ resultOperationId: world.operation.id });
     await expect(
       prisma.financialCommandRun.update({
         where: { id: world.command.id },
@@ -695,6 +696,42 @@ describe('database CHECK constraints', () => {
     await expect(
       prisma.financialCommandRun.delete({ where: { id: alias.id } }),
     ).rejects.toThrow(/FinancialCommandRun_append_only/);
+  });
+
+  it('rejects a PAY transfer whose originating command was not completed', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await tx.financialLot.update({
+          where: { id: world.lot.id },
+          data: { remainingAmount: 0 },
+        });
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            flowId: world.flow.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 100,
+            actionId: world.action.id,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: {
+            transferId: transfer.id,
+            fromAccountId: world.available.id,
+            currency: 'POINT',
+            lotId: world.lot.id,
+            amount: 100,
+          },
+        });
+        await tx.$executeRawUnsafe(
+          'SET CONSTRAINTS "FinancialTransfer_command_completion_check" IMMEDIATE',
+        );
+      }),
+    ).rejects.toThrow(/FinancialTransfer_command_completion_check/);
+    expect(await prisma.financialLot.findUniqueOrThrow({ where: { id: world.lot.id } }))
+      .toMatchObject({ remainingAmount: 100 });
   });
 
   it('rejects returning another command\'s operation', async () => {
@@ -728,7 +765,7 @@ describe('database CHECK constraints', () => {
   });
 
   it('rejects originating an operation from an alias command', async () => {
-    const world = await makeFinancialWorld();
+    const world = await makeCommittedTransfer();
     const alias = await prisma.financialCommandRun.create({
       data: {
         flowId: world.flow.id,
@@ -807,10 +844,10 @@ describe('database CHECK constraints', () => {
   it('rejects reclassifying immutable paid/free lot provenance', async () => {
     const world = await makeFinancialWorld();
     await expect(
-      prisma.pointLot.update({
+      prisma.financialLot.update({
         where: { id: world.lot.id },
         data: { sourceKind: 'FREE' },
       }),
-    ).rejects.toThrow(/PointLot_basis_immutable/);
+    ).rejects.toThrow(/FinancialLot_basis_immutable/);
   });
 });

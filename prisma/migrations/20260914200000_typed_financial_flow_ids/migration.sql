@@ -1,8 +1,8 @@
 -- CreateEnum
-CREATE TYPE "TransactionFlowKind" AS ENUM ('COMMISSION');
+CREATE TYPE "TransactionFlowKind" AS ENUM ('COMMISSION', 'WITHDRAWAL');
 
 -- CreateEnum
-CREATE TYPE "FinancialCommandKind" AS ENUM ('PAY', 'EXTRA_PAY', 'SETTLE', 'REFUND', 'CANCEL');
+CREATE TYPE "FinancialCommandKind" AS ENUM ('PAY', 'EXTRA_PAY', 'SETTLE', 'REFUND', 'CANCEL', 'WITHDRAW');
 
 -- DropForeignKey
 ALTER TABLE "CheckoutCommand" DROP CONSTRAINT "CheckoutCommand_orderPaymentId_fkey";

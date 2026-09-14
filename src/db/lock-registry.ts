@@ -39,6 +39,12 @@ export const lockKey = defineLocks({
   commissionSlot: (slotId: number) => slotId,
   /** PROTOTYPE: claims one commission-checkout command key before any economic write. */
   commissionCheckoutCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: serializes settlement of one formed commission. */
+  commissionContract: (contractId: number) => contractId,
+  /** PROTOTYPE: claims one INCOME-withdrawal command before creating its flow. */
+  incomeWithdrawalCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: claims one commission-settlement command before creating its operation. */
+  commissionSettlementCommand: (commandKey: string) => stringLockId(commandKey),
 });
 
 /** The registered lock namespaces, derived from the registry. */

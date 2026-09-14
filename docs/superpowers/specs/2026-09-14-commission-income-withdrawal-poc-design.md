@@ -57,10 +57,11 @@ key rejects a command that is not legal for its flow.
 
 ## Storage and invariants
 
-`FinancialLot` replaces the POINT-only lot model. Its basis fields are
-immutable. An INCOME lot must carry `sourceOperationId`, `sourceFlowId`, and
-`sourceOperationKind = SETTLE`; a composite foreign key proves those values name
-one persisted SETTLE operation. Its account must have the same Currency.
+`FinancialLot` replaces the POINT-only lot model. Its identity, FIFO timestamp,
+and provenance are immutable. An INCOME lot must carry the source SWAP action,
+SETTLE operation, and `COMMISSION` flow; composite foreign keys prove all three
+refer to one persisted settlement. Its account must equal the INCOME leg's
+destination and have the same Currency.
 
 `FinancialTransfer` becomes Currency-explicit. Composite foreign keys require
 both accounts and every allocated lot to use that Currency, and require an
@@ -68,9 +69,10 @@ allocation's lot to belong to the transfer's source account. Conservation still
 requires transfer amount = allocation sum.
 
 `FinancialSwapAction` and its two `FinancialSwapLeg` rows are append-only. A
-deferred PostgreSQL constraint requires exactly one POINT leg and one INCOME
-leg with equal positive amounts. Both legs share the action's commission
-`flowId`; account/Currency composite foreign keys prevent mislabeled legs.
+deferred PostgreSQL constraint proves that the source reservation has a
+conserved PAY transfer, both legs equal that funded amount, platform SETTLED and
+ISSUER accounts have one system holder, and the INCOME destination is the
+Contract worker's immutable user holder.
 
 Commission SETTLE is one-shot by unique source operation and reservation links.
 It changes the reservation from HELD to SETTLED using a guarded update. A
@@ -78,6 +80,10 @@ repeated idempotency key returns the same operation; a different key for an
 already settled commission records an alias command without another SWAP or
 INCOME lot.
 
+`FinancialWithdrawal` stores no duplicate holder, amount, Currency, or state;
+those facts come from its reservation and transfer. Composite keys and a
+deferred shape constraint bind it to exactly one WITHDRAW operation and
+TRANSFER action whose command principal owns the source INCOME account.
 Withdrawal creation and reservation are one serialized transaction. A retry
 with the same principal, kind, and key returns the same withdrawal result. An
 insufficient or concurrently changed INCOME lot aborts the whole transaction.

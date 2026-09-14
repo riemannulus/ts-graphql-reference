@@ -1,0 +1,8 @@
+-- RenameForeignKey
+ALTER TABLE "FinancialLot" RENAME CONSTRAINT "FinancialLot_sourceOperationId_sourceFlowId_sourceOperationKind" TO "FinancialLot_sourceOperationId_sourceFlowId_sourceOperatio_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "FinancialTransferAllocation" RENAME CONSTRAINT "FinancialTransferAllocation_lot_source_currency_fkey" TO "FinancialTransferAllocation_lotId_fromAccountId_currency_fkey";
+
+-- RenameForeignKey
+ALTER TABLE "FinancialTransferAllocation" RENAME CONSTRAINT "FinancialTransferAllocation_transfer_source_currency_fkey" TO "FinancialTransferAllocation_transferId_fromAccountId_curre_fkey";

@@ -105,12 +105,22 @@ async function executeCommissionCheckout(
     ...plan.commissionPlan.commandRequest,
     payloadHash: prepared.payloadHash,
   });
-  const operation = await transactionFlowRepo.createTransferOperation(tx, {
+  const operation = await transactionFlowRepo.createOperation(tx, {
     commandId: command.id,
     flowId: command.flowId,
-    ...plan.commissionPlan.operationRequest,
+    kind: plan.commissionPlan.operationRequest.kind,
   });
-  const result = await applyCommissionCheckoutPlan(tx, plan, operation.action.id);
+  const action = await financialLedgerRepo.createTransferAction(tx, {
+    operationId: operation.id,
+    flowId: operation.flowId,
+    operationKind: 'PAY',
+  });
+  await transactionFlowRepo.completeCommand(tx, {
+    commandId: command.id,
+    operationId: operation.id,
+  });
+  const result = await applyCommissionCheckoutPlan(tx, plan, action.id);
+  await transactionFlowRepo.assertCommandEffectCompleteness(tx);
 
   return {
     ...result,
@@ -119,7 +129,7 @@ async function executeCommissionCheckout(
       id: command.flowId,
     }),
     commandId: formatCommandId({ kind: command.kind, id: command.id }),
-    operationId: formatOperationId({ kind: operation.operation.kind, id: operation.operation.id }),
+    operationId: formatOperationId({ kind: operation.kind, id: operation.id }),
     replayed: false,
   };
 }
@@ -168,6 +178,7 @@ async function replayCompletedCommissionCheckout(
       ...requested,
       resultOperationId: completeIdentity.operationDbId,
     });
+    await transactionFlowRepo.assertCommandEffectCompleteness(tx);
     return {
       ...start.result,
       commandId: formatCommandId({ kind: alias.kind, id: alias.id }),
