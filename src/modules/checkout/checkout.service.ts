@@ -116,12 +116,15 @@ async function loadCheckoutPlan(
   checkout: PreparedCheckout,
 ): Promise<ExecutableCheckoutPlan> {
   // Interactive transaction handles execute sequentially.
+  // Product domain: load the Order payment, commission type, and Slot facts.
   const payment = await orderRepo.loadPaymentFacts(tx, checkout.input.orderPaymentId);
   const commissionType = await commissionTypeRepo.findCommissionTypeForCheckout(
     tx,
     payment.commissionTypeId,
   );
   const slot = await slotRepo.findSlotForCheckout(tx, payment.slotId);
+
+  // Ledger domain: resolve the buyer's POINT holder used by the acquired lock.
   const financialHolderId = await financialLedgerRepo.findHolderId(tx, {
     namespace: 'user',
     key: String(payment.buyerId),
@@ -133,6 +136,7 @@ async function loadCheckoutPlan(
     financialHolderId,
   });
 
+  // Product/Ledger boundary: plan Product transitions and the Ledger reservation request.
   const plan = planCheckout(
     {
       ...payment,
@@ -144,6 +148,8 @@ async function loadCheckoutPlan(
     },
     checkout.input,
   );
+
+  // Ledger domain: plan the FIFO POINT reservation from the holder's available lots.
   const pointWorld = await financialLedgerRepo.loadAvailablePointWorld(
     tx,
     plan.financialRequest.holderId,
@@ -162,12 +168,15 @@ async function applyCheckoutPlan(
   tx: DbClient,
   plan: ExecutableCheckoutPlan,
 ): Promise<EconomicResult> {
+  // Ledger domain: reserve POINT lots and create the ESCROW transfer.
   const reservation = await financialLedgerRepo.applyReservation(
     tx,
     plan.checkout.financialRequest,
     plan.reservation.accountId,
     plan.reservation.allocations,
   );
+
+  // Product domain: form Contract, complete Order/payment, link its reservation, and occupy Slot.
   const contract = await contractRepo.applyContractFormation(tx, plan.checkout.contract);
   await orderRepo.applyPaidOrder(tx, {
     ...plan.checkout.paidOrder,
