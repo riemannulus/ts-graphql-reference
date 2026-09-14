@@ -2,6 +2,12 @@
 
 A type-safe, modular GraphQL server reference.
 
+> **Ledger checkout PoC:** the `codex/ledger-checkout-poc` branch contains a
+> throwaway vertical slice that reserves internal POINT and forms a commission
+> Contract atomically. See
+> [`src/modules/checkout/NOTES.md`](./src/modules/checkout/NOTES.md) for the
+> question, run commands, architecture result, and deliberate limitations.
+
 | Layer        | Library                                                              |
 | ------------ | -------------------------------------------------------------------- |
 | Language     | TypeScript (ESM, `NodeNext`)                                        |
