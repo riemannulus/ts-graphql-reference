@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createCheckoutComposition } from '../../../composition/checkout-composition.js';
+import { CheckoutIdempotencyError, CheckoutStateError } from '../../../modules/checkout/checkout.core.js';
+import { InsufficientFinancialFundsError } from '../../../modules/financial-ledger/financial-ledger.core.js';
 import { resetDb, makeTestPrisma } from '../../support/helpers.js';
 
 const prisma = await makeTestPrisma();
@@ -123,5 +125,102 @@ describe('CheckoutService.payOrder', () => {
     expect(await prisma.commissionSlot.findUniqueOrThrow({ where: { id: world.slot.id } })).toMatchObject({
       state: 'AVAILABLE',
     });
+  });
+
+  it('replays the stored result for the same command without another economic effect', async () => {
+    const world = await seedCheckoutWorld();
+    const checkout = createCheckoutComposition(db);
+    const input = { orderPaymentId: world.payment.id, actorId: world.buyer.id, commandKey: 'same' };
+
+    const first = await checkout.payOrder(input);
+    const second = await checkout.payOrder(input);
+
+    expect(second).toEqual({ ...first, replayed: true });
+    expect(await prisma.checkoutCommand.count()).toBe(1);
+    expect(await prisma.financialReservation.count()).toBe(1);
+    expect(await prisma.contract.count()).toBe(1);
+    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+      remainingAmount: 500,
+    });
+  });
+
+  it('rejects reusing a command key for a different payload', async () => {
+    const world = await seedCheckoutWorld();
+    const checkout = createCheckoutComposition(db);
+    await checkout.payOrder({
+      orderPaymentId: world.payment.id,
+      actorId: world.buyer.id,
+      commandKey: 'collision',
+    });
+
+    await expect(
+      checkout.payOrder({
+        orderPaymentId: world.payment.id,
+        actorId: world.worker.id,
+        commandKey: 'collision',
+      }),
+    ).rejects.toBeInstanceOf(CheckoutIdempotencyError);
+    expect(await prisma.checkoutCommand.count()).toBe(1);
+    expect(await prisma.financialReservation.count()).toBe(1);
+    expect(await prisma.contract.count()).toBe(1);
+  });
+
+  it('reuses the economic result when a different command key retries a paid payment', async () => {
+    const world = await seedCheckoutWorld();
+    const checkout = createCheckoutComposition(db);
+    const first = await checkout.payOrder({
+      orderPaymentId: world.payment.id,
+      actorId: world.buyer.id,
+      commandKey: 'first-key',
+    });
+
+    const replay = await checkout.payOrder({
+      orderPaymentId: world.payment.id,
+      actorId: world.buyer.id,
+      commandKey: 'second-key',
+    });
+
+    expect(replay).toEqual({ ...first, replayed: true });
+    expect(await prisma.checkoutCommand.count()).toBe(2);
+    expect(await prisma.financialReservation.count()).toBe(1);
+    expect(await prisma.contract.count()).toBe(1);
+    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+      remainingAmount: 500,
+    });
+  });
+
+  it('rejects insufficient POINT without any partial write', async () => {
+    const world = await seedCheckoutWorld({ balance: 499 });
+    const checkout = createCheckoutComposition(db);
+
+    await expect(
+      checkout.payOrder({
+        orderPaymentId: world.payment.id,
+        actorId: world.buyer.id,
+        commandKey: 'insufficient',
+      }),
+    ).rejects.toBeInstanceOf(InsufficientFinancialFundsError);
+    expect(await prisma.financialReservation.count()).toBe(0);
+    expect(await prisma.contract.count()).toBe(0);
+    expect(await prisma.checkoutCommand.count()).toBe(0);
+    expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
+      remainingAmount: 499,
+    });
+  });
+
+  it('rejects an unavailable slot before reserving funds', async () => {
+    const world = await seedCheckoutWorld({ slotState: 'OCCUPIED' });
+    const checkout = createCheckoutComposition(db);
+
+    await expect(
+      checkout.payOrder({
+        orderPaymentId: world.payment.id,
+        actorId: world.buyer.id,
+        commandKey: 'occupied',
+      }),
+    ).rejects.toBeInstanceOf(CheckoutStateError);
+    expect(await prisma.financialReservation.count()).toBe(0);
+    expect(await prisma.contract.count()).toBe(0);
+    expect(await prisma.checkoutCommand.count()).toBe(0);
   });
 });
