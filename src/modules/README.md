@@ -12,8 +12,8 @@ depend on **each other**.
 
 ![Module dependency graph](./dependency-graph.svg)
 
-Every arrow above is a sanctioned cross-module dependency — and there are no
-others. The edges form a DAG by construction (`user` and `post` never point
+Every arrow above is a sanctioned cross-module or composition dependency — and
+there are no others. The module edges form a DAG by construction (`user` and `post` never point
 back), so a module-level import cycle can only appear by editing the allowlist
 in [`.dependency-cruiser.mjs`](../../.dependency-cruiser.mjs), which is the
 review point. This is the whole allowlist (CONVENTIONS §5, "module services
@@ -24,8 +24,12 @@ depend one way only"):
 | `onboarding → user`, `onboarding → post` | the cross-module use-case composes both modules' repo functions inside one transaction | value |
 | `search → post` | search hydrates external-index hits (ids) through the post repo | value |
 | `auth → user` | auth provisions / looks up a user, but the user service is **injected** (wired in `createServices`); importing values would bypass that seam, so this edge is `import type` only | type-only |
+| `composition → checkout, commission-type, order, financial-ledger, contract, slot` | the checkout composition adapter maps checkout-owned ports to owner implementations; it contains no business decisions | value |
 
-`user`, `post`, `point`, and `feature-flag` import no other module. The open
+`user`, `post`, `point`, `feature-flag`, `checkout`, `commission-type`, `order`,
+`financial-ledger`, `contract`, and `slot` import no other module. In particular,
+the financial module has no product imports and checkout knows only its own
+ports. The open
 arrowhead on `auth → user` marks the type-only edge (erased at compile time);
 solid arrowheads are runtime value imports.
 

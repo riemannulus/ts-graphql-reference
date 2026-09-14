@@ -43,6 +43,7 @@ describe('GraphQL schema', () => {
       'pointBalance(', 'pointCharges(', 'pointSpends(',
       'signUp(', 'createPost(', 'publishPost(', 'changeUserStatus(',
       'chargePoint(', 'spendPoint(', 'transferPoint(',
+      'checkoutCommission(',
     ]) {
       expect(sdl).toContain(field);
     }

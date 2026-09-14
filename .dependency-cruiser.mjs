@@ -76,12 +76,24 @@ export default {
     {
       name: 'composition-root-is-the-top',
       comment:
-        'app.ts / services.ts / server.ts assemble everything, so nothing ' +
+        'app.ts / services.ts / composition / server.ts assemble everything, so nothing ' +
         'below them may import them as a value. The Services TYPE flowing ' +
         'down into context.ts is the sanctioned (erased) exception.',
       severity: 'error',
       from: { path: '^src/(modules|db|flags|foundation|graphql|scheduler)/' },
-      to: { path: '^src/(app|services|server)\\.ts$', dependencyTypesNot: ['type-only'] },
+      to: {
+        path: '^src/(app|services|server)\\.ts$|^src/composition/',
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'checkout-composition-is-wired-once',
+      comment:
+        'Only services.ts imports the checkout composition adapter. Feature modules ' +
+        'receive its result through context and never reach up into owner wiring.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: '^src/services\\.ts$' },
+      to: { path: '^src/composition/' },
     },
     {
       name: 'date-lib-lives-in-time-only',
@@ -159,6 +171,13 @@ export default {
             { criteria: { source: '^src/modules/search' }, attributes: { fillcolor: '#ecfeff', color: '#06b6d4' } },
             { criteria: { source: '^src/modules/auth' }, attributes: { fillcolor: '#fdf2f8', color: '#ec4899' } },
             { criteria: { source: '^src/modules/onboarding' }, attributes: { fillcolor: '#fefce8', color: '#eab308' } },
+            { criteria: { source: '^src/modules/checkout' }, attributes: { fillcolor: '#eef2ff', color: '#6366f1' } },
+            { criteria: { source: '^src/modules/financial-ledger' }, attributes: { fillcolor: '#ecfdf5', color: '#10b981' } },
+            { criteria: { source: '^src/modules/order' }, attributes: { fillcolor: '#fff7ed', color: '#ea580c' } },
+            { criteria: { source: '^src/modules/contract' }, attributes: { fillcolor: '#fdf4ff', color: '#c026d3' } },
+            { criteria: { source: '^src/modules/commission-type' }, attributes: { fillcolor: '#fefce8', color: '#ca8a04' } },
+            { criteria: { source: '^src/modules/slot' }, attributes: { fillcolor: '#f0fdfa', color: '#0d9488' } },
+            { criteria: { source: '^src/composition' }, attributes: { fillcolor: '#f1f5f9', color: '#475569' } },
           ],
           // Edges tinted by their target module; the type-only edge (auth→user)
           // stays dashed with a hollow head so the erased seam is unmistakable.
@@ -170,6 +189,12 @@ export default {
             { criteria: { resolved: '^src/modules/search' }, attributes: { color: '#06b6d4' } },
             { criteria: { resolved: '^src/modules/auth' }, attributes: { color: '#ec4899' } },
             { criteria: { resolved: '^src/modules/onboarding' }, attributes: { color: '#eab308' } },
+            { criteria: { resolved: '^src/modules/checkout' }, attributes: { color: '#6366f1' } },
+            { criteria: { resolved: '^src/modules/financial-ledger' }, attributes: { color: '#10b981' } },
+            { criteria: { resolved: '^src/modules/order' }, attributes: { color: '#ea580c' } },
+            { criteria: { resolved: '^src/modules/contract' }, attributes: { color: '#c026d3' } },
+            { criteria: { resolved: '^src/modules/commission-type' }, attributes: { color: '#ca8a04' } },
+            { criteria: { resolved: '^src/modules/slot' }, attributes: { color: '#0d9488' } },
             {
               criteria: { dependencyTypes: 'type-only' },
               attributes: { style: 'dashed', arrowhead: 'onormal', penwidth: '1.3' },
