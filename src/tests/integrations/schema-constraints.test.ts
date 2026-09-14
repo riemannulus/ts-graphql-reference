@@ -274,6 +274,43 @@ describe('database CHECK constraints', () => {
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
   });
 
+  it('rejects a transfer sent to another reservation escrow account', async () => {
+    const world = await makeFinancialWorld();
+    const otherReservation = await prisma.financialReservation.create({
+      data: {
+        referenceId: 'payment:other-escrow',
+        bindingNamespace: 'order-payment',
+        bindingKey: 'other-escrow',
+        holderId: world.holder.id,
+        purpose: 'COMMISSION_PAYMENT',
+        currency: 'POINT',
+        targetAmount: 100,
+      },
+    });
+    const otherEscrow = await prisma.financialAccount.create({
+      data: {
+        reservationId: otherReservation.id,
+        currency: 'POINT',
+        purpose: 'ESCROW',
+      },
+    });
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: otherEscrow.id,
+            amount: 100,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+        });
+      }),
+    ).rejects.toThrow(/FinancialTransfer_conservation_check/);
+  });
+
   it('rejects transfer allocations whose sum differs from the transfer amount', async () => {
     const world = await makeFinancialWorld();
     await expect(
