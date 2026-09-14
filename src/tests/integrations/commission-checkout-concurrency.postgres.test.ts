@@ -1,11 +1,11 @@
 import { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPrismaClient } from '../../db/prisma.js';
-import { CheckoutIdempotencyError } from '../../modules/checkout/checkout.core.js';
-import { createCheckoutService } from '../../modules/checkout/checkout.service.js';
+import { CommissionCheckoutIdempotencyError } from '../../modules/commission-checkout/commission-checkout.core.js';
+import { createCommissionCheckoutService } from '../../modules/commission-checkout/commission-checkout.service.js';
 import { resetDb } from '../support/helpers.js';
 
-const databaseUrl = process.env.CHECKOUT_RACE_DATABASE_URL;
+const databaseUrl = process.env.COMMISSION_CHECKOUT_RACE_DATABASE_URL;
 const CONTRACT_BARRIER_CLASS_ID = 2_000_000_000;
 const CONTRACT_BARRIER_OBJECT_ID = 2_000_000_000;
 
@@ -15,18 +15,18 @@ function connectionUrl(applicationName: string): string {
   return url.toString();
 }
 
-const first = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-first')) : null;
-const second = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-second')) : null;
-const monitor = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-monitor')) : null;
+const first = databaseUrl ? createPrismaClient(connectionUrl('commission-checkout-race-first')) : null;
+const second = databaseUrl ? createPrismaClient(connectionUrl('commission-checkout-race-second')) : null;
+const monitor = databaseUrl ? createPrismaClient(connectionUrl('commission-checkout-race-monitor')) : null;
 
 beforeAll(async () => {
   if (!first) return;
-  await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS checkout_test_contract_barrier ON "Contract"');
-  await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS checkout_test_contract_barrier()');
+  await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS commission_checkout_test_contract_barrier ON "Contract"');
+  await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS commission_checkout_test_contract_barrier()');
   await first.$executeRawUnsafe(`
-    CREATE FUNCTION checkout_test_contract_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+    CREATE FUNCTION commission_checkout_test_contract_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
-      IF current_setting('application_name') = 'checkout-race-first' THEN
+      IF current_setting('application_name') = 'commission-checkout-race-first' THEN
         PERFORM pg_advisory_xact_lock(${CONTRACT_BARRIER_CLASS_ID}, ${CONTRACT_BARRIER_OBJECT_ID});
       END IF;
       RETURN NEW;
@@ -34,9 +34,9 @@ beforeAll(async () => {
     $$
   `);
   await first.$executeRawUnsafe(`
-    CREATE TRIGGER checkout_test_contract_barrier
+    CREATE TRIGGER commission_checkout_test_contract_barrier
     BEFORE INSERT ON "Contract"
-    FOR EACH ROW EXECUTE FUNCTION checkout_test_contract_barrier()
+    FOR EACH ROW EXECUTE FUNCTION commission_checkout_test_contract_barrier()
   `);
 });
 
@@ -46,15 +46,15 @@ beforeEach(async () => {
 
 afterAll(async () => {
   if (first) {
-    await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS checkout_test_contract_barrier ON "Contract"');
-    await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS checkout_test_contract_barrier()');
+    await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS commission_checkout_test_contract_barrier ON "Contract"');
+    await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS commission_checkout_test_contract_barrier()');
   }
   await Promise.all([first?.$disconnect(), second?.$disconnect(), monitor?.$disconnect()]);
 });
 
 function requireClients() {
   if (!first || !second || !monitor) {
-    throw new Error('CHECKOUT_RACE_DATABASE_URL is required');
+    throw new Error('COMMISSION_CHECKOUT_RACE_DATABASE_URL is required');
   }
   return { first, second, monitor };
 }
@@ -70,14 +70,14 @@ async function waitForSecondAdvisoryLockWait(): Promise<void> {
         JOIN pg_stat_activity activity ON activity.pid = lock.pid
         WHERE lock.locktype = 'advisory'
           AND NOT lock.granted
-          AND activity.application_name = 'checkout-race-second'
+          AND activity.application_name = 'commission-checkout-race-second'
       ) AS waiting
     `;
     if (state?.waiting) return;
     // eslint-disable-next-line no-await-in-loop -- bounded polling proves the lock-wait path
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error('second checkout never waited on an advisory lock');
+  throw new Error('second commission checkout never waited on an advisory lock');
 }
 
 async function waitForContractBarrier(): Promise<void> {
@@ -93,18 +93,18 @@ async function waitForContractBarrier(): Promise<void> {
           AND lock.classid = 2000000000
           AND lock.objid = 2000000000
           AND NOT lock.granted
-          AND activity.application_name = 'checkout-race-first'
+          AND activity.application_name = 'commission-checkout-race-first'
       ) AS waiting
     `;
     if (state?.waiting) return;
     // eslint-disable-next-line no-await-in-loop -- bounded polling proves the DB-trigger barrier
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error('first checkout never reached the Contract insert barrier');
+  throw new Error('first commission checkout never reached the Contract insert barrier');
 }
 
 async function contractBarrier() {
-  const blocker = new Client({ connectionString: connectionUrl('checkout-race-barrier') });
+  const blocker = new Client({ connectionString: connectionUrl('commission-checkout-race-barrier') });
   await blocker.connect();
   await blocker.query('SELECT pg_advisory_lock($1, $2)', [
     CONTRACT_BARRIER_CLASS_ID,
@@ -128,8 +128,8 @@ async function contractBarrier() {
   };
 }
 
-async function seedCheckoutWorld(suffix: string) {
-  if (!first) throw new Error('CHECKOUT_RACE_DATABASE_URL is required');
+async function seedCommissionCheckoutWorld(suffix: string) {
+  if (!first) throw new Error('COMMISSION_CHECKOUT_RACE_DATABASE_URL is required');
   const buyer = await first.user.create({ data: { email: `race-buyer-${suffix}@example.com` } });
   const worker = await first.user.create({ data: { email: `race-worker-${suffix}@example.com` } });
   const commissionType = await first.commissionType.create({
@@ -165,10 +165,10 @@ async function seedCheckoutWorld(suffix: string) {
   return { buyer, payment };
 }
 
-describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
+describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', () => {
   it('replays a concurrent retry after waiting for the first payment commit', async () => {
     const clients = requireClients();
-    const world = await seedCheckoutWorld('same-payment');
+    const world = await seedCommissionCheckoutWorld('same-payment');
     const input = {
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
@@ -177,9 +177,9 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
 
     const barrier = await contractBarrier();
     try {
-      const firstRequest = createCheckoutService({ rw: clients.first, ro: clients.first }).payOrder(input);
+      const firstRequest = createCommissionCheckoutService({ rw: clients.first, ro: clients.first }).complete(input);
       await barrier.waitUntilReached();
-      const secondRequest = createCheckoutService({ rw: clients.second, ro: clients.second }).payOrder(input);
+      const secondRequest = createCommissionCheckoutService({ rw: clients.second, ro: clients.second }).complete(input);
       const waitError = await waitForSecondAdvisoryLockWait().then(
         () => null,
         (error: unknown) => error,
@@ -200,7 +200,7 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
       expect(results[0].reservationId).toBe(results[1].reservationId);
       expect(await clients.first.financialReservation.count()).toBe(1);
       expect(await clients.first.contract.count()).toBe(1);
-      expect(await clients.first.checkoutCommand.count()).toBe(1);
+      expect(await clients.first.commissionCheckoutCommand.count()).toBe(1);
     } finally {
       await barrier.release();
     }
@@ -208,17 +208,17 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
 
   it('classifies a concurrently reused command key as an idempotency mismatch', async () => {
     const clients = requireClients();
-    const left = await seedCheckoutWorld('left');
-    const right = await seedCheckoutWorld('right');
+    const left = await seedCommissionCheckoutWorld('left');
+    const right = await seedCommissionCheckoutWorld('right');
     const barrier = await contractBarrier();
     try {
-      const firstRequest = createCheckoutService({ rw: clients.first, ro: clients.first }).payOrder({
+      const firstRequest = createCommissionCheckoutService({ rw: clients.first, ro: clients.first }).complete({
         orderPaymentId: left.payment.id,
         actorId: left.buyer.id,
         commandKey: 'shared-command-key',
       });
       await barrier.waitUntilReached();
-      const secondRequest = createCheckoutService({ rw: clients.second, ro: clients.second }).payOrder({
+      const secondRequest = createCommissionCheckoutService({ rw: clients.second, ro: clients.second }).complete({
         orderPaymentId: right.payment.id,
         actorId: right.buyer.id,
         commandKey: 'shared-command-key',
@@ -235,10 +235,10 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
       const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
       expect(fulfilled).toHaveLength(1);
       expect(rejected).toHaveLength(1);
-      expect(rejected[0]!.reason).toBeInstanceOf(CheckoutIdempotencyError);
+      expect(rejected[0]!.reason).toBeInstanceOf(CommissionCheckoutIdempotencyError);
       expect(await clients.first.financialReservation.count()).toBe(1);
       expect(await clients.first.contract.count()).toBe(1);
-      expect(await clients.first.checkoutCommand.count()).toBe(1);
+      expect(await clients.first.commissionCheckoutCommand.count()).toBe(1);
     } finally {
       await barrier.release();
     }

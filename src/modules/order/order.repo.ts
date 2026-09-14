@@ -2,7 +2,10 @@ import type { DbClient, ReadDbClient } from '../../db/db.js';
 import { ConcurrentUpdateError } from '../../foundation/errors.js';
 import { OrderPaymentNotFoundError } from './order.core.js';
 
-export async function findLockTargets(db: ReadDbClient, orderPaymentId: number) {
+export async function findCommissionCheckoutLockTargets(
+  db: ReadDbClient,
+  orderPaymentId: number,
+) {
   const row = await db.orderPayment.findUnique({
     where: { id: orderPaymentId },
     select: { order: { select: { buyerId: true, slotId: true } } },
@@ -11,7 +14,10 @@ export async function findLockTargets(db: ReadDbClient, orderPaymentId: number) 
   return row.order;
 }
 
-export async function loadPaymentFacts(db: ReadDbClient, orderPaymentId: number) {
+export async function loadCommissionCheckoutPaymentFacts(
+  db: ReadDbClient,
+  orderPaymentId: number,
+) {
   const row = await db.orderPayment.findUnique({
     where: { id: orderPaymentId },
     select: {
@@ -50,7 +56,7 @@ export async function loadPaymentFacts(db: ReadDbClient, orderPaymentId: number)
   };
 }
 
-export async function applyPaidOrder(
+export async function applyCommissionCheckoutPayment(
   db: DbClient,
   input: { orderId: number; orderPaymentId: number; reservationId: number },
 ): Promise<void> {

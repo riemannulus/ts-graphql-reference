@@ -42,7 +42,7 @@ per-file lint cannot:
   `context.ts` → `services.ts`), so only value edges count.
 - **Cross-module dependencies come from an explicit allowlist** — today
   `onboarding → {user, post}`, `search → post`, `auth → user` (types
-  only; the service arrives injected), and `checkout → {commission-type,
+  only; the service arrives injected), and `commission-checkout → {commission-type,
   contract, financial-ledger, order, slot}` (reviewed repo/core files only).
   Two modules can entangle with no
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
@@ -684,7 +684,7 @@ distinction organizes the whole graph (`src/modules/README.md`):
   leaves.
 - **Composite modules** own a *capability* over other modules' nouns, hold
   few or no tables of their own, and compose owners one way from above:
-  `onboarding` and `checkout` (cross-module use-cases), `search` (an external index
+  `onboarding` and `commission-checkout` (cross-module use-cases), `search` (an external index
   hydrated through the post repo), `auth` (an external protocol over the
   injected user service). Nothing imports a composite — it is reached only
   at the composition points (`graphql/schema.ts`, `services.ts`, `app.ts`,

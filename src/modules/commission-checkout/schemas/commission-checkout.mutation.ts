@@ -1,16 +1,17 @@
 import { builder } from '../../../graphql/builder.js';
-import type { CheckoutResult } from '../checkout.core.js';
+import type { CommissionCheckoutResult } from '../commission-checkout.core.js';
 
-export function registerCheckoutMutations(): void {
-  const CheckoutCommissionInput = builder.inputType('CheckoutCommissionInput', {
+export function registerCommissionCheckoutMutations(): void {
+  const CommissionCheckoutInputRef = builder.inputType('CommissionCheckoutInput', {
     fields: (t) => ({
       orderPaymentId: t.int({ required: true }),
       actorId: t.int({ required: true }),
       commandKey: t.string({ required: true }),
     }),
   });
-  const CheckoutCommissionResult = builder.objectRef<CheckoutResult>('CheckoutCommissionResult');
-  CheckoutCommissionResult.implement({
+  const CommissionCheckoutResultRef =
+    builder.objectRef<CommissionCheckoutResult>('CommissionCheckoutResult');
+  CommissionCheckoutResultRef.implement({
     description: 'PROTOTYPE result of an atomic initial commission checkout.',
     fields: (t) => ({
       orderId: t.exposeInt('orderId'),
@@ -23,11 +24,11 @@ export function registerCheckoutMutations(): void {
 
   builder.mutationField('checkoutCommission', (t) =>
     t.field({
-      type: CheckoutCommissionResult,
+      type: CommissionCheckoutResultRef,
       description: 'PROTOTYPE: reserves POINT and forms a Contract in one transaction.',
-      args: { input: t.arg({ type: CheckoutCommissionInput, required: true }) },
+      args: { input: t.arg({ type: CommissionCheckoutInputRef, required: true }) },
       resolve: (_root, args, ctx) =>
-        ctx.services.checkout.payOrder({
+        ctx.services.commissionCheckout.complete({
           orderPaymentId: args.input.orderPaymentId,
           actorId: args.input.actorId,
           commandKey: args.input.commandKey,

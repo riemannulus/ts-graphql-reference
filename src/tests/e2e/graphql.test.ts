@@ -31,9 +31,9 @@ async function gql(query: string, variables?: Record<string, unknown>): Promise<
   return res.json() as GqlResult;
 }
 
-async function seedCheckoutGraphqlWorld() {
-  const buyer = await prisma.user.create({ data: { email: 'gql-checkout-buyer@example.com' } });
-  const worker = await prisma.user.create({ data: { email: 'gql-checkout-worker@example.com' } });
+async function seedCommissionCheckoutGraphqlWorld() {
+  const buyer = await prisma.user.create({ data: { email: 'gql-commission-checkout-buyer@example.com' } });
+  const worker = await prisma.user.create({ data: { email: 'gql-commission-checkout-worker@example.com' } });
   const commissionType = await prisma.commissionType.create({
     data: { workerId: worker.id, title: 'portrait', price: 500 },
   });
@@ -70,8 +70,8 @@ afterAll(async () => {
 
 describe('GraphQL API', () => {
   it('checks out a commission and replays the same result through GraphQL', async () => {
-    const world = await seedCheckoutGraphqlWorld();
-    const mutation = `mutation Checkout($payment: Int!, $actor: Int!, $key: String!) {
+    const world = await seedCommissionCheckoutGraphqlWorld();
+    const mutation = `mutation CommissionCheckout($payment: Int!, $actor: Int!, $key: String!) {
       checkoutCommission(input: { orderPaymentId: $payment, actorId: $actor, commandKey: $key }) {
         orderId orderPaymentId contractId reservationId replayed
       }

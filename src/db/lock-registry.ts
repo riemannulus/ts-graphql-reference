@@ -35,10 +35,10 @@ export const lockKey = defineLocks({
   orderPayment: (orderPaymentId: number) => orderPaymentId,
   /** PROTOTYPE: serializes all generic financial movement for one holder. */
   financialHolder: (holderId: number) => holderId,
-  /** PROTOTYPE: serializes checkout against occupation of one commission slot. */
+  /** PROTOTYPE: serializes commission checkout against occupation of one commission slot. */
   commissionSlot: (slotId: number) => slotId,
-  /** PROTOTYPE: claims one checkout idempotency key before any economic write. */
-  checkoutCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: claims one commission-checkout command key before any economic write. */
+  commissionCheckoutCommand: (commandKey: string) => stringLockId(commandKey),
 });
 
 /** The registered lock namespaces, derived from the registry. */

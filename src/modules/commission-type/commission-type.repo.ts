@@ -7,7 +7,7 @@ export class CommissionTypeNotFoundError extends DomainError {
   }
 }
 
-export async function findCommissionTypeForCheckout(db: ReadDbClient, id: number) {
+export async function loadCommissionCheckoutTerms(db: ReadDbClient, id: number) {
   const row = await db.commissionType.findUnique({
     where: { id },
     select: { workerId: true, price: true },

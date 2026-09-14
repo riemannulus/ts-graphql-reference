@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assertLockedCheckoutTargets,
-  CheckoutActorError,
-  CheckoutStateError,
-  planCheckout,
-  type CheckoutFacts,
-} from '../../../modules/checkout/checkout.core.js';
+  assertLockedCommissionCheckoutTargets,
+  CommissionCheckoutActorError,
+  CommissionCheckoutStateError,
+  planCommissionCheckout,
+  type CommissionCheckoutFacts,
+} from '../../../modules/commission-checkout/commission-checkout.core.js';
 import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 
-const facts: CheckoutFacts = {
+const facts: CommissionCheckoutFacts = {
   orderId: 10,
   orderPaymentId: 20,
   buyerId: 1,
@@ -28,31 +28,31 @@ const facts: CheckoutFacts = {
   slotState: 'AVAILABLE',
 };
 
-describe('planCheckout', () => {
+describe('planCommissionCheckout', () => {
   it('rejects an actor other than the Order buyer', () => {
-    expect(() => planCheckout(facts, { actorId: 3 })).toThrow(CheckoutActorError);
+    expect(() => planCommissionCheckout(facts, { actorId: 3 })).toThrow(CommissionCheckoutActorError);
   });
 
   it('rejects an OrderPayment that is no longer pending', () => {
     expect(() =>
-      planCheckout({ ...facts, paymentState: 'PAID' }, { actorId: 1 }),
-    ).toThrow(CheckoutStateError);
+      planCommissionCheckout({ ...facts, paymentState: 'PAID' }, { actorId: 1 }),
+    ).toThrow(CommissionCheckoutStateError);
   });
 
   it('rejects a payment amount that differs from the Order snapshot', () => {
     expect(() =>
-      planCheckout({ ...facts, paymentAmount: 499 }, { actorId: 1 }),
-    ).toThrow(CheckoutStateError);
+      planCommissionCheckout({ ...facts, paymentAmount: 499 }, { actorId: 1 }),
+    ).toThrow(CommissionCheckoutStateError);
   });
 
   it('rejects a slot owned by a different worker', () => {
     expect(() =>
-      planCheckout({ ...facts, slotWorkerId: 4 }, { actorId: 1 }),
-    ).toThrow(CheckoutStateError);
+      planCommissionCheckout({ ...facts, slotWorkerId: 4 }, { actorId: 1 }),
+    ).toThrow(CommissionCheckoutStateError);
   });
 
-  it('returns a checkout-owned intent for a payable Order', () => {
-    expect(planCheckout(facts, { actorId: 1 })).toEqual({
+  it('returns a commission-checkout plan for a payable Order', () => {
+    expect(planCommissionCheckout(facts, { actorId: 1 })).toEqual({
       financialRequest: {
         referenceId: 'order-payment:20',
         bindingNamespace: 'order-payment',
@@ -69,16 +69,16 @@ describe('planCheckout', () => {
   });
 });
 
-describe('assertLockedCheckoutTargets', () => {
+describe('assertLockedCommissionCheckoutTargets', () => {
   it('rejects facts that moved to a buyer, slot, or holder we did not lock', () => {
     const locked = { buyerId: 1, slotId: 30, financialHolderId: 50 };
     expect(() =>
-      assertLockedCheckoutTargets(locked, { ...locked, financialHolderId: 51 }),
+      assertLockedCommissionCheckoutTargets(locked, { ...locked, financialHolderId: 51 }),
     ).toThrow(ConcurrentUpdateError);
   });
 
   it('accepts facts that still belong to every locked target', () => {
     const locked = { buyerId: 1, slotId: 30, financialHolderId: 50 };
-    expect(() => assertLockedCheckoutTargets(locked, locked)).not.toThrow();
+    expect(() => assertLockedCommissionCheckoutTargets(locked, locked)).not.toThrow();
   });
 });

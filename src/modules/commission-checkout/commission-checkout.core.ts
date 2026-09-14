@@ -1,12 +1,14 @@
 import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
 
-export interface CheckoutInput {
+const COMMISSION_ORDER_PAYMENT_BINDING_NAMESPACE = 'order-payment';
+
+export interface CommissionCheckoutInput {
   orderPaymentId: number;
   actorId: number;
   commandKey: string;
 }
 
-export interface OrderPaymentFacts {
+interface CommissionCheckoutPaymentFacts {
   orderId: number;
   orderPaymentId: number;
   buyerId: number;
@@ -21,7 +23,7 @@ export interface OrderPaymentFacts {
   paymentState: string;
 }
 
-export interface CheckoutFacts extends OrderPaymentFacts {
+export interface CommissionCheckoutFacts extends CommissionCheckoutPaymentFacts {
   commissionWorkerId: number;
   commissionPrice: number;
   slotWorkerId: number;
@@ -29,7 +31,7 @@ export interface CheckoutFacts extends OrderPaymentFacts {
   financialHolderId: number;
 }
 
-export interface FinancialRequest {
+interface CommissionPaymentReservationRequest {
   referenceId: string;
   bindingNamespace: string;
   bindingKey: string;
@@ -39,8 +41,8 @@ export interface FinancialRequest {
   amount: number;
 }
 
-export interface CheckoutPlan {
-  financialRequest: FinancialRequest;
+export interface CommissionCheckoutPlan {
+  financialRequest: CommissionPaymentReservationRequest;
   contract: {
     orderId: number;
     buyerId: number;
@@ -56,7 +58,7 @@ export interface CheckoutPlan {
   };
 }
 
-export interface CheckoutResult {
+export interface CommissionCheckoutResult {
   orderId: number;
   orderPaymentId: number;
   contractId: number;
@@ -64,90 +66,102 @@ export interface CheckoutResult {
   replayed: boolean;
 }
 
-type EconomicResult = Omit<CheckoutResult, 'replayed'>;
+type CommissionCheckoutEconomicResult = Omit<CommissionCheckoutResult, 'replayed'>;
 
-interface ExistingCheckout {
+interface ExistingCommissionCheckout {
   payloadHash: string;
   buyerId: number;
-  result: EconomicResult;
+  result: CommissionCheckoutEconomicResult;
 }
 
-export type CheckoutStartPlan =
+type CommissionCheckoutStartPlan =
   | { kind: 'PROCEED' }
-  | { kind: 'REPLAY'; result: EconomicResult; saveAlias: boolean };
+  | { kind: 'REPLAY'; result: CommissionCheckoutEconomicResult; saveAlias: boolean };
 
-export class CheckoutActorError extends DomainError {
+export class CommissionCheckoutActorError extends DomainError {
   constructor() {
-    super('Only the Order buyer can complete checkout', 'CHECKOUT_ACTOR_MISMATCH');
+    super(
+      'Only the Order buyer can complete commission checkout',
+      'COMMISSION_CHECKOUT_ACTOR_MISMATCH',
+    );
   }
 }
 
-export class CheckoutStateError extends DomainError {
+export class CommissionCheckoutStateError extends DomainError {
   constructor(message: string) {
     super(message, 'ORDER_NOT_PAYABLE');
   }
 }
 
-export class CheckoutIdempotencyError extends DomainError {
+export class CommissionCheckoutIdempotencyError extends DomainError {
   constructor() {
-    super('Checkout command key was already used for a different payload', 'IDEMPOTENCY_MISMATCH');
+    super(
+      'Commission checkout command key was already used for a different payload',
+      'IDEMPOTENCY_MISMATCH',
+    );
   }
 }
 
-interface CheckoutLockTargets {
+interface CommissionCheckoutLockTargets {
   buyerId: number;
   slotId: number;
   financialHolderId: number;
 }
 
-export function assertLockedCheckoutTargets(
-  locked: CheckoutLockTargets,
-  actual: CheckoutLockTargets,
+export function assertLockedCommissionCheckoutTargets(
+  locked: CommissionCheckoutLockTargets,
+  actual: CommissionCheckoutLockTargets,
 ): void {
   if (
     locked.buyerId !== actual.buyerId ||
     locked.slotId !== actual.slotId ||
     locked.financialHolderId !== actual.financialHolderId
   ) {
-    throw new ConcurrentUpdateError('checkout lock targets');
+    throw new ConcurrentUpdateError('commission checkout lock targets');
   }
 }
 
-export function assertCheckoutActor(buyerId: number, actorId: number): void {
-  if (buyerId !== actorId) throw new CheckoutActorError();
+function assertCommissionCheckoutActor(buyerId: number, actorId: number): void {
+  if (buyerId !== actorId) throw new CommissionCheckoutActorError();
 }
 
-export function assertReplayPayload(storedHash: string, requestedHash: string): void {
-  if (storedHash !== requestedHash) throw new CheckoutIdempotencyError();
+function assertCommissionCheckoutReplayPayload(
+  storedHash: string,
+  requestedHash: string,
+): void {
+  if (storedHash !== requestedHash) throw new CommissionCheckoutIdempotencyError();
 }
 
-export function planCheckoutStart(
-  command: ExistingCheckout | null,
-  payment: ExistingCheckout | null,
+export function planCommissionCheckoutStart(
+  command: ExistingCommissionCheckout | null,
+  payment: ExistingCommissionCheckout | null,
   requestedHash: string,
   actorId: number,
-): CheckoutStartPlan {
+): CommissionCheckoutStartPlan {
   if (command) {
-    assertReplayPayload(command.payloadHash, requestedHash);
+    assertCommissionCheckoutReplayPayload(command.payloadHash, requestedHash);
     return { kind: 'REPLAY', result: command.result, saveAlias: false };
   }
   if (payment) {
-    assertCheckoutActor(payment.buyerId, actorId);
+    assertCommissionCheckoutActor(payment.buyerId, actorId);
     return { kind: 'REPLAY', result: payment.result, saveAlias: true };
   }
   return { kind: 'PROCEED' };
 }
 
-export function planCheckout(facts: CheckoutFacts, input: { actorId: number }): CheckoutPlan {
-  assertCheckoutActor(facts.buyerId, input.actorId);
+export function planCommissionCheckout(
+  facts: CommissionCheckoutFacts,
+  input: { actorId: number },
+): CommissionCheckoutPlan {
+  assertCommissionCheckoutActor(facts.buyerId, input.actorId);
   if (facts.orderState !== 'REQUESTED' || facts.paymentState !== 'PENDING') {
-    throw new CheckoutStateError('Order and payment must both be pending');
+    throw new CommissionCheckoutStateError('Order and payment must both be pending');
   }
   if (facts.slotState !== 'AVAILABLE') {
-    throw new CheckoutStateError('Commission slot is not available');
+    throw new CommissionCheckoutStateError('Commission slot is not available');
   }
   if (facts.commissionWorkerId !== facts.slotWorkerId) {
-    throw new CheckoutStateError('Commission slot belongs to a different worker');
+    throw new CommissionCheckoutStateError('Commission slot belongs to a different worker');
   }
   if (
     facts.orderCurrency !== 'POINT' ||
@@ -155,13 +169,13 @@ export function planCheckout(facts: CheckoutFacts, input: { actorId: number }): 
     facts.orderAmount !== facts.paymentAmount ||
     facts.orderAmount !== facts.commissionPrice
   ) {
-    throw new CheckoutStateError('Order, payment, and commission price must match');
+    throw new CommissionCheckoutStateError('Order, payment, and commission price must match');
   }
 
   return {
     financialRequest: {
       referenceId: facts.referenceId,
-      bindingNamespace: 'order-payment',
+      bindingNamespace: COMMISSION_ORDER_PAYMENT_BINDING_NAMESPACE,
       bindingKey: String(facts.orderPaymentId),
       holderId: facts.financialHolderId,
       purpose: 'COMMISSION_PAYMENT',

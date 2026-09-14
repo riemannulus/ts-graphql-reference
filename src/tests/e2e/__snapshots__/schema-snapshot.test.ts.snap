@@ -7,14 +7,14 @@ exports[`GraphQL schema > matches the committed SDL snapshot 1`] = `
   userId: Int!
 }
 
-input CheckoutCommissionInput {
+input CommissionCheckoutInput {
   actorId: Int!
   commandKey: String!
   orderPaymentId: Int!
 }
 
 """PROTOTYPE result of an atomic initial commission checkout."""
-type CheckoutCommissionResult {
+type CommissionCheckoutResult {
   contractId: Int
   orderId: Int
   orderPaymentId: Int
@@ -35,7 +35,7 @@ type Mutation {
   chargePoint(input: ChargePointInput!): PointCharge
 
   """PROTOTYPE: reserves POINT and forms a Contract in one transaction."""
-  checkoutCommission(input: CheckoutCommissionInput!): CheckoutCommissionResult
+  checkoutCommission(input: CommissionCheckoutInput!): CommissionCheckoutResult
   createPost(input: CreatePostInput!): Post
   publishPost(id: Int!): Post
   signUp(input: SignUpInput!): User

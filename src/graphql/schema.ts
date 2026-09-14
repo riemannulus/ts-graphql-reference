@@ -3,7 +3,7 @@
 import { builder } from './builder.js';
 
 import { registerOnboardingModule } from '../modules/onboarding/schemas/index.js';
-import { registerCheckoutModule } from '../modules/checkout/schemas/index.js';
+import { registerCommissionCheckoutModule } from '../modules/commission-checkout/schemas/index.js';
 import { registerPointModule } from '../modules/point/schemas/index.js';
 import { registerPostModule } from '../modules/post/schemas/index.js';
 import { registerSearchModule } from '../modules/search/schemas/index.js';
@@ -21,7 +21,7 @@ import { registerUserModule } from '../modules/user/schemas/index.js';
 registerUserModule();
 registerPostModule();
 registerPointModule();
-registerCheckoutModule();
+registerCommissionCheckoutModule();
 registerOnboardingModule();
 registerSearchModule();
 

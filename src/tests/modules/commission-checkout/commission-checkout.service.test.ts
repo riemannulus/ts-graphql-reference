@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { CheckoutIdempotencyError, CheckoutStateError } from '../../../modules/checkout/checkout.core.js';
-import { createCheckoutService } from '../../../modules/checkout/checkout.service.js';
+import { CommissionCheckoutIdempotencyError, CommissionCheckoutStateError } from '../../../modules/commission-checkout/commission-checkout.core.js';
+import { createCommissionCheckoutService } from '../../../modules/commission-checkout/commission-checkout.service.js';
 import { InsufficientFinancialFundsError } from '../../../modules/financial-ledger/financial-ledger.core.js';
 import { resetDb, makeTestPrisma } from '../../support/helpers.js';
 
@@ -10,9 +10,9 @@ const db = { rw: prisma, ro: prisma };
 beforeEach(() => resetDb(prisma));
 afterAll(() => prisma.$disconnect());
 
-async function seedCheckoutWorld(opts: { balance?: number; slotState?: string } = {}) {
-  const buyer = await prisma.user.create({ data: { email: 'checkout-buyer@example.com' } });
-  const worker = await prisma.user.create({ data: { email: 'checkout-worker@example.com' } });
+async function seedCommissionCheckoutWorld(opts: { balance?: number; slotState?: string } = {}) {
+  const buyer = await prisma.user.create({ data: { email: 'commission-checkout-buyer@example.com' } });
+  const worker = await prisma.user.create({ data: { email: 'commission-checkout-worker@example.com' } });
   const commissionType = await prisma.commissionType.create({
     data: { workerId: worker.id, title: 'portrait', price: 500 },
   });
@@ -54,31 +54,31 @@ async function seedCheckoutWorld(opts: { balance?: number; slotState?: string } 
 
 async function withRejectedContractInsert(run: () => Promise<void>): Promise<void> {
   await prisma.$executeRawUnsafe(`
-    CREATE FUNCTION checkout_test_reject_contract() RETURNS trigger LANGUAGE plpgsql AS $$
+    CREATE FUNCTION commission_checkout_test_reject_contract() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       RAISE EXCEPTION 'forced contract failure';
     END;
     $$
   `);
   await prisma.$executeRawUnsafe(`
-    CREATE TRIGGER checkout_test_reject_contract
+    CREATE TRIGGER commission_checkout_test_reject_contract
     BEFORE INSERT ON "Contract"
-    FOR EACH ROW EXECUTE FUNCTION checkout_test_reject_contract()
+    FOR EACH ROW EXECUTE FUNCTION commission_checkout_test_reject_contract()
   `);
   try {
     await run();
   } finally {
-    await prisma.$executeRawUnsafe('DROP TRIGGER checkout_test_reject_contract ON "Contract"');
-    await prisma.$executeRawUnsafe('DROP FUNCTION checkout_test_reject_contract()');
+    await prisma.$executeRawUnsafe('DROP TRIGGER commission_checkout_test_reject_contract ON "Contract"');
+    await prisma.$executeRawUnsafe('DROP FUNCTION commission_checkout_test_reject_contract()');
   }
 }
 
-describe('CheckoutService.payOrder', () => {
+describe('CommissionCheckoutService.complete', () => {
   it('atomically reserves POINT and forms exactly one Contract', async () => {
-    const world = await seedCheckoutWorld();
-    const checkout = createCheckoutService(db);
+    const world = await seedCommissionCheckoutWorld();
+    const commissionCheckout = createCommissionCheckoutService(db);
 
-    const result = await checkout.payOrder({
+    const result = await commissionCheckout.complete({
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
       commandKey: 'pay-1',
@@ -109,11 +109,11 @@ describe('CheckoutService.payOrder', () => {
     expect(await prisma.financialTransfer.count()).toBe(1);
     expect(await prisma.financialTransferAllocation.count()).toBe(1);
     expect(await prisma.orderFinancialLink.count()).toBe(1);
-    expect(await prisma.checkoutCommand.count()).toBe(1);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
   });
 
   it('preserves exact FIFO lot provenance across a multi-lot reservation', async () => {
-    const world = await seedCheckoutWorld({ balance: 200 });
+    const world = await seedCommissionCheckoutWorld({ balance: 200 });
     const secondLot = await prisma.pointLot.create({
       data: {
         accountId: world.account.id,
@@ -122,9 +122,9 @@ describe('CheckoutService.payOrder', () => {
         remainingAmount: 400,
       },
     });
-    const checkout = createCheckoutService(db);
+    const commissionCheckout = createCommissionCheckoutService(db);
 
-    const result = await checkout.payOrder({
+    const result = await commissionCheckout.complete({
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
       commandKey: 'multi-lot',
@@ -178,12 +178,12 @@ describe('CheckoutService.payOrder', () => {
   });
 
   it('rolls back every financial and product write when Contract creation fails', async () => {
-    const world = await seedCheckoutWorld();
-    const checkout = createCheckoutService(db);
+    const world = await seedCommissionCheckoutWorld();
+    const commissionCheckout = createCommissionCheckoutService(db);
 
     await withRejectedContractInsert(async () => {
       await expect(
-        checkout.payOrder({
+        commissionCheckout.complete({
           orderPaymentId: world.payment.id,
           actorId: world.buyer.id,
           commandKey: 'pay-fails',
@@ -194,7 +194,7 @@ describe('CheckoutService.payOrder', () => {
       expect(await prisma.financialTransfer.count()).toBe(0);
       expect(await prisma.orderFinancialLink.count()).toBe(0);
       expect(await prisma.contract.count()).toBe(0);
-      expect(await prisma.checkoutCommand.count()).toBe(0);
+      expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
       expect(await prisma.financialAccount.count({ where: { purpose: 'ESCROW' } })).toBe(0);
       expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
         remainingAmount: 1_000,
@@ -212,15 +212,15 @@ describe('CheckoutService.payOrder', () => {
   });
 
   it('replays the stored result for the same command without another economic effect', async () => {
-    const world = await seedCheckoutWorld();
-    const checkout = createCheckoutService(db);
+    const world = await seedCommissionCheckoutWorld();
+    const commissionCheckout = createCommissionCheckoutService(db);
     const input = { orderPaymentId: world.payment.id, actorId: world.buyer.id, commandKey: 'same' };
 
-    const first = await checkout.payOrder(input);
-    const second = await checkout.payOrder(input);
+    const first = await commissionCheckout.complete(input);
+    const second = await commissionCheckout.complete(input);
 
     expect(second).toEqual({ ...first, replayed: true });
-    expect(await prisma.checkoutCommand.count()).toBe(1);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
@@ -229,43 +229,43 @@ describe('CheckoutService.payOrder', () => {
   });
 
   it('rejects reusing a command key for a different payload', async () => {
-    const world = await seedCheckoutWorld();
-    const checkout = createCheckoutService(db);
-    await checkout.payOrder({
+    const world = await seedCommissionCheckoutWorld();
+    const commissionCheckout = createCommissionCheckoutService(db);
+    await commissionCheckout.complete({
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
       commandKey: 'collision',
     });
 
     await expect(
-      checkout.payOrder({
+      commissionCheckout.complete({
         orderPaymentId: world.payment.id,
         actorId: world.worker.id,
         commandKey: 'collision',
       }),
-    ).rejects.toBeInstanceOf(CheckoutIdempotencyError);
-    expect(await prisma.checkoutCommand.count()).toBe(1);
+    ).rejects.toBeInstanceOf(CommissionCheckoutIdempotencyError);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
   });
 
   it('reuses the economic result when a different command key retries a paid payment', async () => {
-    const world = await seedCheckoutWorld();
-    const checkout = createCheckoutService(db);
-    const first = await checkout.payOrder({
+    const world = await seedCommissionCheckoutWorld();
+    const commissionCheckout = createCommissionCheckoutService(db);
+    const first = await commissionCheckout.complete({
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
       commandKey: 'first-key',
     });
 
-    const replay = await checkout.payOrder({
+    const replay = await commissionCheckout.complete({
       orderPaymentId: world.payment.id,
       actorId: world.buyer.id,
       commandKey: 'second-key',
     });
 
     expect(replay).toEqual({ ...first, replayed: true });
-    expect(await prisma.checkoutCommand.count()).toBe(2);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(2);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
@@ -274,11 +274,11 @@ describe('CheckoutService.payOrder', () => {
   });
 
   it('rejects insufficient POINT without any partial write', async () => {
-    const world = await seedCheckoutWorld({ balance: 499 });
-    const checkout = createCheckoutService(db);
+    const world = await seedCommissionCheckoutWorld({ balance: 499 });
+    const commissionCheckout = createCommissionCheckoutService(db);
 
     await expect(
-      checkout.payOrder({
+      commissionCheckout.complete({
         orderPaymentId: world.payment.id,
         actorId: world.buyer.id,
         commandKey: 'insufficient',
@@ -286,25 +286,25 @@ describe('CheckoutService.payOrder', () => {
     ).rejects.toBeInstanceOf(InsufficientFinancialFundsError);
     expect(await prisma.financialReservation.count()).toBe(0);
     expect(await prisma.contract.count()).toBe(0);
-    expect(await prisma.checkoutCommand.count()).toBe(0);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 499,
     });
   });
 
   it('rejects an unavailable slot before reserving funds', async () => {
-    const world = await seedCheckoutWorld({ slotState: 'OCCUPIED' });
-    const checkout = createCheckoutService(db);
+    const world = await seedCommissionCheckoutWorld({ slotState: 'OCCUPIED' });
+    const commissionCheckout = createCommissionCheckoutService(db);
 
     await expect(
-      checkout.payOrder({
+      commissionCheckout.complete({
         orderPaymentId: world.payment.id,
         actorId: world.buyer.id,
         commandKey: 'occupied',
       }),
-    ).rejects.toBeInstanceOf(CheckoutStateError);
+    ).rejects.toBeInstanceOf(CommissionCheckoutStateError);
     expect(await prisma.financialReservation.count()).toBe(0);
     expect(await prisma.contract.count()).toBe(0);
-    expect(await prisma.checkoutCommand.count()).toBe(0);
+    expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
   });
 });

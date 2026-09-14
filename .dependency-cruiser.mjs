@@ -10,7 +10,7 @@
  *   pulls Context as a type only, context.ts pulls Services as a type only);
  * - which module may depend on which (the cross-module allowlist below). The
  *   allowlisted edges — onboarding → {user, post}, search → post,
- *   auth → user (type-only), checkout → its five owner repos — form a DAG by construction:
+ *   auth → user (type-only), commission-checkout → its five owner repos — form a DAG by construction:
  *   owner modules fall
  *   under the default ban, so they can never point back. A module-level cycle
  *   can therefore only enter by editing this file, which is the review point;
@@ -40,7 +40,7 @@ export default {
       severity: 'error',
       from: {
         path: '^src/modules/([^/]+)/',
-        pathNot: '^src/modules/(auth|checkout|onboarding|search)/',
+        pathNot: '^src/modules/(auth|commission-checkout|onboarding|search)/',
       },
       to: { path: '^src/modules/', pathNot: '^src/modules/$1/' },
     },
@@ -77,24 +77,25 @@ export default {
       to: { path: '^src/modules/user/', dependencyTypesNot: ['type-only'] },
     },
     {
-      name: 'checkout-reaches-reviewed-owners-only',
+      name: 'commission-checkout-reaches-reviewed-owners-only',
       comment:
-        'Checkout is a composite read → plan → apply use-case. Its service passes one transaction ' +
+        'Commission checkout is a composite read → plan → apply use-case. Its service passes one transaction ' +
         'directly to the five owner repos; those owners never point back.',
       severity: 'error',
-      from: { path: '^src/modules/checkout/' },
+      from: { path: '^src/modules/commission-checkout/' },
       to: {
         path: '^src/modules/',
-        pathNot: '^src/modules/(checkout|commission-type|contract|financial-ledger|order|slot)/',
+        pathNot:
+          '^src/modules/(commission-checkout|commission-type|contract|financial-ledger|order|slot)/',
       },
     },
     {
-      name: 'checkout-imports-owner-plan-repos-only',
+      name: 'commission-checkout-imports-owner-plan-repos-only',
       comment:
-        'The checkout edge lands only on reviewed owner repo executors and financial-ledger core planning; ' +
+        'The commission-checkout edge lands only on reviewed owner repo executors and financial-ledger core planning; ' +
         'it cannot reach owner services, delivery, or arbitrary implementation files.',
       severity: 'error',
-      from: { path: '^src/modules/checkout/' },
+      from: { path: '^src/modules/commission-checkout/' },
       to: {
         path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/',
         pathNot:
@@ -102,14 +103,14 @@ export default {
       },
     },
     {
-      name: 'checkout-owner-imports-live-in-service',
+      name: 'commission-checkout-owner-imports-live-in-service',
       comment:
-        'The composite service owns read → plan → apply assembly. Checkout core, repo, and delivery ' +
+        'The composite service owns read → plan → apply assembly. Commission-checkout core, repo, and delivery ' +
         'cannot bypass it by reaching into an owner module.',
       severity: 'error',
       from: {
-        path: '^src/modules/checkout/',
-        pathNot: '^src/modules/checkout/checkout\\.service\\.ts$',
+        path: '^src/modules/commission-checkout/',
+        pathNot: '^src/modules/commission-checkout/commission-checkout\\.service\\.ts$',
       },
       to: { path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/' },
     },
@@ -224,7 +225,7 @@ export default {
             { criteria: { source: '^src/modules/search' }, attributes: { fillcolor: '#ecfeff', color: '#06b6d4' } },
             { criteria: { source: '^src/modules/auth' }, attributes: { fillcolor: '#fdf2f8', color: '#ec4899' } },
             { criteria: { source: '^src/modules/onboarding' }, attributes: { fillcolor: '#fefce8', color: '#eab308' } },
-            { criteria: { source: '^src/modules/checkout' }, attributes: { fillcolor: '#eef2ff', color: '#6366f1' } },
+            { criteria: { source: '^src/modules/commission-checkout' }, attributes: { fillcolor: '#eef2ff', color: '#6366f1' } },
             { criteria: { source: '^src/modules/financial-ledger' }, attributes: { fillcolor: '#ecfdf5', color: '#10b981' } },
             { criteria: { source: '^src/modules/order' }, attributes: { fillcolor: '#fff7ed', color: '#ea580c' } },
             { criteria: { source: '^src/modules/contract' }, attributes: { fillcolor: '#fdf4ff', color: '#c026d3' } },
@@ -242,7 +243,7 @@ export default {
             { criteria: { resolved: '^src/modules/search' }, attributes: { color: '#06b6d4' } },
             { criteria: { resolved: '^src/modules/auth' }, attributes: { color: '#ec4899' } },
             { criteria: { resolved: '^src/modules/onboarding' }, attributes: { color: '#eab308' } },
-            { criteria: { resolved: '^src/modules/checkout' }, attributes: { color: '#6366f1' } },
+            { criteria: { resolved: '^src/modules/commission-checkout' }, attributes: { color: '#6366f1' } },
             { criteria: { resolved: '^src/modules/financial-ledger' }, attributes: { color: '#10b981' } },
             { criteria: { resolved: '^src/modules/order' }, attributes: { color: '#ea580c' } },
             { criteria: { resolved: '^src/modules/contract' }, attributes: { color: '#c026d3' } },

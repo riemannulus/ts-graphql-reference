@@ -52,7 +52,7 @@ export async function loadAvailablePointWorld(db: ReadDbClient, holderId: number
   };
 }
 
-export async function applyReservation(
+export async function applyCommissionPaymentReservation(
   db: DbClient,
   request: {
     referenceId: string;

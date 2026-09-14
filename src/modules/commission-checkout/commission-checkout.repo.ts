@@ -1,5 +1,8 @@
 import type { DbClient } from '../../db/db.js';
-import type { CheckoutInput, CheckoutResult } from './checkout.core.js';
+import type {
+  CommissionCheckoutInput,
+  CommissionCheckoutResult,
+} from './commission-checkout.core.js';
 
 const commandResultSelect = {
   commandKey: true,
@@ -25,7 +28,9 @@ function mapStoredCommand(row: {
   const { financialLink } = row.orderPayment;
   const { contract } = row.orderPayment.order;
   if (!financialLink || !contract) {
-    throw new Error(`Checkout command ${row.commandKey} has no completed economic result`);
+    throw new Error(
+      `Commission checkout command ${row.commandKey} has no completed economic result`,
+    );
   }
   return {
     commandKey: row.commandKey,
@@ -40,16 +45,19 @@ function mapStoredCommand(row: {
   };
 }
 
-export async function findCheckoutCommand(db: DbClient, commandKey: string) {
-  const row = await db.checkoutCommand.findUnique({
+export async function findCommissionCheckoutCommand(db: DbClient, commandKey: string) {
+  const row = await db.commissionCheckoutCommand.findUnique({
     where: { commandKey },
     select: commandResultSelect,
   });
   return row ? mapStoredCommand(row) : null;
 }
 
-export async function findCheckoutCommandByPayment(db: DbClient, orderPaymentId: number) {
-  const row = await db.checkoutCommand.findFirst({
+export async function findCommissionCheckoutCommandByPayment(
+  db: DbClient,
+  orderPaymentId: number,
+) {
+  const row = await db.commissionCheckoutCommand.findFirst({
     where: { orderPaymentId },
     orderBy: { createdAt: 'asc' },
     select: commandResultSelect,
@@ -57,13 +65,13 @@ export async function findCheckoutCommandByPayment(db: DbClient, orderPaymentId:
   return row ? mapStoredCommand(row) : null;
 }
 
-export function saveCheckoutCommand(
+export function saveCommissionCheckoutCommand(
   db: DbClient,
-  input: CheckoutInput,
+  input: CommissionCheckoutInput,
   payloadHash: string,
-  result: Omit<CheckoutResult, 'replayed'>,
+  result: Omit<CommissionCheckoutResult, 'replayed'>,
 ) {
-  return db.checkoutCommand.create({
+  return db.commissionCheckoutCommand.create({
     data: {
       commandKey: input.commandKey,
       payloadHash,

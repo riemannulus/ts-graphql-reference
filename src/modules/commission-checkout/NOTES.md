@@ -1,4 +1,4 @@
-# Ledger checkout PoC findings
+# Commission checkout ledger PoC findings
 
 > **PROTOTYPE — delete or absorb after review.** This branch answers an
 > architecture question. It is not a production payment implementation or a
@@ -11,7 +11,7 @@ interface while atomically changing several independently owned models. The
 implemented interface is:
 
 ```ts
-checkout.payOrder({ orderPaymentId, actorId, commandKey })
+commissionCheckout.complete({ orderPaymentId, actorId, commandKey })
   -> { orderId, orderPaymentId, contractId, reservationId, replayed }
 ```
 
@@ -23,12 +23,12 @@ A forced Contract failure rolls all of those changes back.
 
 The interface stayed deep: callers supply three scalars and do not know owner
 write order, lock order, lot allocation, reservation binding, transaction
-handling, or replay mechanics. Those details remain behind checkout's
+handling, or replay mechanics. Those details remain behind commission checkout's
 read → plan → apply service.
 
 ## Dependency result
 
-`checkout.service.ts` directly imports the participating owner repos and passes
+`commission-checkout.service.ts` directly imports the participating owner repos and passes
 the same transaction handle as their first argument. Its cross-module edge is
 narrowed by dependency-cruiser to the five reviewed repos plus
 `financial-ledger.core` planning. `financial-ledger` has no product imports and
@@ -37,13 +37,14 @@ key. The product-owned `OrderFinancialLink` points to the generic financial
 reservation.
 
 Run `pnpm check:graph` to enforce the import rules and `pnpm graph:modules` to
-regenerate both dependency SVGs. The overview shows the one-way checkout → owner
+regenerate both dependency SVGs. The overview shows the one-way
+commission-checkout → owner
 edges explicitly.
 
 ## Transaction capability and boundary enforcement
 
-Checkout opens the transaction and hands its `$tx` directly to owner repo reads
-and `apply*` executors. `checkout.core.planCheckout` describes the reservation,
+Commission checkout opens the transaction and hands its `$tx` directly to owner repo reads
+and `apply*` executors. `commission-checkout.core.planCommissionCheckout` describes the reservation,
 Contract, paid Order, and occupied slot as pure data; the service adds the
 financial lot-allocation plan and the repos execute those plans mechanically.
 Owner repos never open a transaction or choose a database handle. The rollback
@@ -77,11 +78,11 @@ proof needs no injected writer or module mock.
 
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app pnpm prisma:generate
-pnpm test src/tests/modules/checkout/checkout.core.test.ts
-pnpm test src/tests/modules/checkout/checkout.service.test.ts
+pnpm test src/tests/modules/commission-checkout/commission-checkout.core.test.ts
+pnpm test src/tests/modules/commission-checkout/commission-checkout.service.test.ts
 pnpm test src/tests/e2e/graphql.test.ts
-CHECKOUT_RACE_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app \
-  pnpm test src/tests/integrations/checkout-concurrency.postgres.test.ts
+COMMISSION_CHECKOUT_RACE_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app \
+  pnpm test src/tests/integrations/commission-checkout-concurrency.postgres.test.ts
 pnpm check:graph
 ```
 
@@ -90,7 +91,7 @@ pnpm check:graph
 The initial architecture and integrity reviews both requested changes. The
 revision serializes command keys, uses READ COMMITTED after lock waits, derives
 replay results through product relations, enforces ledger conservation in the
-database, and narrows checkout's direct imports to owner plan/repo APIs. Final
+database, and narrows commission-checkout's direct imports to owner plan/repo APIs. Final
 reviewer verdicts are recorded in the PR description.
 
 The branch should be absorbed only after the omitted production concerns have

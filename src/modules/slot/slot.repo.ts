@@ -7,7 +7,7 @@ export class CommissionSlotNotFoundError extends DomainError {
   }
 }
 
-export async function findSlotForCheckout(db: ReadDbClient, id: number) {
+export async function loadCommissionCheckoutSlot(db: ReadDbClient, id: number) {
   const row = await db.commissionSlot.findUnique({
     where: { id },
     select: { id: true, workerId: true, state: true },
@@ -16,7 +16,7 @@ export async function findSlotForCheckout(db: ReadDbClient, id: number) {
   return { slotId: row.id, workerId: row.workerId, state: row.state };
 }
 
-export async function applySlotOccupation(
+export async function applyCommissionCheckoutSlotOccupation(
   db: DbClient,
   input: { slotId: number; workerId: number },
 ): Promise<void> {

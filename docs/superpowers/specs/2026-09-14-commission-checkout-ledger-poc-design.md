@@ -1,4 +1,4 @@
-# Ledger Checkout PoC Design
+# Commission Checkout Ledger PoC Design
 
 ## Question
 
@@ -18,7 +18,7 @@ The PoC implements one persisted vertical path exposed as a GraphQL mutation:
 1. Seed a commission type, an available slot, a buyer, and a funded POINT
    account through test fixtures.
 2. Prepare an Order and OrderPayment before any Contract exists.
-3. Call `checkout.payOrder` with a caller-supplied idempotency key.
+3. Call `commissionCheckout.complete` with a caller-supplied idempotency key.
 4. Reserve POINT into a reservation-specific ESCROW account.
 5. Create one Contract, mark the Order paid, confirm the slot, and persist the
    replayable command result in the same database transaction.
@@ -32,33 +32,34 @@ entries, outbox delivery, and production migration are outside this probe.
 ## Modules and seams
 
 The modules are `commission-type`, `order`, `financial-ledger`, `contract`,
-`slot`, and `checkout`. `checkout` owns the cross-owner orchestration and follows
-Crepe's `read → decide → execute` rule: it reads through owner repos, creates a
-pure checkout plan in core, and applies that plan through owner repo executors.
-`services.ts` creates the checkout service once and exposes it to GraphQL. This
-adds the following sanctioned compile-time edges:
+`slot`, and `commission-checkout`. `commission-checkout` owns the cross-owner
+orchestration and follows Crepe's `read → decide → execute` rule: it reads
+through owner repos, creates a pure commission-checkout plan in core, and
+applies that plan through owner repo executors. `services.ts` creates the
+commission-checkout service once and exposes it to GraphQL. This adds the
+following sanctioned compile-time edges:
 
 ```text
-services -> checkout
-checkout -> commission-type.repo | order.repo | financial-ledger.{core,repo} | contract.repo | slot.repo
+services -> commission-checkout
+commission-checkout -> commission-type.repo | order.repo | financial-ledger.{core,repo} | contract.repo | slot.repo
 financial-ledger -> no product module
 ```
 
 The dependency-cruiser allowlist and generated module graph encode these edges.
-Checkout may reach only the listed owner plan/repo files; owner services,
+The commission-checkout module may reach only the listed owner plan/repo files; owner services,
 delivery, and arbitrary implementation files remain forbidden. An import from
 `financial-ledger` to Order/Contract/commission-type/slot must fail
 `pnpm check:graph`.
 
-The checkout interface has one deep operation:
+The commission-checkout interface has one deep operation:
 
 ```ts
-checkout.payOrder({ orderPaymentId, actorId, commandKey })
+commissionCheckout.complete({ orderPaymentId, actorId, commandKey })
   -> { orderId, orderPaymentId, contractId, reservationId, replayed }
 ```
 
 Callers need not know the lock order, funding allocations, owner write order,
-or rollback mechanics. Checkout opens the transaction and passes that same
+or rollback mechanics. Commission checkout opens the transaction and passes that same
 handle as the first argument to every owner repo call. Repos never choose a DB
 handle or open a nested transaction.
 
@@ -82,13 +83,13 @@ The schema uses integer POINT amounts and these logical records:
 - `OrderFinancialLink`: owned on the product side, unique in both
   `orderPaymentId` and `reservationId` directions.
 - `Contract`: the formed commission, with unique `orderId`.
-- `CheckoutCommand`: unique command key, payload hash, and OrderPayment
+- `CommissionCheckoutCommand`: commission-checkout-owned command key, payload hash, and OrderPayment
   reference. Replay derives reservation and Contract identifiers through the
   product-owned relations, so unrelated result identifiers cannot be stored.
 
 The financial models contain no `orderId`, `contractId`, `commissionTypeId`, or
 `slotId`. The financial module validates holder, currency, amount, and remaining
-lots for the opaque binding derived by checkout. The Order module owns and
+lots for the opaque binding derived by commission checkout. The Order module owns and
 writes `OrderFinancialLink` after the reservation plan is applied.
 
 For the PoC, balance is reconstructed from available lot remainders and the
@@ -98,24 +99,24 @@ they are not needed to answer the module-seam question.
 
 ## Transaction and concurrency
 
-`checkout.payOrder` opens one READ COMMITTED `uow.serialized` transaction. Lock
+`commissionCheckout.complete` opens one READ COMMITTED `uow.serialized` transaction. Lock
 namespaces are appended for `orderPayment`, `financialHolder`,
-`commissionSlot`, and the hashed `checkoutCommand` key. The existing global
+`commissionSlot`, and the hashed `commissionCheckoutCommand` key. The existing global
 ordering prevents deadlocks. READ COMMITTED is intentional: a waiter acquires
 the command lock and then observes the winner's committed command instead of a
 snapshot taken before the wait. The service also compares the buyer, slot, and
 holder found after locking with the pre-transaction lock targets and aborts on
 any reassignment. Inside the transaction it:
 
-1. claims or replays the checkout command;
+1. claims or replays the commission-checkout command;
 2. reads payment, buyer, offer, slot, holder, account, and lot facts through the
    owner repos;
-3. builds a pure checkout plan and financial allocation plan;
+3. builds a pure commission-checkout plan and financial allocation plan;
 4. applies the reservation, Contract, paid Order, occupied slot, and command
    result through owner repo executors.
 
 Every owner repo receives the same Prisma transaction handle directly from the
-checkout service. All calls are awaited. A thrown owner error aborts the entire
+commission-checkout service. All calls are awaited. A thrown owner error aborts the entire
 transaction. Database uniqueness
 on Contract order, OrderPayment link, reservation binding, and command key backs
 the application rules. Deferred transfer checks also require the exact
@@ -149,7 +150,7 @@ error handling.
 
 The PoC is accepted when the following checks pass:
 
-- A GraphQL checkout moves the requested POINT to one generic ESCROW
+- A GraphQL commission checkout moves the requested POINT to one generic ESCROW
   reservation and atomically creates exactly one Contract, paid OrderPayment,
   paid Order, confirmed slot, product-owned financial link, and command result.
 - A forced Contract write failure leaves every record and lot in its prepayment

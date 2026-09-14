@@ -149,7 +149,7 @@ model CommissionType {
   @@index([workerId])
 }
 
-/// PROTOTYPE — capacity reserved by an Order and occupied when checkout commits.
+/// PROTOTYPE — capacity reserved by an Order and occupied when commission checkout commits.
 model CommissionSlot {
   id       Int     @id @default(autoincrement())
   workerId Int
@@ -192,7 +192,7 @@ model OrderPayment {
   currency      String              @default("POINT")
   state         String              @default("PENDING")
   financialLink OrderFinancialLink?
-  commands      CheckoutCommand[]
+  commissionCheckoutCommands CommissionCheckoutCommand[]
   createdAt     DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime            @updatedAt @db.Timestamptz(6)
 
@@ -293,7 +293,7 @@ model OrderFinancialLink {
   reservation    FinancialReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
 }
 
-/// PROTOTYPE — a formed commission. There is no Contract before checkout.
+/// PROTOTYPE — a formed commission. There is no Contract before commission checkout.
 model Contract {
   id        Int               @id @default(autoincrement())
   orderId   Int               @unique
@@ -310,10 +310,12 @@ model Contract {
 
 /// PROTOTYPE — a replay key. Result ids are derived through OrderPayment's
 /// product-owned reservation link and Order's Contract relation.
-model CheckoutCommand {
+model CommissionCheckoutCommand {
   commandKey     String               @id
   payloadHash    String
   orderPaymentId Int
   orderPayment   OrderPayment         @relation(fields: [orderPaymentId], references: [id], onDelete: Restrict)
   createdAt      DateTime             @default(now()) @db.Timestamptz(6)
+
+  @@map("CheckoutCommand")
 }
