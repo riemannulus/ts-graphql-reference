@@ -1,4 +1,5 @@
 import type { Db } from './db/db.js';
+import { createCheckoutComposition } from './composition/checkout-composition.js';
 import { FLAGS } from './flags/flag-registry.js';
 import { type Clock, systemClock } from './foundation/clock.js';
 import { type GoogleOAuthClient, stubGoogleOAuthClient } from './modules/auth/oauth.provider.js';
@@ -69,7 +70,8 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   // against the code catalog, and the catalog is bound HERE (the job delivery
   // layer is lint-banned from the flag facade, and the service sits below it).
   const featureFlag = createFeatureFlagService(db, clock, Object.keys(FLAGS));
-  return { user, point, auth, onboarding, postSearch, featureFlag };
+  const checkout = createCheckoutComposition(db);
+  return { user, point, auth, onboarding, postSearch, featureFlag, checkout };
 }
 
 /** The service container, injected into every resolver and the OAuth route. */

@@ -21,6 +21,12 @@ import { defineLocks } from './locks.js';
 export const lockKey = defineLocks({
   /** Serializes all point movement for one user (balance + charge ledger). */
   pointBalance: (userId: number) => userId,
+  /** PROTOTYPE: serializes one initial payment and its replay result. */
+  orderPayment: (orderPaymentId: number) => orderPaymentId,
+  /** PROTOTYPE: serializes all generic financial movement for one holder. */
+  financialHolder: (holderId: number) => holderId,
+  /** PROTOTYPE: serializes checkout against occupation of one commission slot. */
+  commissionSlot: (slotId: number) => slotId,
 });
 
 /** The registered lock namespaces, derived from the registry. */

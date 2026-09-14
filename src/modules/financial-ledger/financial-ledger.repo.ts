@@ -66,6 +66,9 @@ export async function applyReservation(
   allocations: readonly FinancialAllocation[],
 ) {
   for (const allocation of allocations) {
+    // Interactive transaction handles execute sequentially, and each guarded
+    // update must complete before the next allocation is applied.
+    // eslint-disable-next-line no-await-in-loop
     const result = await db.pointLot.updateMany({
       where: { id: allocation.lotId, accountId, remainingAmount: allocation.assumedRemainingAmount },
       data: { remainingAmount: { decrement: allocation.amount } },
