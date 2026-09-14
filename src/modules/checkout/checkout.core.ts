@@ -1,25 +1,80 @@
 import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
-import type {
-  CheckoutFacts,
-  ContractFormation,
-  PaymentIntent,
-  ReservationReceipt,
-} from './checkout.port.js';
+
+export interface CheckoutInput {
+  orderPaymentId: number;
+  actorId: number;
+  commandKey: string;
+}
+
+export interface OrderPaymentFacts {
+  orderId: number;
+  orderPaymentId: number;
+  buyerId: number;
+  commissionTypeId: number;
+  slotId: number;
+  referenceId: string;
+  orderAmount: number;
+  paymentAmount: number;
+  orderCurrency: string;
+  paymentCurrency: string;
+  orderState: string;
+  paymentState: string;
+}
+
+export interface CheckoutFacts extends OrderPaymentFacts {
+  commissionWorkerId: number;
+  commissionPrice: number;
+  slotWorkerId: number;
+  slotState: string;
+  financialHolderId: number;
+}
+
+export interface FinancialRequest {
+  referenceId: string;
+  bindingNamespace: string;
+  bindingKey: string;
+  holderId: number;
+  purpose: 'COMMISSION_PAYMENT';
+  currency: 'POINT';
+  amount: number;
+}
+
+export interface CheckoutPlan {
+  financialRequest: FinancialRequest;
+  contract: {
+    orderId: number;
+    buyerId: number;
+    workerId: number;
+  };
+  paidOrder: {
+    orderId: number;
+    orderPaymentId: number;
+  };
+  occupiedSlot: {
+    slotId: number;
+    workerId: number;
+  };
+}
+
+export interface CheckoutResult {
+  orderId: number;
+  orderPaymentId: number;
+  contractId: number;
+  reservationId: number;
+  replayed: boolean;
+}
+
+type EconomicResult = Omit<CheckoutResult, 'replayed'>;
 
 interface ExistingCheckout {
   payloadHash: string;
   buyerId: number;
-  result: {
-    orderId: number;
-    orderPaymentId: number;
-    contractId: number;
-    reservationId: number;
-  };
+  result: EconomicResult;
 }
 
 export type CheckoutStartPlan =
   | { kind: 'PROCEED' }
-  | { kind: 'REPLAY'; result: ExistingCheckout['result']; saveAlias: boolean };
+  | { kind: 'REPLAY'; result: EconomicResult; saveAlias: boolean };
 
 export class CheckoutActorError extends DomainError {
   constructor() {
@@ -36,12 +91,6 @@ export class CheckoutStateError extends DomainError {
 export class CheckoutIdempotencyError extends DomainError {
   constructor() {
     super('Checkout command key was already used for a different payload', 'IDEMPOTENCY_MISMATCH');
-  }
-}
-
-export class ReceiptMismatchError extends DomainError {
-  constructor() {
-    super('Financial reservation receipt does not match the payment intent', 'RECEIPT_MISMATCH');
   }
 }
 
@@ -89,10 +138,7 @@ export function planCheckoutStart(
   return { kind: 'PROCEED' };
 }
 
-export function validatePaymentIntent(
-  facts: CheckoutFacts,
-  input: { actorId: number },
-): PaymentIntent {
+export function planCheckout(facts: CheckoutFacts, input: { actorId: number }): CheckoutPlan {
   assertCheckoutActor(facts.buyerId, input.actorId);
   if (facts.orderState !== 'REQUESTED' || facts.paymentState !== 'PENDING') {
     throw new CheckoutStateError('Order and payment must both be pending');
@@ -111,12 +157,8 @@ export function validatePaymentIntent(
   ) {
     throw new CheckoutStateError('Order, payment, and commission price must match');
   }
+
   return {
-    orderId: facts.orderId,
-    orderPaymentId: facts.orderPaymentId,
-    buyerId: facts.buyerId,
-    workerId: facts.commissionWorkerId,
-    slotId: facts.slotId,
     financialRequest: {
       referenceId: facts.referenceId,
       bindingNamespace: 'order-payment',
@@ -126,27 +168,18 @@ export function validatePaymentIntent(
       currency: 'POINT',
       amount: facts.paymentAmount,
     },
-  };
-}
-
-export function buildContractFormation(
-  intent: PaymentIntent,
-  receipt: ReservationReceipt,
-): ContractFormation {
-  const request = intent.financialRequest;
-  if (
-    receipt.referenceId !== request.referenceId ||
-    receipt.bindingNamespace !== request.bindingNamespace ||
-    receipt.bindingKey !== request.bindingKey ||
-    receipt.holderId !== request.holderId ||
-    receipt.currency !== request.currency ||
-    receipt.amount !== request.amount
-  ) {
-    throw new ReceiptMismatchError();
-  }
-  return {
-    orderId: intent.orderId,
-    buyerId: intent.buyerId,
-    workerId: intent.workerId,
+    contract: {
+      orderId: facts.orderId,
+      buyerId: facts.buyerId,
+      workerId: facts.commissionWorkerId,
+    },
+    paidOrder: {
+      orderId: facts.orderId,
+      orderPaymentId: facts.orderPaymentId,
+    },
+    occupiedSlot: {
+      slotId: facts.slotId,
+      workerId: facts.commissionWorkerId,
+    },
   };
 }

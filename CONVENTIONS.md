@@ -13,7 +13,6 @@ Every module splits into explicit layers with one-way dependencies:
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
-| Transaction participant | `*.checkout.ts`              | owner-specific checkout operations | same-module core/repo, `db.ts` client types, `errors.ts` | checkout integration |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP); `jobs/*.job.ts` (Agenda) | GraphQL types + `ctx`, Fastify req/reply, or an Agenda job | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`), job-registry + service tests |
 
 ```
@@ -34,14 +33,6 @@ receives a flag value as passed-in data). A service may import the `FlagReader`
 *type* but not the OpenFeature SDK or the reader factory; `builder.ts` cannot
 import feature modules, and `import/no-cycle` keeps the file graph acyclic.
 
-A `*.checkout.ts` transaction participant is an owner module's narrow adapter
-for one cross-module checkout. It receives the composition root's transaction,
-delegates only to the same module's core/repo operations, and never opens a
-transaction or takes a lock. Dependency-cruiser makes
-`composition/checkout-composition.ts` its sole importer and gives that
-composition file an exact owner allowlist; oxlint applies the participant layer
-restrictions by filename.
-
 The **shape** of the module graph is checked separately by dependency-cruiser
 (`pnpm check:graph`, rules in `.dependency-cruiser.mjs`), which sees what
 per-file lint cannot:
@@ -50,8 +41,10 @@ per-file lint cannot:
   is the sanctioned cycle breaker (`builder.ts` → `context.ts`,
   `context.ts` → `services.ts`), so only value edges count.
 - **Cross-module dependencies come from an explicit allowlist** — today
-  `onboarding → {user, post}`, `search → post`, and `auth → user` (types
-  only; the service arrives injected). Two modules can entangle with no
+  `onboarding → {user, post}`, `search → post`, `auth → user` (types
+  only; the service arrives injected), and `checkout → {commission-type,
+  contract, financial-ledger, order, slot}` (reviewed repo/core files only).
+  Two modules can entangle with no
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
   which `import/no-cycle` cannot see — the allowlist can, and since its
   sanctioned edges form a DAG by construction, module-level acyclicity holds
@@ -92,6 +85,13 @@ See `point.core.ts` (`planSpend`) / `point.write.repo.ts` (`applySpendPlan`) /
 `point.service.ts` (`spend`) for the blueprint, and `user.state.ts`
 (`planTransition`) / `user.repo.ts` (the CAS `transitionStatus`) /
 `user.service.ts` (`changeStatus`) for the single-row degenerate case.
+
+A composite transaction follows the same rule without adding owner-specific
+port adapters: its service imports the reviewed owner repos directly, passes the
+same transaction handle as the first argument, builds the complete plan in pure
+core functions, and calls owner `apply*` executors. Dependency-cruiser narrows
+the cross-module edge to those repo/core files and keeps every owner from
+pointing back at the composite.
 
 ### The concurrency ladder
 
@@ -684,21 +684,15 @@ distinction organizes the whole graph (`src/modules/README.md`):
   leaves.
 - **Composite modules** own a *capability* over other modules' nouns, hold
   few or no tables of their own, and compose owners one way from above:
-  `onboarding` (a cross-module use-case), `search` (an external index
+  `onboarding` and `checkout` (cross-module use-cases), `search` (an external index
   hydrated through the post repo), `auth` (an external protocol over the
   injected user service). Nothing imports a composite — it is reached only
   at the composition points (`graphql/schema.ts`, `services.ts`, `app.ts`,
-  `scheduler/scheduler.ts`, or a reviewed adapter under `composition/`) — and
+  `scheduler/scheduler.ts`) — and
   the graph rules keep that true
   mechanically: owners fall under the default-deny rule, each composite has
   a reaches-only rule, and everything else in `src/` is fenced by
   `modules-enter-at-composition-points`.
-
-`composition/` is reserved for adapters that bind one shared infrastructure
-capability, such as a transaction, to several owner-specific ports while keeping
-the composite module free of owner implementation imports. Each adapter needs a
-target-side sole-importer rule and an exact outbound allowlist; adding the
-directory here does not make it a general module import escape hatch.
 
 Code with no Prisma model and no domain rule is not a module at all: shared
 machinery lives in `foundation/` / `db/` / `flags/`. A "utils" or "common"

@@ -24,12 +24,13 @@ depend one way only"):
 | `onboarding → user`, `onboarding → post` | the cross-module use-case composes both modules' repo functions inside one transaction | value |
 | `search → post` | search hydrates external-index hits (ids) through the post repo | value |
 | `auth → user` | auth provisions / looks up a user, but the user service is **injected** (wired in `createServices`); importing values would bypass that seam, so this edge is `import type` only | type-only |
-| `composition → checkout, commission-type, order, financial-ledger, contract, slot` | the checkout composition adapter maps checkout-owned ports to owner implementations; it contains no business decisions | value |
+| `checkout → commission-type, order, financial-ledger, contract, slot` | checkout builds a pure plan and applies it through the five owner repos on one transaction | value |
 
 `user`, `post`, `point`, `feature-flag`, `checkout`, `commission-type`, `order`,
 `financial-ledger`, `contract`, and `slot` import no other module. In particular,
-the financial module has no product imports and checkout knows only its own
-ports. The open
+the financial module has no product imports; checkout is the one-way composite
+that imports only reviewed owner repo/core files and passes them its transaction.
+The open
 arrowhead on `auth → user` marks the type-only edge (erased at compile time);
 solid arrowheads are runtime value imports.
 

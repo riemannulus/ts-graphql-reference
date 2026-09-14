@@ -3,29 +3,25 @@ import type { Db, DbClient } from '../../db/db.js';
 import { lockKey } from '../../db/lock-registry.js';
 import type { LockKey } from '../../db/locks.js';
 import { uow } from '../../db/uow.js';
+import * as commissionTypeRepo from '../commission-type/commission-type.repo.js';
+import * as contractRepo from '../contract/contract.repo.js';
+import { planReservation, type FinancialAllocation } from '../financial-ledger/financial-ledger.core.js';
+import * as financialLedgerRepo from '../financial-ledger/financial-ledger.repo.js';
+import * as orderRepo from '../order/order.repo.js';
+import * as slotRepo from '../slot/slot.repo.js';
 import {
   assertLockedCheckoutTargets,
-  buildContractFormation,
+  planCheckout,
   planCheckoutStart,
-  validatePaymentIntent,
+  type CheckoutInput,
+  type CheckoutPlan,
+  type CheckoutResult,
 } from './checkout.core.js';
-import type {
-  CheckoutInput,
-  CheckoutPorts,
-  CheckoutResult,
-  CheckoutTransactionPorts,
-  PaymentIntent,
-} from './checkout.port.js';
 import {
   findCheckoutCommand,
   findCheckoutCommandByPayment,
   saveCheckoutCommand,
 } from './checkout.repo.js';
-
-interface CheckoutDependencies {
-  db: Db;
-  ports: CheckoutPorts;
-}
 
 interface LockedCheckoutTargets {
   buyerId: number;
@@ -40,26 +36,29 @@ interface PreparedCheckout {
   lockKeys: LockKey[];
 }
 
+interface ExecutableCheckoutPlan {
+  checkout: CheckoutPlan;
+  reservation: {
+    accountId: number;
+    allocations: FinancialAllocation[];
+  };
+}
+
 type EconomicResult = Omit<CheckoutResult, 'replayed'>;
 
-export function createCheckoutService(deps: CheckoutDependencies) {
+export function createCheckoutService(db: Db) {
   async function payOrder(input: CheckoutInput): Promise<CheckoutResult> {
-    const checkout = await prepareCheckout(deps.ports, input);
+    const checkout = await prepareCheckout(db, input);
 
-    return uow.serialized(deps.db, checkout.lockKeys, (tx) =>
-      executeCheckout(tx, deps.ports, checkout),
-    );
+    return uow.serialized(db, checkout.lockKeys, (tx) => executeCheckout(tx, checkout));
   }
 
   return { payOrder };
 }
 
-async function prepareCheckout(
-  ports: CheckoutPorts,
-  input: CheckoutInput,
-): Promise<PreparedCheckout> {
-  const orderTargets = await ports.locateOrderLockTargets(input.orderPaymentId);
-  const financialHolderId = await ports.locateFinancialHolder({
+async function prepareCheckout(db: Db, input: CheckoutInput): Promise<PreparedCheckout> {
+  const orderTargets = await orderRepo.findLockTargets(db.rw, input.orderPaymentId);
+  const financialHolderId = await financialLedgerRepo.findHolderId(db.rw, {
     namespace: 'user',
     key: String(orderTargets.buyerId),
   });
@@ -79,15 +78,13 @@ async function prepareCheckout(
 
 async function executeCheckout(
   tx: DbClient,
-  ports: CheckoutPorts,
   checkout: PreparedCheckout,
 ): Promise<CheckoutResult> {
   const replay = await replayCompletedCheckout(tx, checkout);
   if (replay) return replay;
 
-  const owner = ports.bindTransaction(tx);
-  const intent = await loadAndValidatePaymentIntent(owner, checkout);
-  const result = await applyCheckoutEffects(owner, intent);
+  const plan = await loadCheckoutPlan(tx, checkout);
+  const result = await applyCheckoutPlan(tx, plan);
 
   await saveCheckoutCommand(tx, checkout.input, checkout.payloadHash, result);
   return { ...result, replayed: false };
@@ -114,15 +111,18 @@ async function replayCompletedCheckout(
   return { ...start.result, replayed: true };
 }
 
-async function loadAndValidatePaymentIntent(
-  owner: CheckoutTransactionPorts,
+async function loadCheckoutPlan(
+  tx: DbClient,
   checkout: PreparedCheckout,
-): Promise<PaymentIntent> {
-  const payment = await owner.order.loadPayment(checkout.input.orderPaymentId);
+): Promise<ExecutableCheckoutPlan> {
   // Interactive transaction handles execute sequentially.
-  const commissionType = await owner.commissionType.load(payment.commissionTypeId);
-  const slot = await owner.slot.load(payment.slotId);
-  const financialHolderId = await owner.finance.locateHolder({
+  const payment = await orderRepo.loadPaymentFacts(tx, checkout.input.orderPaymentId);
+  const commissionType = await commissionTypeRepo.findCommissionTypeForCheckout(
+    tx,
+    payment.commissionTypeId,
+  );
+  const slot = await slotRepo.findSlotForCheckout(tx, payment.slotId);
+  const financialHolderId = await financialLedgerRepo.findHolderId(tx, {
     namespace: 'user',
     key: String(payment.buyerId),
   });
@@ -133,7 +133,7 @@ async function loadAndValidatePaymentIntent(
     financialHolderId,
   });
 
-  return validatePaymentIntent(
+  const plan = planCheckout(
     {
       ...payment,
       commissionWorkerId: commissionType.workerId,
@@ -144,27 +144,42 @@ async function loadAndValidatePaymentIntent(
     },
     checkout.input,
   );
-}
-
-async function applyCheckoutEffects(
-  owner: CheckoutTransactionPorts,
-  intent: PaymentIntent,
-): Promise<EconomicResult> {
-  const receipt = await owner.finance.reserve(intent.financialRequest);
-  const contract = await owner.contract.create(buildContractFormation(intent, receipt));
-
-  await owner.order.markPaid({
-    orderId: intent.orderId,
-    orderPaymentId: intent.orderPaymentId,
-    reservationId: receipt.reservationId,
-  });
-  await owner.slot.confirm({ slotId: intent.slotId, workerId: intent.workerId });
+  const pointWorld = await financialLedgerRepo.loadAvailablePointWorld(
+    tx,
+    plan.financialRequest.holderId,
+  );
 
   return {
-    orderId: intent.orderId,
-    orderPaymentId: intent.orderPaymentId,
-    contractId: contract.contractId,
-    reservationId: receipt.reservationId,
+    checkout: plan,
+    reservation: {
+      accountId: pointWorld.accountId,
+      allocations: planReservation(pointWorld.lots, plan.financialRequest.amount),
+    },
+  };
+}
+
+async function applyCheckoutPlan(
+  tx: DbClient,
+  plan: ExecutableCheckoutPlan,
+): Promise<EconomicResult> {
+  const reservation = await financialLedgerRepo.applyReservation(
+    tx,
+    plan.checkout.financialRequest,
+    plan.reservation.accountId,
+    plan.reservation.allocations,
+  );
+  const contract = await contractRepo.applyContractFormation(tx, plan.checkout.contract);
+  await orderRepo.applyPaidOrder(tx, {
+    ...plan.checkout.paidOrder,
+    reservationId: reservation.id,
+  });
+  await slotRepo.applySlotOccupation(tx, plan.checkout.occupiedSlot);
+
+  return {
+    orderId: plan.checkout.paidOrder.orderId,
+    orderPaymentId: plan.checkout.paidOrder.orderPaymentId,
+    contractId: contract.id,
+    reservationId: reservation.id,
   };
 }
 

@@ -1,6 +1,6 @@
 import type { DbClient } from '../../db/db.js';
 
-export async function insertContract(
+export async function applyContractFormation(
   db: DbClient,
   formation: { orderId: number; buyerId: number; workerId: number },
 ) {

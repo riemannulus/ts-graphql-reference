@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prove that one GraphQL checkout can atomically reserve POINT and form a Contract through isolated owner modules whose implementations are wired only in `checkout-composition`.
+**Goal:** Prove that one GraphQL checkout can atomically reserve POINT and form a Contract by applying a pure plan through isolated owner repos.
 
-**Architecture:** `checkout` owns one deep `payOrder` interface and purpose-specific ports. Owner modules expose transaction-participating functions; `src/composition/checkout-composition.ts` binds the shared transaction without exposing it through individual port operations, and `services.ts` wires the result once. Prisma/PGlite proves persistence, uniqueness, rollback, and replay, a real PostgreSQL test proves lock-wait behavior, and dependency-cruiser proves the import shape.
+**Architecture:** `checkout` owns one deep `payOrder` interface. Its service reads owner repos, builds a pure `CheckoutPlan`, and passes one transaction directly to owner `apply*` repo functions. `services.ts` wires the service once. Prisma/PGlite proves persistence, uniqueness, rollback, and replay, a real PostgreSQL test proves lock-wait behavior, and dependency-cruiser proves the exact repo/core import allowlist.
 
 **Tech Stack:** TypeScript 6 ESM, Pothos GraphQL, Prisma 7/PostgreSQL, PGlite, Vitest, dependency-cruiser, Graphviz, pnpm 10.33.0.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - The PoC covers initial internal POINT checkout only and remains explicitly marked throwaway.
-- `checkout` imports no owner module; `financial-ledger` imports no product module.
+- `checkout` imports only reviewed owner repo/core files; `financial-ledger` imports no product module.
 - Financial tables contain no Order, Contract, commission-type, or slot foreign key.
 - All internal effects and the replayable command result commit in one `uow.serialized` transaction.
 - Existing untracked files in the primary checkout are out of scope and remain untouched.
@@ -103,25 +103,22 @@ git add prisma src/tests/integrations/schema-constraints.test.ts
 git commit -m "🧪 결제 원장 PoC 모델과 제약 추가"
 ```
 
-### Task 2: Implement owner modules and checkout ports
+### Task 2: Implement owner repos and checkout plans
 
 **Files:**
-- Create: `src/modules/commission-type/commission-type.checkout.ts`
+- Create: `src/modules/commission-type/commission-type.repo.ts`
 - Create: `src/modules/order/order.core.ts`
 - Create: `src/modules/order/order.repo.ts`
-- Create: `src/modules/order/order.checkout.ts`
 - Create: `src/modules/financial-ledger/financial-ledger.core.ts`
 - Create: `src/modules/financial-ledger/financial-ledger.repo.ts`
-- Create: `src/modules/financial-ledger/financial-ledger.checkout.ts`
-- Create: `src/modules/contract/contract.checkout.ts`
-- Create: `src/modules/slot/slot.checkout.ts`
-- Create: `src/modules/checkout/checkout.port.ts`
+- Create: `src/modules/contract/contract.repo.ts`
+- Create: `src/modules/slot/slot.repo.ts`
 - Create: `src/modules/checkout/checkout.core.ts`
 - Test: `src/tests/modules/checkout/checkout.core.test.ts`
 
 **Interfaces:**
 - Consumes: generated Prisma types and `DbClient`.
-- Produces: `CheckoutPorts`, `PaymentIntent`, `ReservationRequest`, `ReservationReceipt`, `ContractFormation`, `CheckoutResult`, `validatePaymentIntent()`, and owner transaction functions used only by composition.
+- Produces: `CheckoutPlan`, `CheckoutResult`, `planCheckout()`, and owner repo `apply*` executors.
 
 - [ ] **Step 1: Write failing pure-core tests**
 
@@ -130,17 +127,12 @@ and verified formation DTO construction. Each test names the production branch
 whose removal it catches.
 
 ```ts
-expect(() => validatePaymentIntent(facts, { actorId: 2 })).toThrow(CheckoutActorError);
-expect(validatePaymentIntent(facts, { actorId: 1 })).toEqual({
-  orderId: 10,
-  orderPaymentId: 20,
-  holderBinding: { namespace: 'user', key: '1' },
-  financialHolderId: 50,
+expect(() => planCheckout(facts, { actorId: 2 })).toThrow(CheckoutActorError);
+expect(planCheckout(facts, { actorId: 1 })).toEqual({
   financialRequest: { referenceId: 'order-payment:20', currency: 'POINT', amount: 500 },
-  slotId: 30,
-  commissionTypeId: 40,
-  buyerId: 1,
-  workerId: 2,
+  contract: { orderId: 10, buyerId: 1, workerId: 2 },
+  paidOrder: { orderId: 10, orderPaymentId: 20 },
+  occupiedSlot: { slotId: 30, workerId: 2 },
 });
 ```
 
@@ -152,9 +144,9 @@ Expected: FAIL because the checkout core and types do not exist.
 
 - [ ] **Step 3: Implement minimal pure DTO validation**
 
-`checkout.core.ts` accepts plain facts and returns a frozen-by-convention intent;
-it imports only checkout port types and `foundation/errors.ts`. Owner checkout
-functions load/validate or mechanically write through their own repo/core.
+`checkout.core.ts` accepts plain facts and returns a frozen-by-convention plan;
+it imports only `foundation/errors.ts`. Owner repo functions read state or apply
+the plan mechanically on the caller's transaction.
 
 - [ ] **Step 4: Run the core test and verify GREEN**
 
@@ -166,27 +158,26 @@ Expected: PASS.
 
 ```bash
 git add src/modules src/tests/modules/checkout
-git commit -m "✨ checkout 포트와 도메인별 결제 기능 추가"
+git commit -m "✨ checkout 계획과 도메인별 repo 실행기 추가"
 ```
 
 ### Task 3: Compose and atomically execute checkout
 
 **Files:**
 - Create: `src/modules/checkout/checkout.service.ts`
-- Create: `src/composition/checkout-composition.ts`
 - Modify: `src/db/lock-registry.ts`
 - Modify: `src/services.ts`
 - Test: `src/tests/modules/checkout/checkout.service.test.ts`
 
 **Interfaces:**
-- Consumes: `CheckoutPorts`, `Db`, `uow.serialized`, and the owner transaction functions from Task 2.
-- Produces: `createCheckoutService({ db, ports }).payOrder(input)` and `createCheckoutComposition(db)`. The Order port also provides `locateLockTargets(db.rw, orderPaymentId)` with `{ slotId, financialHolderId }`; the same facts are re-read and validated inside the transaction.
+- Consumes: `Db`, `uow.serialized`, `CheckoutPlan`, and the owner repos from Task 2.
+- Produces: `createCheckoutService(db).payOrder(input)`. Order and finance repos locate lock targets on `db.rw`; the same facts are re-read and validated inside the transaction.
 
 - [ ] **Step 1: Write the failing atomic-flow test**
 
-Use real PGlite and real owner adapters. Seed the world through Prisma, call the
+Use real PGlite and real owner repos. Seed the world through Prisma, call the
 wished-for checkout interface, and assert literal row counts and states. Add a
-second test with only the Contract port replaced by a throwing adapter; assert
+second test with a temporary DB trigger that rejects the real Contract insert; assert
 zero reservations/transfers/contracts/links/commands and unchanged lot, Order,
 payment, and slot.
 
@@ -242,7 +233,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/composition src/db/lock-registry.ts src/modules/checkout src/services.ts src/tests/modules/checkout
+git add src/db/lock-registry.ts src/modules src/services.ts src/tests/modules/checkout
 git commit -m "✨ 최초 결제를 단일 트랜잭션으로 조립"
 ```
 
@@ -250,7 +241,7 @@ git commit -m "✨ 최초 결제를 단일 트랜잭션으로 조립"
 
 **Files:**
 - Modify: `src/modules/checkout/checkout.service.ts`
-- Modify: owner checkout/repo files from Task 2 as tests require
+- Modify: owner repo files from Task 2 as tests require
 - Modify: `src/tests/modules/checkout/checkout.service.test.ts`
 
 **Interfaces:**
@@ -377,7 +368,7 @@ git commit -m "✨ checkout GraphQL과 의존성 그래프 추가"
 - [ ] **Step 1: Document the probe result**
 
 Record the question, run commands, confirmed properties, complexity that leaked
-through ports, deliberate omissions, and absorb/delete decision. Mark every PoC
+through direct owner repo Plan/Apply calls, deliberate omissions, and absorb/delete decision. Mark every PoC
 file as experimental in NOTES and link it from the repository README.
 
 - [ ] **Step 2: Run all required verification**

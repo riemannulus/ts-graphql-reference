@@ -1,11 +1,13 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createCheckoutComposition } from '../../composition/checkout-composition.js';
+import { Client } from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPrismaClient } from '../../db/prisma.js';
 import { CheckoutIdempotencyError } from '../../modules/checkout/checkout.core.js';
-import type { CheckoutTransactionPorts } from '../../modules/checkout/checkout.port.js';
+import { createCheckoutService } from '../../modules/checkout/checkout.service.js';
 import { resetDb } from '../support/helpers.js';
 
 const databaseUrl = process.env.CHECKOUT_RACE_DATABASE_URL;
+const CONTRACT_BARRIER_CLASS_ID = 2_000_000_000;
+const CONTRACT_BARRIER_OBJECT_ID = 2_000_000_000;
 
 function connectionUrl(applicationName: string): string {
   const url = new URL(databaseUrl!);
@@ -17,11 +19,36 @@ const first = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-firs
 const second = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-second')) : null;
 const monitor = databaseUrl ? createPrismaClient(connectionUrl('checkout-race-monitor')) : null;
 
+beforeAll(async () => {
+  if (!first) return;
+  await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS checkout_test_contract_barrier ON "Contract"');
+  await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS checkout_test_contract_barrier()');
+  await first.$executeRawUnsafe(`
+    CREATE FUNCTION checkout_test_contract_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF current_setting('application_name') = 'checkout-race-first' THEN
+        PERFORM pg_advisory_xact_lock(${CONTRACT_BARRIER_CLASS_ID}, ${CONTRACT_BARRIER_OBJECT_ID});
+      END IF;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await first.$executeRawUnsafe(`
+    CREATE TRIGGER checkout_test_contract_barrier
+    BEFORE INSERT ON "Contract"
+    FOR EACH ROW EXECUTE FUNCTION checkout_test_contract_barrier()
+  `);
+});
+
 beforeEach(async () => {
   if (first) await resetDb(first);
 });
 
 afterAll(async () => {
+  if (first) {
+    await first.$executeRawUnsafe('DROP TRIGGER IF EXISTS checkout_test_contract_barrier ON "Contract"');
+    await first.$executeRawUnsafe('DROP FUNCTION IF EXISTS checkout_test_contract_barrier()');
+  }
   await Promise.all([first?.$disconnect(), second?.$disconnect(), monitor?.$disconnect()]);
 });
 
@@ -53,24 +80,51 @@ async function waitForSecondAdvisoryLockWait(): Promise<void> {
   throw new Error('second checkout never waited on an advisory lock');
 }
 
-function contractBarrier() {
-  let markReached!: () => void;
-  let release!: () => void;
-  const reached = new Promise<void>((resolve) => {
-    markReached = resolve;
-  });
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+async function waitForContractBarrier(): Promise<void> {
+  const clients = requireClients();
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop -- bounded polling proves the DB-trigger barrier
+    const [state] = await clients.monitor.$queryRaw<Array<{ waiting: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_locks lock
+        JOIN pg_stat_activity activity ON activity.pid = lock.pid
+        WHERE lock.locktype = 'advisory'
+          AND lock.classid = 2000000000
+          AND lock.objid = 2000000000
+          AND NOT lock.granted
+          AND activity.application_name = 'checkout-race-first'
+      ) AS waiting
+    `;
+    if (state?.waiting) return;
+    // eslint-disable-next-line no-await-in-loop -- bounded polling proves the DB-trigger barrier
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('first checkout never reached the Contract insert barrier');
+}
+
+async function contractBarrier() {
+  const blocker = new Client({ connectionString: connectionUrl('checkout-race-barrier') });
+  await blocker.connect();
+  await blocker.query('SELECT pg_advisory_lock($1, $2)', [
+    CONTRACT_BARRIER_CLASS_ID,
+    CONTRACT_BARRIER_OBJECT_ID,
+  ]);
+  let released = false;
   return {
-    reached,
-    release,
-    decorate: (next: CheckoutTransactionPorts['contract']['create']) =>
-      async (formation: Parameters<CheckoutTransactionPorts['contract']['create']>[0]) => {
-        markReached();
-        await released;
-        return next(formation);
-      },
+    waitUntilReached: waitForContractBarrier,
+    release: async () => {
+      if (released) return;
+      released = true;
+      try {
+        await blocker.query('SELECT pg_advisory_unlock($1, $2)', [
+          CONTRACT_BARRIER_CLASS_ID,
+          CONTRACT_BARRIER_OBJECT_ID,
+        ]);
+      } finally {
+        await blocker.end();
+      }
+    },
   };
 }
 
@@ -121,73 +175,73 @@ describe.skipIf(!databaseUrl)('checkout concurrency on PostgreSQL', () => {
       commandKey: 'same-payment-key',
     };
 
-    const barrier = contractBarrier();
-    const firstRequest = createCheckoutComposition(
-      { rw: clients.first, ro: clients.first },
-      { decorateContractCreate: barrier.decorate },
-    ).payOrder(input);
-    await barrier.reached;
-    const secondRequest = createCheckoutComposition({ rw: clients.second, ro: clients.second })
-      .payOrder(input);
-    const waitError = await waitForSecondAdvisoryLockWait().then(
-      () => null,
-      (error: unknown) => error,
-    );
-    barrier.release();
-    const results = await Promise.all([firstRequest, secondRequest]);
-    if (waitError) throw waitError;
+    const barrier = await contractBarrier();
+    try {
+      const firstRequest = createCheckoutService({ rw: clients.first, ro: clients.first }).payOrder(input);
+      await barrier.waitUntilReached();
+      const secondRequest = createCheckoutService({ rw: clients.second, ro: clients.second }).payOrder(input);
+      const waitError = await waitForSecondAdvisoryLockWait().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await barrier.release();
+      const results = await Promise.all([firstRequest, secondRequest]);
+      if (waitError) throw waitError;
 
-    expect(results.map((result) => result.replayed).toSorted((a, b) => Number(a) - Number(b))).toEqual([
-      false,
-      true,
-    ]);
-    expect(results.map(({ replayed: _replayed, ...result }) => result)).toEqual([
-      expect.objectContaining({ orderPaymentId: world.payment.id }),
-      expect.objectContaining({ orderPaymentId: world.payment.id }),
-    ]);
-    expect(results[0].contractId).toBe(results[1].contractId);
-    expect(results[0].reservationId).toBe(results[1].reservationId);
-    expect(await clients.first.financialReservation.count()).toBe(1);
-    expect(await clients.first.contract.count()).toBe(1);
-    expect(await clients.first.checkoutCommand.count()).toBe(1);
+      expect(results.map((result) => result.replayed).toSorted((a, b) => Number(a) - Number(b))).toEqual([
+        false,
+        true,
+      ]);
+      expect(results.map(({ replayed: _replayed, ...result }) => result)).toEqual([
+        expect.objectContaining({ orderPaymentId: world.payment.id }),
+        expect.objectContaining({ orderPaymentId: world.payment.id }),
+      ]);
+      expect(results[0].contractId).toBe(results[1].contractId);
+      expect(results[0].reservationId).toBe(results[1].reservationId);
+      expect(await clients.first.financialReservation.count()).toBe(1);
+      expect(await clients.first.contract.count()).toBe(1);
+      expect(await clients.first.checkoutCommand.count()).toBe(1);
+    } finally {
+      await barrier.release();
+    }
   });
 
   it('classifies a concurrently reused command key as an idempotency mismatch', async () => {
     const clients = requireClients();
     const left = await seedCheckoutWorld('left');
     const right = await seedCheckoutWorld('right');
-    const barrier = contractBarrier();
-    const firstRequest = createCheckoutComposition(
-      { rw: clients.first, ro: clients.first },
-      { decorateContractCreate: barrier.decorate },
-    ).payOrder({
+    const barrier = await contractBarrier();
+    try {
+      const firstRequest = createCheckoutService({ rw: clients.first, ro: clients.first }).payOrder({
         orderPaymentId: left.payment.id,
         actorId: left.buyer.id,
         commandKey: 'shared-command-key',
       });
-    await barrier.reached;
-    const secondRequest = createCheckoutComposition({ rw: clients.second, ro: clients.second })
-      .payOrder({
+      await barrier.waitUntilReached();
+      const secondRequest = createCheckoutService({ rw: clients.second, ro: clients.second }).payOrder({
         orderPaymentId: right.payment.id,
         actorId: right.buyer.id,
         commandKey: 'shared-command-key',
       });
-    const waitError = await waitForSecondAdvisoryLockWait().then(
-      () => null,
-      (error: unknown) => error,
-    );
-    barrier.release();
-    const outcomes = await Promise.allSettled([firstRequest, secondRequest]);
-    if (waitError) throw waitError;
+      const waitError = await waitForSecondAdvisoryLockWait().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await barrier.release();
+      const outcomes = await Promise.allSettled([firstRequest, secondRequest]);
+      if (waitError) throw waitError;
 
-    const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
-    const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]!.reason).toBeInstanceOf(CheckoutIdempotencyError);
-    expect(await clients.first.financialReservation.count()).toBe(1);
-    expect(await clients.first.contract.count()).toBe(1);
-    expect(await clients.first.checkoutCommand.count()).toBe(1);
+      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]!.reason).toBeInstanceOf(CheckoutIdempotencyError);
+      expect(await clients.first.financialReservation.count()).toBe(1);
+      expect(await clients.first.contract.count()).toBe(1);
+      expect(await clients.first.checkoutCommand.count()).toBe(1);
+    } finally {
+      await barrier.release();
+    }
   });
 
   it('rejects a reservation basis update while its first transfer is uncommitted', async () => {

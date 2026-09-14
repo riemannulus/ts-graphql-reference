@@ -1,5 +1,5 @@
 import { builder } from '../../../graphql/builder.js';
-import type { CheckoutResult } from '../checkout.port.js';
+import type { CheckoutResult } from '../checkout.core.js';
 
 export function registerCheckoutMutations(): void {
   const CheckoutCommissionInput = builder.inputType('CheckoutCommissionInput', {

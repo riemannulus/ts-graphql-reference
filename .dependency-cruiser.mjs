@@ -10,11 +10,12 @@
  *   pulls Context as a type only, context.ts pulls Services as a type only);
  * - which module may depend on which (the cross-module allowlist below). The
  *   allowlisted edges — onboarding → {user, post}, search → post,
- *   auth → user (type-only) — form a DAG by construction: user and post fall
+ *   auth → user (type-only), checkout → its five owner repos — form a DAG by construction:
+ *   owner modules fall
  *   under the default ban, so they can never point back. A module-level cycle
  *   can therefore only enter by editing this file, which is the review point;
  * - where non-module code may enter src/modules at all: only the composition
- *   points (schema.ts, services.ts, app.ts, scheduler.ts, composition/) — CONVENTIONS §11.
+ *   points (schema.ts, services.ts, app.ts, scheduler.ts) — CONVENTIONS §11.
  */
 
 /** @type {import('dependency-cruiser').IConfiguration} */
@@ -39,7 +40,7 @@ export default {
       severity: 'error',
       from: {
         path: '^src/modules/([^/]+)/',
-        pathNot: '^src/modules/(auth|onboarding|search)/',
+        pathNot: '^src/modules/(auth|checkout|onboarding|search)/',
       },
       to: { path: '^src/modules/', pathNot: '^src/modules/$1/' },
     },
@@ -76,48 +77,53 @@ export default {
       to: { path: '^src/modules/user/', dependencyTypesNot: ['type-only'] },
     },
     {
+      name: 'checkout-reaches-reviewed-owners-only',
+      comment:
+        'Checkout is a composite read → plan → apply use-case. Its service passes one transaction ' +
+        'directly to the five owner repos; those owners never point back.',
+      severity: 'error',
+      from: { path: '^src/modules/checkout/' },
+      to: {
+        path: '^src/modules/',
+        pathNot: '^src/modules/(checkout|commission-type|contract|financial-ledger|order|slot)/',
+      },
+    },
+    {
+      name: 'checkout-imports-owner-plan-repos-only',
+      comment:
+        'The checkout edge lands only on reviewed owner repo executors and financial-ledger core planning; ' +
+        'it cannot reach owner services, delivery, or arbitrary implementation files.',
+      severity: 'error',
+      from: { path: '^src/modules/checkout/' },
+      to: {
+        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/',
+        pathNot:
+          '^src/modules/(commission-type/commission-type\\.repo|contract/contract\\.repo|financial-ledger/financial-ledger\\.(core|repo)|order/order\\.repo|slot/slot\\.repo)\\.ts$',
+      },
+    },
+    {
+      name: 'checkout-owner-imports-live-in-service',
+      comment:
+        'The composite service owns read → plan → apply assembly. Checkout core, repo, and delivery ' +
+        'cannot bypass it by reaching into an owner module.',
+      severity: 'error',
+      from: {
+        path: '^src/modules/checkout/',
+        pathNot: '^src/modules/checkout/checkout\\.service\\.ts$',
+      },
+      to: { path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/' },
+    },
+    {
       name: 'composition-root-is-the-top',
       comment:
-        'app.ts / services.ts / composition / server.ts assemble everything, so nothing ' +
+        'app.ts / services.ts / server.ts assemble everything, so nothing ' +
         'below them may import them as a value. The Services TYPE flowing ' +
         'down into context.ts is the sanctioned (erased) exception.',
       severity: 'error',
       from: { path: '^src/(modules|db|flags|foundation|graphql|scheduler)/' },
       to: {
-        path: '^src/(app|services|server)\\.ts$|^src/composition/',
+        path: '^src/(app|services|server)\\.ts$',
         dependencyTypesNot: ['type-only'],
-      },
-    },
-    {
-      name: 'checkout-composition-is-wired-once',
-      comment:
-        'Only services.ts imports the checkout composition adapter. Feature modules ' +
-        'receive its result through context and never reach up into owner wiring.',
-      severity: 'error',
-      from: { path: '^src/', pathNot: '^src/services\\.ts$' },
-      to: { path: '^src/composition/' },
-    },
-    {
-      name: 'checkout-owner-entrypoints-have-one-importer',
-      comment:
-        'Owner checkout adapters expose invariant-preserving transaction operations only to ' +
-        'the checkout composition root.',
-      severity: 'error',
-      from: { path: '^src/', pathNot: '^src/composition/checkout-composition\\.ts$' },
-      to: {
-        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/[^/]+\\.checkout\\.ts$',
-      },
-    },
-    {
-      name: 'checkout-composition-has-an-exact-owner-allowlist',
-      comment:
-        'The checkout composition may reach only checkout itself and the five reviewed owner adapters.',
-      severity: 'error',
-      from: { path: '^src/composition/checkout-composition\\.ts$' },
-      to: {
-        path: '^src/modules/',
-        pathNot:
-          '^src/modules/(checkout/(checkout\\.(port|service))|commission-type/commission-type\\.checkout|contract/contract\\.checkout|financial-ledger/financial-ledger\\.checkout|order/order\\.checkout|slot/slot\\.checkout)\\.ts$',
       },
     },
     {
@@ -125,8 +131,7 @@ export default {
       comment:
         'Non-module code reaches src/modules only at the composition points: ' +
         'graphql/schema.ts (register functions), services.ts (the container), ' +
-        'app.ts (routes + providers), scheduler/scheduler.ts (jobs), and reviewed ' +
-        'composition adapters for transaction-bound owner ports. A Yoga ' +
+        'app.ts (routes + providers), and scheduler/scheduler.ts (jobs). A Yoga ' +
         'plugin or a db/flags/foundation helper importing a module — owner or ' +
         'composite — would invert the architecture: modules are delivered and ' +
         'composed, they are not libraries (CONVENTIONS §11).',
@@ -139,7 +144,6 @@ export default {
           '^src/services\\.ts$',
           '^src/graphql/schema\\.ts$',
           '^src/scheduler/scheduler\\.ts$',
-          '^src/composition/',
         ],
       },
       to: { path: '^src/modules/' },

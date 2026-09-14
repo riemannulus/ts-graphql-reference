@@ -50,7 +50,7 @@ export async function loadPaymentFacts(db: ReadDbClient, orderPaymentId: number)
   };
 }
 
-export async function markOrderPaid(
+export async function applyPaidOrder(
   db: DbClient,
   input: { orderId: number; orderPaymentId: number; reservationId: number },
 ): Promise<void> {

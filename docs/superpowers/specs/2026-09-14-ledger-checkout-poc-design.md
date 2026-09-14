@@ -32,25 +32,23 @@ entries, outbox delivery, and production migration are outside this probe.
 ## Modules and seams
 
 The modules are `commission-type`, `order`, `financial-ledger`, `contract`,
-`slot`, and `checkout`. `checkout` owns the orchestration and its required port
-interfaces. It imports no implementation from the owner modules.
-
-`checkout-composition.ts` is the only adapter that imports the owner modules'
-public functions and maps checkout-owned DTOs to them. `services.ts` creates the
-adapter once and exposes the resulting checkout module to GraphQL. This adds the
-following sanctioned compile-time edges:
+`slot`, and `checkout`. `checkout` owns the cross-owner orchestration and follows
+Crepe's `read → decide → execute` rule: it reads through owner repos, creates a
+pure checkout plan in core, and applies that plan through owner repo executors.
+`services.ts` creates the checkout service once and exposes it to GraphQL. This
+adds the following sanctioned compile-time edges:
 
 ```text
-services -> checkout-composition
-checkout-composition -> checkout
-checkout-composition -> commission-type | order | financial-ledger | contract | slot
-checkout -> no owner module
+services -> checkout
+checkout -> commission-type.repo | order.repo | financial-ledger.{core,repo} | contract.repo | slot.repo
 financial-ledger -> no product module
 ```
 
-The dependency-cruiser allowlist and generated module graph will encode these
-edges. An import from `checkout` to an owner module, or from `financial-ledger`
-to Order/Contract/commission-type/slot, must fail `pnpm check:graph`.
+The dependency-cruiser allowlist and generated module graph encode these edges.
+Checkout may reach only the listed owner plan/repo files; owner services,
+delivery, and arbitrary implementation files remain forbidden. An import from
+`financial-ledger` to Order/Contract/commission-type/slot must fail
+`pnpm check:graph`.
 
 The checkout interface has one deep operation:
 
@@ -60,9 +58,9 @@ checkout.payOrder({ orderPaymentId, actorId, commandKey })
 ```
 
 Callers need not know the lock order, funding allocations, owner write order,
-or rollback mechanics. The checkout-owned ports expose purpose-specific,
-transaction-bound operations rather than owner repositories or Prisma models;
-only the composition root receives the Prisma transaction handle.
+or rollback mechanics. Checkout opens the transaction and passes that same
+handle as the first argument to every owner repo call. Repos never choose a DB
+handle or open a nested transaction.
 
 ## Persisted model
 
@@ -89,10 +87,9 @@ The schema uses integer POINT amounts and these logical records:
   product-owned relations, so unrelated result identifiers cannot be stored.
 
 The financial models contain no `orderId`, `contractId`, `commissionTypeId`, or
-`slotId`. The financial module authenticates an opaque binding supplied by the
-composition adapter and validates holder, currency, amount, and remaining lots.
-The Order module owns and writes `OrderFinancialLink` after receiving a verified
-reservation receipt.
+`slotId`. The financial module validates holder, currency, amount, and remaining
+lots for the opaque binding derived by checkout. The Order module owns and
+writes `OrderFinancialLink` after the reservation plan is applied.
 
 For the PoC, balance is reconstructed from available lot remainders and the
 reservation transfer. A production-ready balance projection and the full
@@ -111,15 +108,15 @@ holder found after locking with the pre-transaction lock targets and aborts on
 any reassignment. Inside the transaction it:
 
 1. claims or replays the checkout command;
-2. loads and validates payment, buyer, offer, and slot facts through ports;
-3. requests a financial reservation using a checkout-owned DTO;
-4. builds verified Contract formation data from the intent and receipt;
-5. creates the Contract, attaches the financial link, marks the payment and
-   Order paid, confirms the slot, and saves the command result.
+2. reads payment, buyer, offer, slot, holder, account, and lot facts through the
+   owner repos;
+3. builds a pure checkout plan and financial allocation plan;
+4. applies the reservation, Contract, paid Order, occupied slot, and command
+   result through owner repo executors.
 
-The composition root binds every owner operation to the same Prisma transaction
-handle, while checkout sees only no-DB-argument operations. All calls are
-awaited. A thrown owner error aborts the entire transaction. Database uniqueness
+Every owner repo receives the same Prisma transaction handle directly from the
+checkout service. All calls are awaited. A thrown owner error aborts the entire
+transaction. Database uniqueness
 on Contract order, OrderPayment link, reservation binding, and command key backs
 the application rules. Deferred transfer checks also require the exact
 reservation amount, matching holder/source and reservation/destination
@@ -168,5 +165,5 @@ The PoC is accepted when the following checks pass:
   tests, the GraphQL schema snapshot, and the full `pnpm test` suite pass.
 
 The implementation will include concise `NOTES.md` findings beside the PoC,
-recording whether the seam remained deep, what complexity leaked through the
-ports, and which design decisions should be carried into Crepe.
+recording whether the service remained deep, how the Plan/Apply split behaved,
+and which design decisions should be carried into Crepe.

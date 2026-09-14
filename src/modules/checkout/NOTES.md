@@ -23,36 +23,32 @@ A forced Contract failure rolls all of those changes back.
 
 The interface stayed deep: callers supply three scalars and do not know owner
 write order, lock order, lot allocation, reservation binding, transaction
-handling, or replay mechanics. Those details remain behind checkout and its
-ports.
+handling, or replay mechanics. Those details remain behind checkout's
+read → plan → apply service.
 
 ## Dependency result
 
-`src/composition/checkout-composition.ts` is the only implementation that
-imports all participating owner modules. `checkout` imports only its own core,
-port, and repo plus shared DB/foundation modules. `financial-ledger` has no
-product imports and its persisted rows have no Order, Contract, commission-type,
-or slot foreign key. The product-owned `OrderFinancialLink` points to the generic
-financial reservation.
+`checkout.service.ts` directly imports the participating owner repos and passes
+the same transaction handle as their first argument. Its cross-module edge is
+narrowed by dependency-cruiser to the five reviewed repos plus
+`financial-ledger.core` planning. `financial-ledger` has no product imports and
+its persisted rows have no Order, Contract, commission-type, or slot foreign
+key. The product-owned `OrderFinancialLink` points to the generic financial
+reservation.
 
 Run `pnpm check:graph` to enforce the import rules and `pnpm graph:modules` to
-regenerate both dependency SVGs. The overview includes the composition node so
-the intended fan-in is visible rather than hidden in `services.ts`.
+regenerate both dependency SVGs. The overview shows the one-way checkout → owner
+edges explicitly.
 
 ## Transaction capability and boundary enforcement
 
-Only `checkout-composition.ts` receives the shared `DbClient` and binds owner
-operations to it. Checkout receives no-DB-argument functions, so its port
-surface cannot use another owner's Prisma delegate. Dependency-cruiser makes
-that composition file the sole importer of the five `*.checkout.ts` owner
-adapters and gives it an exact outbound allowlist. Oxlint classifies those
-adapters as transaction participants that cannot open transactions, take locks,
-or reach services and transport code.
-
-The composition adapter accepts a Contract writer override solely to force the
-rollback proof. If this design is absorbed, tests can assemble
-`createCheckoutService` with explicit ports and the production composition
-factory can lose that override.
+Checkout opens the transaction and hands its `$tx` directly to owner repo reads
+and `apply*` executors. `checkout.core.planCheckout` describes the reservation,
+Contract, paid Order, and occupied slot as pure data; the service adds the
+financial lot-allocation plan and the repos execute those plans mechanically.
+Owner repos never open a transaction or choose a database handle. The rollback
+test rejects the real Contract insert with a temporary database trigger, so the
+proof needs no injected writer or module mock.
 
 ## Deliberate limitations
 
@@ -73,9 +69,9 @@ factory can lose that override.
 - The pre-transaction read discovers immutable lock identifiers. The complete
   facts are re-read after the locks in a READ COMMITTED transaction, and buyer,
   slot, and holder are compared with the locked targets before any owner write.
-- `FinancialHolder(user, id)` is an opaque adapter binding with no User FK. A
-  production composition root must authenticate that binding; a caller must not
-  choose arbitrary namespaces or holder IDs.
+- `FinancialHolder(user, id)` is an opaque binding with no User FK. Production
+  must authenticate the actor and derive this binding from Order ownership; a
+  caller must not choose arbitrary namespaces or holder IDs.
 
 ## Run the proof
 
@@ -94,8 +90,8 @@ pnpm check:graph
 The initial architecture and integrity reviews both requested changes. The
 revision serializes command keys, uses READ COMMITTED after lock waits, derives
 replay results through product relations, enforces ledger conservation in the
-database, narrows transaction capabilities at composition, and enforces the
-adapter allowlist. Final reviewer verdicts are recorded in the PR description.
+database, and narrows checkout's direct imports to owner plan/repo APIs. Final
+reviewer verdicts are recorded in the PR description.
 
 The branch should be absorbed only after the omitted production concerns have
 their own design and tests. Otherwise, keep this commit history as the result and

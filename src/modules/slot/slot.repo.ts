@@ -16,7 +16,7 @@ export async function findSlotForCheckout(db: ReadDbClient, id: number) {
   return { slotId: row.id, workerId: row.workerId, state: row.state };
 }
 
-export async function occupySlot(
+export async function applySlotOccupation(
   db: DbClient,
   input: { slotId: number; workerId: number },
 ): Promise<void> {

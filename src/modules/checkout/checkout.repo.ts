@@ -1,5 +1,5 @@
 import type { DbClient } from '../../db/db.js';
-import type { CheckoutInput, CheckoutResult } from './checkout.port.js';
+import type { CheckoutInput, CheckoutResult } from './checkout.core.js';
 
 const commandResultSelect = {
   commandKey: true,
