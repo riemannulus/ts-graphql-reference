@@ -29,12 +29,14 @@ CREATE TABLE "FinancialReservation" (
   "bindingNamespace" TEXT NOT NULL,
   "bindingKey" TEXT NOT NULL,
   "holderId" INTEGER NOT NULL REFERENCES "FinancialHolder"("id") ON DELETE RESTRICT,
+  "purpose" TEXT NOT NULL,
   "currency" TEXT NOT NULL,
   "targetAmount" INTEGER NOT NULL,
   "state" TEXT NOT NULL DEFAULT 'HELD',
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "FinancialReservation_referenceId_key" UNIQUE ("referenceId"),
   CONSTRAINT "FinancialReservation_bindingNamespace_bindingKey_key" UNIQUE ("bindingNamespace", "bindingKey"),
+  CONSTRAINT "FinancialReservation_purpose_check" CHECK ("purpose" = 'COMMISSION_PAYMENT'),
   CONSTRAINT "FinancialReservation_currency_check" CHECK ("currency" = 'POINT'),
   CONSTRAINT "FinancialReservation_targetAmount_check" CHECK ("targetAmount" > 0),
   CONSTRAINT "FinancialReservation_state_check" CHECK ("state" = 'HELD')
@@ -140,7 +142,74 @@ CREATE TABLE "CheckoutCommand" (
   "commandKey" TEXT PRIMARY KEY,
   "payloadHash" TEXT NOT NULL,
   "orderPaymentId" INTEGER NOT NULL REFERENCES "OrderPayment"("id") ON DELETE RESTRICT,
-  "reservationId" INTEGER NOT NULL REFERENCES "FinancialReservation"("id") ON DELETE RESTRICT,
-  "contractId" INTEGER NOT NULL REFERENCES "Contract"("id") ON DELETE RESTRICT,
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- A transfer is valid only when it moves the reservation's exact amount from
+-- that holder's AVAILABLE account into that reservation's ESCROW account, and
+-- every allocation names a lot from the source account. Deferred constraint
+-- triggers let the writer insert the transfer before its allocation rows while
+-- still making the relationship a commit-time database invariant.
+CREATE FUNCTION assert_financial_transfer_conservation(checked_transfer_id INTEGER)
+RETURNS VOID AS $$
+DECLARE
+  violates BOOLEAN;
+BEGIN
+  SELECT NOT (
+    transfer."amount" = reservation."targetAmount"
+    AND source."holderId" = reservation."holderId"
+    AND source."purpose" = 'AVAILABLE'
+    AND source."currency" = reservation."currency"
+    AND destination."reservationId" = reservation."id"
+    AND destination."purpose" = 'ESCROW'
+    AND destination."currency" = reservation."currency"
+    AND COUNT(allocation.*) > 0
+    AND COALESCE(SUM(allocation."amount"), 0) = transfer."amount"
+    AND BOOL_AND(lot."accountId" = transfer."fromAccountId")
+  )
+  INTO violates
+  FROM "FinancialTransfer" transfer
+  JOIN "FinancialReservation" reservation ON reservation."id" = transfer."reservationId"
+  JOIN "FinancialAccount" source ON source."id" = transfer."fromAccountId"
+  JOIN "FinancialAccount" destination ON destination."id" = transfer."toAccountId"
+  LEFT JOIN "FinancialTransferAllocation" allocation ON allocation."transferId" = transfer."id"
+  LEFT JOIN "PointLot" lot ON lot."id" = allocation."lotId"
+  WHERE transfer."id" = checked_transfer_id
+  GROUP BY transfer."id", reservation."id", source."id", destination."id";
+
+  IF violates THEN
+    RAISE EXCEPTION 'FinancialTransfer_conservation_check: transfer % violates conservation', checked_transfer_id
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialTransfer_conservation_check';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION check_financial_transfer_row()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM assert_financial_transfer_conservation(COALESCE(NEW."id", OLD."id"));
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER "FinancialTransfer_conservation_check"
+AFTER INSERT OR UPDATE ON "FinancialTransfer"
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION check_financial_transfer_row();
+
+CREATE FUNCTION check_financial_allocation_row()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    PERFORM assert_financial_transfer_conservation(OLD."transferId");
+  END IF;
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    PERFORM assert_financial_transfer_conservation(NEW."transferId");
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "FinancialTransferAllocation_conservation_check"
+AFTER INSERT OR UPDATE OR DELETE ON "FinancialTransferAllocation"
+FOR EACH ROW EXECUTE FUNCTION check_financial_allocation_row();

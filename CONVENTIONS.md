@@ -13,6 +13,7 @@ Every module splits into explicit layers with one-way dependencies:
 | Core (pure)      | `*.core.ts`, `*.state.ts`, `*.value.ts`, `*.content.ts` | domain types, plans | types + other pure modules, `errors.ts`      | unit + **property** tests  |
 | Repo (DB)        | `*.repo.ts`                          | Prisma rows, the Pothos `query` | core types, `@prisma/client`, `db.ts` (`DbClient` / `ReadDbClient` / `Selection`), `prisma-errors.ts`, `errors.ts` | integration (PGlite)       |
 | Service (use-cases) | `*.service.ts`                    | domain inputs/outputs only      | core, repo, `uow.ts` / `lock-registry.ts`, `flag-registry.ts` (the `FlagReader` *type*), `db.ts` (the `Db` handle), `@prisma/client` (row types), `errors.ts` | integration + **model** PBT |
+| Transaction participant | `*.checkout.ts`              | owner-specific checkout operations | same-module core/repo, `db.ts` client types, `errors.ts` | checkout integration |
 | Delivery (edge)  | `schemas/*` or `*.schema.ts` (GraphQL); `routes/*.route.ts` (HTTP); `jobs/*.job.ts` (Agenda) | GraphQL types + `ctx`, Fastify req/reply, or an Agenda job | builder, core (enums/parsers), repo (reads; in a tier-1 module also writes), services (via `ctx` or registration) | e2e (`app.inject`), job-registry + service tests |
 
 ```
@@ -32,6 +33,14 @@ takes a lock, and only the delivery/service layer is handed a flag reader (a cor
 receives a flag value as passed-in data). A service may import the `FlagReader`
 *type* but not the OpenFeature SDK or the reader factory; `builder.ts` cannot
 import feature modules, and `import/no-cycle` keeps the file graph acyclic.
+
+A `*.checkout.ts` transaction participant is an owner module's narrow adapter
+for one cross-module checkout. It receives the composition root's transaction,
+delegates only to the same module's core/repo operations, and never opens a
+transaction or takes a lock. Dependency-cruiser makes
+`composition/checkout-composition.ts` its sole importer and gives that
+composition file an exact owner allowlist; oxlint applies the participant layer
+restrictions by filename.
 
 The **shape** of the module graph is checked separately by dependency-cruiser
 (`pnpm check:graph`, rules in `.dependency-cruiser.mjs`), which sees what

@@ -91,6 +91,71 @@ describe('CheckoutService.payOrder', () => {
     expect(await prisma.checkoutCommand.count()).toBe(1);
   });
 
+  it('preserves exact FIFO lot provenance across a multi-lot reservation', async () => {
+    const world = await seedCheckoutWorld({ balance: 200 });
+    const secondLot = await prisma.pointLot.create({
+      data: {
+        accountId: world.account.id,
+        sourceKind: 'FREE',
+        originalAmount: 400,
+        remainingAmount: 400,
+      },
+    });
+    const checkout = createCheckoutComposition(db);
+
+    const result = await checkout.payOrder({
+      orderPaymentId: world.payment.id,
+      actorId: world.buyer.id,
+      commandKey: 'multi-lot',
+    });
+
+    const reservation = await prisma.financialReservation.findUniqueOrThrow({
+      where: { id: result.reservationId },
+      include: {
+        escrowAccount: true,
+        transfer: { include: { allocations: { orderBy: { lotId: 'asc' } } } },
+        orderLink: true,
+      },
+    });
+    expect(reservation).toMatchObject({
+      referenceId: world.payment.referenceId,
+      bindingNamespace: 'order-payment',
+      bindingKey: String(world.payment.id),
+      holderId: world.holder.id,
+      purpose: 'COMMISSION_PAYMENT',
+      currency: 'POINT',
+      targetAmount: 500,
+      state: 'HELD',
+      orderLink: { orderPaymentId: world.payment.id },
+    });
+    expect(reservation.escrowAccount).toMatchObject({
+      currency: 'POINT',
+      purpose: 'ESCROW',
+      holderId: null,
+      reservationId: result.reservationId,
+    });
+    expect(reservation.transfer).toMatchObject({
+      reservationId: result.reservationId,
+      fromAccountId: world.account.id,
+      toAccountId: reservation.escrowAccount!.id,
+      amount: 500,
+      allocations: [
+        { lotId: world.lot.id, amount: 200 },
+        { lotId: secondLot.id, amount: 300 },
+      ],
+    });
+    expect(
+      await prisma.pointLot.findMany({
+        where: { id: { in: [world.lot.id, secondLot.id] } },
+        orderBy: { id: 'asc' },
+        select: { id: true, remainingAmount: true },
+      }),
+    ).toEqual([
+      { id: world.lot.id, remainingAmount: 0 },
+      { id: secondLot.id, remainingAmount: 100 },
+    ]);
+  });
+
   it('rolls back every financial and product write when Contract creation fails', async () => {
     const world = await seedCheckoutWorld();
     const checkout = createCheckoutComposition(db, {

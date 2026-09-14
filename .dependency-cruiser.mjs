@@ -96,6 +96,29 @@ export default {
       to: { path: '^src/composition/' },
     },
     {
+      name: 'checkout-owner-entrypoints-have-one-importer',
+      comment:
+        'Owner checkout adapters expose invariant-preserving transaction operations only to ' +
+        'the checkout composition root.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: '^src/composition/checkout-composition\\.ts$' },
+      to: {
+        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/[^/]+\\.checkout\\.ts$',
+      },
+    },
+    {
+      name: 'checkout-composition-has-an-exact-owner-allowlist',
+      comment:
+        'The checkout composition may reach only checkout itself and the five reviewed owner adapters.',
+      severity: 'error',
+      from: { path: '^src/composition/checkout-composition\\.ts$' },
+      to: {
+        path: '^src/modules/',
+        pathNot:
+          '^src/modules/(checkout/(checkout\\.(port|service))|commission-type/commission-type\\.checkout|contract/contract\\.checkout|financial-ledger/financial-ledger\\.checkout|order/order\\.checkout|slot/slot\\.checkout)\\.ts$',
+      },
+    },
+    {
       name: 'date-lib-lives-in-time-only',
       comment:
         'A date library is wrapped in ONE place (foundation/time.ts) so a swap ' +

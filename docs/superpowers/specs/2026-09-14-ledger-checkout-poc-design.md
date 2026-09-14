@@ -60,8 +60,9 @@ checkout.payOrder({ orderPaymentId, actorId, commandKey })
 ```
 
 Callers need not know the lock order, funding allocations, owner write order,
-or rollback mechanics. The checkout-owned ports expose purpose-specific
-operations rather than owner repositories or Prisma models.
+or rollback mechanics. The checkout-owned ports expose purpose-specific,
+transaction-bound operations rather than owner repositories or Prisma models;
+only the composition root receives the Prisma transaction handle.
 
 ## Persisted model
 
@@ -83,8 +84,9 @@ The schema uses integer POINT amounts and these logical records:
 - `OrderFinancialLink`: owned on the product side, unique in both
   `orderPaymentId` and `reservationId` directions.
 - `Contract`: the formed commission, with unique `orderId`.
-- `CheckoutCommand`: unique command key, payload hash, and the complete result
-  identifiers used for replay.
+- `CheckoutCommand`: unique command key, payload hash, and OrderPayment
+  reference. Replay derives reservation and Contract identifiers through the
+  product-owned relations, so unrelated result identifiers cannot be stored.
 
 The financial models contain no `orderId`, `contractId`, `commissionTypeId`, or
 `slotId`. The financial module authenticates an opaque binding supplied by the
@@ -99,9 +101,12 @@ they are not needed to answer the module-seam question.
 
 ## Transaction and concurrency
 
-`checkout.payOrder` opens one `uow.serialized` transaction. Lock namespaces are
-appended for `orderPayment`, `financialHolder`, and `commissionSlot`, and the
-existing global ordering prevents deadlocks. Inside the transaction it:
+`checkout.payOrder` opens one READ COMMITTED `uow.serialized` transaction. Lock
+namespaces are appended for `orderPayment`, `financialHolder`,
+`commissionSlot`, and the hashed `checkoutCommand` key. The existing global
+ordering prevents deadlocks. READ COMMITTED is intentional: a waiter acquires
+the command lock and then observes the winner's committed command instead of a
+snapshot taken before the wait. Inside the transaction it:
 
 1. claims or replays the checkout command;
 2. loads and validates payment, buyer, offer, and slot facts through ports;
@@ -110,10 +115,13 @@ existing global ordering prevents deadlocks. Inside the transaction it:
 5. creates the Contract, attaches the financial link, marks the payment and
    Order paid, confirms the slot, and saves the command result.
 
-Every owner receives the same Prisma transaction handle, but no port exposes
-arbitrary table access. All calls are awaited. A thrown owner error aborts the
-entire transaction. Database uniqueness on Contract order, OrderPayment link,
-reservation binding, and command key backs the application rules.
+The composition root binds every owner operation to the same Prisma transaction
+handle, while checkout sees only no-DB-argument operations. All calls are
+awaited. A thrown owner error aborts the entire transaction. Database uniqueness
+on Contract order, OrderPayment link, reservation binding, and command key backs
+the application rules. Deferred transfer checks also require the exact
+reservation amount, matching holder/source and reservation/destination
+accounts, an exact allocation sum, and source-account lot membership.
 
 A repeated command key with the same payload returns the stored result with
 `replayed: true`. Reuse with a different payload is a domain error. A different
@@ -145,6 +153,8 @@ The PoC is accepted when the following checks pass:
 - Same-key retry returns the stored result with no additional economic effect.
 - A different-key retry also produces no duplicate reservation or Contract.
 - Command-key reuse with different input fails without writes.
+- Two real PostgreSQL connections prove concurrent same-payment replay and
+  concurrent cross-payment command-key mismatch classification.
 - Insufficient POINT and unavailable slot fail without partial writes.
 - `pnpm typecheck`, `pnpm lint`, `pnpm check:graph`, focused module/integration
   tests, the GraphQL schema snapshot, and the full `pnpm test` suite pass.

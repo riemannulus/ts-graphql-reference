@@ -222,6 +222,35 @@
       }
     },
     {
+      "files": ["src/**/modules/**/*.checkout.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "graphql",
+                  "graphql-yoga",
+                  "@pothos/*",
+                  "**/builder*",
+                  "fastify",
+                  "**/uow*",
+                  "**/locks*",
+                  "**/lock-registry*",
+                  "**/flags*",
+                  "**/flag-registry*",
+                  "**/flag-reader*",
+                  "**/*.service*"
+                ],
+                "message": "A checkout participant (*.checkout.ts) is an owner adapter called only by the reviewed composition root. It may expose narrow repo/core operations on the supplied transaction, but it cannot open transactions, take locks, reach transport/framework code, or call another service. Dependency-cruiser enforces its sole importer and same-module boundary."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/**/modules/**/*.repo.ts"],
       "rules": {
         "no-restricted-imports": [

@@ -4,7 +4,7 @@
 
 **Goal:** Prove that one GraphQL checkout can atomically reserve POINT and form a Contract through isolated owner modules whose implementations are wired only in `checkout-composition`.
 
-**Architecture:** `checkout` owns one deep `payOrder` interface and purpose-specific ports. Owner modules expose transaction-participating functions; `src/composition/checkout-composition.ts` adapts them to checkout DTOs, and `services.ts` wires the result once. Prisma/PGlite proves persistence, uniqueness, rollback, and replay while dependency-cruiser proves the import shape.
+**Architecture:** `checkout` owns one deep `payOrder` interface and purpose-specific ports. Owner modules expose transaction-participating functions; `src/composition/checkout-composition.ts` binds the shared transaction without exposing it through individual port operations, and `services.ts` wires the result once. Prisma/PGlite proves persistence, uniqueness, rollback, and replay, a real PostgreSQL test proves lock-wait behavior, and dependency-cruiser proves the import shape.
 
 **Tech Stack:** TypeScript 6 ESM, Pothos GraphQL, Prisma 7/PostgreSQL, PGlite, Vitest, dependency-cruiser, Graphviz, pnpm 10.33.0.
 
@@ -208,8 +208,9 @@ Expected: FAIL because `createCheckoutService` and composition do not exist.
 
 - [ ] **Step 3: Implement the single transaction**
 
-Load only immutable lock identifiers from the primary, then claim/replay the
-command, re-load and validate all facts via ports, reserve funds,
+Load only immutable lock identifiers from the primary, acquire the payment,
+holder, slot, and hashed command-key locks, then claim/replay the command,
+re-load and validate all facts via ports, reserve funds,
 build formation, create Contract, link/mark Order paid, confirm slot, then store
 the full command result. Use lock keys in global registry order:
 
@@ -220,11 +221,15 @@ return uow.serialized(
     lockKey.orderPayment(input.orderPaymentId),
     lockKey.financialHolder(targets.financialHolderId),
     lockKey.commissionSlot(targets.slotId),
+    lockKey.checkoutCommand(input.commandKey),
   ],
-  async (tx) => { /* every owner call receives tx */ },
-  { snapshot: true },
+  async (tx) => { /* composition binds every owner operation to tx */ },
 );
 ```
+
+The locked transaction remains READ COMMITTED so a waiter sees the command row
+committed by the lock holder. Taking a REPEATABLE READ snapshot before a blocking
+advisory lock would make that replay result stale.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -272,8 +277,9 @@ Expected: the newly added branch tests fail for missing behavior.
 - [ ] **Step 3: Implement minimal idempotency and rejection branches**
 
 Persist a deterministic payload hash made from the three scalar inputs. On a
-new key for an already-paid OrderPayment, load its Contract/reservation result
-and save a command row pointing to those identifiers without new economic rows.
+new key for an already-paid OrderPayment, derive its Contract/reservation result
+through the OrderPayment relations and save only the command-to-payment
+reference without new economic rows.
 
 - [ ] **Step 4: Verify GREEN**
 

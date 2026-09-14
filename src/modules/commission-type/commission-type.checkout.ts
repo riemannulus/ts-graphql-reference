@@ -13,5 +13,5 @@ export async function loadCommissionTypeForCheckout(db: ReadDbClient, id: number
     select: { id: true, workerId: true, price: true },
   });
   if (!row) throw new CommissionTypeNotFoundError(id);
-  return { commissionTypeId: row.id, workerId: row.workerId, price: row.price };
+  return { workerId: row.workerId, price: row.price };
 }

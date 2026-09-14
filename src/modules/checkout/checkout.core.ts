@@ -97,16 +97,13 @@ export function validatePaymentIntent(
     orderPaymentId: facts.orderPaymentId,
     buyerId: facts.buyerId,
     workerId: facts.commissionWorkerId,
-    commissionTypeId: facts.commissionTypeId,
     slotId: facts.slotId,
-    financialHolderId: facts.financialHolderId,
-    titleSnapshot: facts.titleSnapshot,
-    holderBinding: { namespace: 'user', key: String(facts.buyerId) },
     financialRequest: {
       referenceId: facts.referenceId,
       bindingNamespace: 'order-payment',
       bindingKey: String(facts.orderPaymentId),
       holderId: facts.financialHolderId,
+      purpose: 'COMMISSION_PAYMENT',
       currency: 'POINT',
       amount: facts.paymentAmount,
     },
@@ -132,6 +129,5 @@ export function buildContractFormation(
     orderId: intent.orderId,
     buyerId: intent.buyerId,
     workerId: intent.workerId,
-    reservationId: receipt.reservationId,
   };
 }

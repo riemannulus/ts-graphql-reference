@@ -5,19 +5,28 @@ const commandResultSelect = {
   commandKey: true,
   payloadHash: true,
   orderPaymentId: true,
-  reservationId: true,
-  contractId: true,
-  orderPayment: { select: { order: { select: { id: true, buyerId: true } } } },
+  orderPayment: {
+    select: {
+      financialLink: { select: { reservationId: true } },
+      order: { select: { id: true, buyerId: true, contract: { select: { id: true } } } },
+    },
+  },
 } as const;
 
 function mapStoredCommand(row: {
   commandKey: string;
   payloadHash: string;
   orderPaymentId: number;
-  reservationId: number;
-  contractId: number;
-  orderPayment: { order: { id: number; buyerId: number } };
+  orderPayment: {
+    financialLink: { reservationId: number } | null;
+    order: { id: number; buyerId: number; contract: { id: number } | null };
+  };
 }) {
+  const { financialLink } = row.orderPayment;
+  const { contract } = row.orderPayment.order;
+  if (!financialLink || !contract) {
+    throw new Error(`Checkout command ${row.commandKey} has no completed economic result`);
+  }
   return {
     commandKey: row.commandKey,
     payloadHash: row.payloadHash,
@@ -25,8 +34,8 @@ function mapStoredCommand(row: {
     result: {
       orderId: row.orderPayment.order.id,
       orderPaymentId: row.orderPaymentId,
-      reservationId: row.reservationId,
-      contractId: row.contractId,
+      reservationId: financialLink.reservationId,
+      contractId: contract.id,
     },
   };
 }
@@ -59,8 +68,6 @@ export function saveCheckoutCommand(
       commandKey: input.commandKey,
       payloadHash,
       orderPaymentId: result.orderPaymentId,
-      reservationId: result.reservationId,
-      contractId: result.contractId,
     },
   });
 }

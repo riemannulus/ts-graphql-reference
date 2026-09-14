@@ -18,7 +18,6 @@ const facts: CheckoutFacts = {
   commissionTypeId: 40,
   slotId: 30,
   financialHolderId: 50,
-  titleSnapshot: 'portrait',
   referenceId: 'order-payment:20',
   orderAmount: 500,
   paymentAmount: 500,
@@ -58,16 +57,13 @@ describe('validatePaymentIntent', () => {
       orderPaymentId: 20,
       buyerId: 1,
       workerId: 2,
-      commissionTypeId: 40,
       slotId: 30,
-      financialHolderId: 50,
-      titleSnapshot: 'portrait',
-      holderBinding: { namespace: 'user', key: '1' },
       financialRequest: {
         referenceId: 'order-payment:20',
         bindingNamespace: 'order-payment',
         bindingKey: '20',
         holderId: 50,
+        purpose: 'COMMISSION_PAYMENT',
         currency: 'POINT',
         amount: 500,
       },
@@ -83,6 +79,7 @@ describe('buildContractFormation', () => {
     bindingNamespace: 'order-payment',
     bindingKey: '20',
     holderId: 50,
+    purpose: 'COMMISSION_PAYMENT',
     currency: 'POINT',
     amount: 500,
   };
@@ -98,7 +95,6 @@ describe('buildContractFormation', () => {
       orderId: 10,
       buyerId: 1,
       workerId: 2,
-      reservationId: 60,
     });
   });
 });

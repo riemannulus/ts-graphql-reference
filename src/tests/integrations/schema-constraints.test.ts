@@ -16,6 +16,52 @@ async function makeUser(): Promise<number> {
   return user.id;
 }
 
+async function makeFinancialWorld() {
+  const holder = await prisma.financialHolder.create({
+    data: { bindingNamespace: 'user', bindingKey: 'ledger-owner' },
+  });
+  const otherHolder = await prisma.financialHolder.create({
+    data: { bindingNamespace: 'user', bindingKey: 'other-owner' },
+  });
+  const available = await prisma.financialAccount.create({
+    data: { holderId: holder.id, currency: 'POINT', purpose: 'AVAILABLE' },
+  });
+  const otherAvailable = await prisma.financialAccount.create({
+    data: { holderId: otherHolder.id, currency: 'POINT', purpose: 'AVAILABLE' },
+  });
+  const reservation = await prisma.financialReservation.create({
+    data: {
+      referenceId: 'payment:ledger',
+      bindingNamespace: 'order-payment',
+      bindingKey: 'ledger',
+      holderId: holder.id,
+      purpose: 'COMMISSION_PAYMENT',
+      currency: 'POINT',
+      targetAmount: 100,
+    },
+  });
+  const escrow = await prisma.financialAccount.create({
+    data: { reservationId: reservation.id, currency: 'POINT', purpose: 'ESCROW' },
+  });
+  const lot = await prisma.pointLot.create({
+    data: {
+      accountId: available.id,
+      sourceKind: 'PAID',
+      originalAmount: 100,
+      remainingAmount: 100,
+    },
+  });
+  const otherLot = await prisma.pointLot.create({
+    data: {
+      accountId: otherAvailable.id,
+      sourceKind: 'PAID',
+      originalAmount: 100,
+      remainingAmount: 100,
+    },
+  });
+  return { holder, available, otherAvailable, reservation, escrow, lot, otherLot };
+}
+
 describe('database CHECK constraints', () => {
   it('rejects an out-of-set user status (in sync with USER_STATUSES)', async () => {
     await expect(
@@ -133,14 +179,14 @@ describe('database CHECK constraints', () => {
     `;
     await prisma.$executeRaw`
       INSERT INTO "FinancialReservation"
-        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
-      VALUES ('payment:1', 'order-payment', '1', ${holderId[0]!.id}, 'POINT', 100)
+        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "purpose", "currency", "targetAmount")
+      VALUES ('payment:1', 'order-payment', '1', ${holderId[0]!.id}, 'COMMISSION_PAYMENT', 'POINT', 100)
     `;
     await expect(
       prisma.$executeRaw`
         INSERT INTO "FinancialReservation"
-          ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
-        VALUES ('payment:2', 'order-payment', '1', ${holderId[0]!.id}, 'POINT', 100)
+          ("referenceId", "bindingNamespace", "bindingKey", "holderId", "purpose", "currency", "targetAmount")
+        VALUES ('payment:2', 'order-payment', '1', ${holderId[0]!.id}, 'COMMISSION_PAYMENT', 'POINT', 100)
       `,
     ).rejects.toThrow(/FinancialReservation_bindingNamespace_bindingKey_key/);
   });
@@ -178,8 +224,8 @@ describe('database CHECK constraints', () => {
     `;
     const reservation = await prisma.$queryRaw<Array<{ id: number }>>`
       INSERT INTO "FinancialReservation"
-        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "currency", "targetAmount")
-      VALUES ('payment:account', 'order-payment', 'account', ${holder[0]!.id}, 'POINT', 100)
+        ("referenceId", "bindingNamespace", "bindingKey", "holderId", "purpose", "currency", "targetAmount")
+      VALUES ('payment:account', 'order-payment', 'account', ${holder[0]!.id}, 'COMMISSION_PAYMENT', 'POINT', 100)
       RETURNING "id"
     `;
     await expect(
@@ -188,5 +234,81 @@ describe('database CHECK constraints', () => {
         VALUES ('POINT', 'AVAILABLE', ${holder[0]!.id}, ${reservation[0]!.id})
       `,
     ).rejects.toThrow(/FinancialAccount_owner_check/);
+  });
+
+  it('rejects a transfer whose amount differs from its reservation target', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 99,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.lot.id, amount: 99 },
+        });
+      }),
+    ).rejects.toThrow(/FinancialTransfer_conservation_check/);
+  });
+
+  it('rejects a transfer sourced from another holder', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.otherAvailable.id,
+            toAccountId: world.escrow.id,
+            amount: 100,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.otherLot.id, amount: 100 },
+        });
+      }),
+    ).rejects.toThrow(/FinancialTransfer_conservation_check/);
+  });
+
+  it('rejects transfer allocations whose sum differs from the transfer amount', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 100,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.lot.id, amount: 99 },
+        });
+      }),
+    ).rejects.toThrow(/FinancialTransfer_conservation_check/);
+  });
+
+  it('rejects an allocation from a lot outside the transfer source account', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 100,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.otherLot.id, amount: 100 },
+        });
+      }),
+    ).rejects.toThrow(/FinancialTransfer_conservation_check/);
   });
 });

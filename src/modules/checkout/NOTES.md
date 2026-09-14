@@ -39,14 +39,15 @@ Run `pnpm check:graph` to enforce the import rules and `pnpm graph:modules` to
 regenerate both dependency SVGs. The overview includes the composition node so
 the intended fan-in is visible rather than hidden in `services.ts`.
 
-## What leaked through the ports
+## Transaction capability and boundary enforcement
 
-Every owner operation receives the shared `DbClient` transaction handle. This
-is a deliberate infrastructure capability: it permits one database commit but
-does not expose another owner's Prisma delegate. The checkout port surface has
-seven purpose-specific operations across five owners. For this flow that remains
-smaller than exposing repositories or entity-shaped CRUD, but it is the first
-thing to reassess if later flows cause the port to grow.
+Only `checkout-composition.ts` receives the shared `DbClient` and binds owner
+operations to it. Checkout receives no-DB-argument functions, so its port
+surface cannot use another owner's Prisma delegate. Dependency-cruiser makes
+that composition file the sole importer of the five `*.checkout.ts` owner
+adapters and gives it an exact outbound allowlist. Oxlint classifies those
+adapters as transaction participants that cannot open transactions, take locks,
+or reach services and transport code.
 
 The composition adapter accepts a Contract writer override solely to force the
 rollback proof. If this design is absorbed, tests can assemble
@@ -57,15 +58,16 @@ factory can lose that override.
 
 - GraphQL accepts `actorId` because this reference has no authenticated
   principal. Production must derive the actor from trusted request context.
-- The financial model is the minimum needed for a POINT hold. It does not prove
+- The financial model is the minimum needed for a POINT hold. The reservation
+  carries `purpose = COMMISSION_PAYMENT`, and commit-time checks prove transfer
+  amount, accounts, allocation sum, and source-lot membership. It does not prove
   the full Currency-specific Action/Operation ledger, settlement, refund,
   withdrawal, accounting, or outbox designs.
-- PGlite proves transaction rollback and PostgreSQL constraints but uses one
-  connection. It cannot run a true parallel checkout race. Advisory lock order,
-  guarded lot updates, and unique constraints encode the concurrency strategy;
-  production PostgreSQL still needs the concurrent integration case.
+- PGlite proves rollback and constraints. A separate opt-in test uses two real
+  PostgreSQL clients and proves concurrent same-payment replay plus cross-payment
+  command-key mismatch classification.
 - The pre-transaction read discovers immutable lock identifiers. The complete
-  facts are re-read and validated inside the locked REPEATABLE READ transaction.
+  facts are re-read and validated after the locks in a READ COMMITTED transaction.
 - `FinancialHolder(user, id)` is an opaque adapter binding with no User FK. A
   production composition root must authenticate that binding; a caller must not
   choose arbitrary namespaces or holder IDs.
@@ -77,8 +79,18 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app pnpm prisma:gener
 pnpm test src/tests/modules/checkout/checkout.core.test.ts
 pnpm test src/tests/modules/checkout/checkout.service.test.ts
 pnpm test src/tests/e2e/graphql.test.ts
+CHECKOUT_RACE_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app \
+  pnpm test src/tests/integrations/checkout-concurrency.postgres.test.ts
 pnpm check:graph
 ```
+
+## Independent review record
+
+The initial architecture and integrity reviews both requested changes. The
+revision serializes command keys, uses READ COMMITTED after lock waits, derives
+replay results through product relations, enforces ledger conservation in the
+database, narrows transaction capabilities at composition, and enforces the
+adapter allowlist. Final reviewer verdicts are recorded in the PR description.
 
 The branch should be absorbed only after the omitted production concerns have
 their own design and tests. Otherwise, keep this commit history as the result and

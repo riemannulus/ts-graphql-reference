@@ -59,6 +59,7 @@ export async function applyReservation(
     bindingNamespace: string;
     bindingKey: string;
     holderId: number;
+    purpose: 'COMMISSION_PAYMENT';
     currency: 'POINT';
     amount: number;
   },
@@ -81,6 +82,7 @@ export async function applyReservation(
       bindingNamespace: request.bindingNamespace,
       bindingKey: request.bindingKey,
       holderId: request.holderId,
+      purpose: request.purpose,
       currency: request.currency,
       targetAmount: request.amount,
     },

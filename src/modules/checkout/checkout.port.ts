@@ -1,4 +1,4 @@
-import type { DbClient, ReadDbClient } from '../../db/db.js';
+import type { DbClient } from '../../db/db.js';
 
 /** PROTOTYPE — checkout-owned DTOs. Owner modules are adapted to these shapes. */
 export interface CheckoutInput {
@@ -13,7 +13,6 @@ export interface OrderPaymentFacts {
   buyerId: number;
   commissionTypeId: number;
   slotId: number;
-  titleSnapshot: string;
   referenceId: string;
   orderAmount: number;
   paymentAmount: number;
@@ -24,7 +23,6 @@ export interface OrderPaymentFacts {
 }
 
 export interface CommissionTypeFacts {
-  commissionTypeId: number;
   workerId: number;
   price: number;
 }
@@ -48,6 +46,7 @@ export interface FinancialRequest {
   bindingNamespace: string;
   bindingKey: string;
   holderId: number;
+  purpose: 'COMMISSION_PAYMENT';
   currency: 'POINT';
   amount: number;
 }
@@ -57,11 +56,7 @@ export interface PaymentIntent {
   orderPaymentId: number;
   buyerId: number;
   workerId: number;
-  commissionTypeId: number;
   slotId: number;
-  financialHolderId: number;
-  titleSnapshot: string;
-  holderBinding: { namespace: 'user'; key: string };
   financialRequest: FinancialRequest;
 }
 
@@ -73,7 +68,6 @@ export interface ContractFormation {
   orderId: number;
   buyerId: number;
   workerId: number;
-  reservationId: number;
 }
 
 export interface CheckoutResult {
@@ -84,33 +78,34 @@ export interface CheckoutResult {
   replayed: boolean;
 }
 
-export interface CheckoutPorts {
+export interface CheckoutTransactionPorts {
   order: {
-    locateLockTargets(
-      db: ReadDbClient,
-      orderPaymentId: number,
-    ): Promise<{ buyerId: number; slotId: number }>;
-    loadPayment(db: ReadDbClient, orderPaymentId: number): Promise<OrderPaymentFacts>;
-    markPaid(
-      db: DbClient,
-      input: { orderId: number; orderPaymentId: number; reservationId: number },
-    ): Promise<void>;
+    loadPayment(orderPaymentId: number): Promise<OrderPaymentFacts>;
+    markPaid(input: {
+      orderId: number;
+      orderPaymentId: number;
+      reservationId: number;
+    }): Promise<void>;
   };
   commissionType: {
-    load(db: ReadDbClient, commissionTypeId: number): Promise<CommissionTypeFacts>;
+    load(commissionTypeId: number): Promise<CommissionTypeFacts>;
   };
   finance: {
-    locateHolder(
-      db: ReadDbClient,
-      binding: { namespace: 'user'; key: string },
-    ): Promise<number>;
-    reserve(db: DbClient, request: FinancialRequest): Promise<ReservationReceipt>;
+    locateHolder(binding: { namespace: 'user'; key: string }): Promise<number>;
+    reserve(request: FinancialRequest): Promise<ReservationReceipt>;
   };
   contract: {
-    create(db: DbClient, formation: ContractFormation): Promise<{ contractId: number }>;
+    create(formation: ContractFormation): Promise<{ contractId: number }>;
   };
   slot: {
-    load(db: ReadDbClient, slotId: number): Promise<SlotFacts>;
-    confirm(db: DbClient, input: { slotId: number; workerId: number }): Promise<void>;
+    load(slotId: number): Promise<SlotFacts>;
+    confirm(input: { slotId: number; workerId: number }): Promise<void>;
   };
+}
+
+/** The composition root retains DB capabilities and binds them per transaction. */
+export interface CheckoutPorts {
+  locateOrderLockTargets(orderPaymentId: number): Promise<{ buyerId: number; slotId: number }>;
+  locateFinancialHolder(binding: { namespace: 'user'; key: string }): Promise<number>;
+  bindTransaction(db: DbClient): CheckoutTransactionPorts;
 }

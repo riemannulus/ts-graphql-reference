@@ -218,13 +218,13 @@ model FinancialReservation {
   bindingKey       String
   holderId         Int
   holder           FinancialHolder      @relation(fields: [holderId], references: [id], onDelete: Restrict)
+  purpose          String
   currency         String
   targetAmount     Int
   state            String               @default("HELD")
   escrowAccount    FinancialAccount?
   transfer         FinancialTransfer?
   orderLink        OrderFinancialLink?
-  commands         CheckoutCommand[]
   createdAt        DateTime             @default(now()) @db.Timestamptz(6)
 
   @@unique([bindingNamespace, bindingKey])
@@ -302,22 +302,18 @@ model Contract {
   buyer     User              @relation("ContractBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
   workerId  Int
   worker    User              @relation("ContractWorker", fields: [workerId], references: [id], onDelete: Restrict)
-  commands  CheckoutCommand[]
   formedAt  DateTime          @default(now()) @db.Timestamptz(6)
 
   @@index([buyerId])
   @@index([workerId])
 }
 
-/// PROTOTYPE — complete replay result for one checkout command.
+/// PROTOTYPE — a replay key. Result ids are derived through OrderPayment's
+/// product-owned reservation link and Order's Contract relation.
 model CheckoutCommand {
   commandKey     String               @id
   payloadHash    String
   orderPaymentId Int
   orderPayment   OrderPayment         @relation(fields: [orderPaymentId], references: [id], onDelete: Restrict)
-  reservationId  Int
-  reservation    FinancialReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
-  contractId     Int
-  contract       Contract             @relation(fields: [contractId], references: [id], onDelete: Restrict)
   createdAt      DateTime             @default(now()) @db.Timestamptz(6)
 }

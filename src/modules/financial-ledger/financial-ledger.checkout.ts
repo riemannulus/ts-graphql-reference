@@ -14,6 +14,7 @@ export async function reserveFundsForCheckout(
     bindingNamespace: string;
     bindingKey: string;
     holderId: number;
+    purpose: 'COMMISSION_PAYMENT';
     currency: 'POINT';
     amount: number;
   },
