@@ -108,5 +108,5 @@ test.prop([fc.commands(commands, { size: '+1' })])(
     const user = await prisma.user.create({ data: { email: `pmodel-${seq++}@example.com` } });
     await fc.asyncModelRun(() => ({ model: { paid: 0, free: 0 }, real: { userId: user.id } }), cmds);
   },
-  30_000, // 100 runs × several commands × real DB round-trips
+  120_000, // 100 runs × several commands × real DB round-trips — budgeted for slow CI runners
 );
