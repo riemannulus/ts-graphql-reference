@@ -127,4 +127,4 @@
 - [x] Update the glossary and ADR with settlement/withdrawal lineage and payout-batch extension.
 - [x] Run Prisma validation/drift, typecheck, lint, graph check, build, full tests, and `git diff --check`.
 - [x] Obtain independent architecture and data-integrity approval, respond to every critique, and record the final verdicts in the PR.
-- [ ] Commit, push, update PR #17, update the hosted explanation site, and confirm GitHub CI.
+- [x] Commit, push, update PR #17, update the hosted explanation site, and confirm GitHub CI.
