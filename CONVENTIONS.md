@@ -43,7 +43,7 @@ per-file lint cannot:
 - **Cross-module dependencies come from an explicit allowlist** — today
   `onboarding → {user, post}`, `search → post`, `auth → user` (types
   only; the service arrives injected), and `commission-checkout → {commission-type,
-  contract, financial-ledger, order, slot}` (reviewed repo/core files only).
+  contract, financial-ledger, order, slot, transaction-flow}` (reviewed repo/core files only).
   Two modules can entangle with no
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
   which `import/no-cycle` cannot see — the allowlist can, and since its

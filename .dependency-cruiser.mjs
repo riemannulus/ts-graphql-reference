@@ -10,7 +10,7 @@
  *   pulls Context as a type only, context.ts pulls Services as a type only);
  * - which module may depend on which (the cross-module allowlist below). The
  *   allowlisted edges — onboarding → {user, post}, search → post,
- *   auth → user (type-only), commission-checkout → its five owner repos — form a DAG by construction:
+ *   auth → user (type-only), commission-checkout → its reviewed owner repos plus transaction-flow — form a DAG by construction:
  *   owner modules fall
  *   under the default ban, so they can never point back. A module-level cycle
  *   can therefore only enter by editing this file, which is the review point;
@@ -80,13 +80,13 @@ export default {
       name: 'commission-checkout-reaches-reviewed-owners-only',
       comment:
         'Commission checkout is a composite read → plan → apply use-case. Its service passes one transaction ' +
-        'directly to the five owner repos; those owners never point back.',
+        'directly to the five owner repos and the generic transaction-flow module; those owners never point back.',
       severity: 'error',
       from: { path: '^src/modules/commission-checkout/' },
       to: {
         path: '^src/modules/',
         pathNot:
-          '^src/modules/(commission-checkout|commission-type|contract|financial-ledger|order|slot)/',
+          '^src/modules/(commission-checkout|commission-type|contract|financial-ledger|order|slot|transaction-flow)/',
       },
     },
     {
@@ -97,9 +97,9 @@ export default {
       severity: 'error',
       from: { path: '^src/modules/commission-checkout/' },
       to: {
-        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/',
+        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot|transaction-flow)/',
         pathNot:
-          '^src/modules/(commission-type/commission-type\\.repo|contract/contract\\.repo|financial-ledger/financial-ledger\\.(core|repo)|order/order\\.repo|slot/slot\\.repo)\\.ts$',
+          '^src/modules/(commission-type/commission-type\\.repo|contract/contract\\.repo|financial-ledger/financial-ledger\\.(core|repo)|order/order\\.repo|slot/slot\\.repo|transaction-flow/transaction-flow\\.(core|repo))\\.ts$',
       },
     },
     {
@@ -112,7 +112,9 @@ export default {
         path: '^src/modules/commission-checkout/',
         pathNot: '^src/modules/commission-checkout/commission-checkout\\.service\\.ts$',
       },
-      to: { path: '^src/modules/(commission-type|contract|financial-ledger|order|slot)/' },
+      to: {
+        path: '^src/modules/(commission-type|contract|financial-ledger|order|slot|transaction-flow)/',
+      },
     },
     {
       name: 'composition-root-is-the-top',

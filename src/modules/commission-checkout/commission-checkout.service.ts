@@ -10,18 +10,22 @@ import * as financialLedgerRepo from '../financial-ledger/financial-ledger.repo.
 import * as orderRepo from '../order/order.repo.js';
 import * as slotRepo from '../slot/slot.repo.js';
 import {
+  formatCommandId,
+  formatOperationId,
+  formatTransactionReference,
+} from '../transaction-flow/transaction-flow.core.js';
+import * as transactionFlowRepo from '../transaction-flow/transaction-flow.repo.js';
+import {
   assertLockedCommissionCheckoutTargets,
+  assertCommissionCheckoutReplayIdentity,
   planCommissionCheckout,
+  planCommissionCheckoutCommand,
   planCommissionCheckoutStart,
   type CommissionCheckoutInput,
   type CommissionCheckoutPlan,
   type CommissionCheckoutResult,
 } from './commission-checkout.core.js';
-import {
-  findCommissionCheckoutCommand,
-  findCommissionCheckoutCommandByPayment,
-  saveCommissionCheckoutCommand,
-} from './commission-checkout.repo.js';
+import { loadCompletedCommissionCheckoutResult } from './commission-checkout.repo.js';
 
 const COMMISSION_BUYER_HOLDER_NAMESPACE = 'user';
 
@@ -46,7 +50,10 @@ interface ExecutableCommissionCheckoutPlan {
   };
 }
 
-type CommissionCheckoutEconomicResult = Omit<CommissionCheckoutResult, 'replayed'>;
+type CommissionCheckoutDomainResult = Pick<
+  CommissionCheckoutResult,
+  'orderId' | 'orderPaymentId' | 'contractId' | 'reservationId'
+>;
 
 export function createCommissionCheckoutService(db: Db) {
   async function complete(input: CommissionCheckoutInput): Promise<CommissionCheckoutResult> {
@@ -81,7 +88,7 @@ async function prepareCommissionCheckout(
       lockKey.orderPayment(input.orderPaymentId),
       lockKey.financialHolder(financialHolderId),
       lockKey.commissionSlot(orderTargets.slotId),
-      lockKey.commissionCheckoutCommand(input.commandKey),
+      lockKey.commissionCheckoutCommand(`${input.actorId}:PAY:${input.commandKey}`),
     ],
   };
 }
@@ -94,24 +101,59 @@ async function executeCommissionCheckout(
   if (replay) return replay;
 
   const plan = await loadCommissionCheckoutPlan(tx, prepared);
-  const result = await applyCommissionCheckoutPlan(tx, plan);
+  const command = await transactionFlowRepo.startCommand(tx, {
+    ...plan.commissionPlan.commandRequest,
+    payloadHash: prepared.payloadHash,
+  });
+  const operation = await transactionFlowRepo.createTransferOperation(tx, {
+    commandId: command.id,
+    flowId: command.flowId,
+    ...plan.commissionPlan.operationRequest,
+  });
+  const result = await applyCommissionCheckoutPlan(tx, plan, operation.action.id);
 
-  await saveCommissionCheckoutCommand(tx, prepared.input, prepared.payloadHash, result);
-  return { ...result, replayed: false };
+  return {
+    ...result,
+    referenceId: formatTransactionReference({
+      kind: command.flowKind,
+      id: command.flowId,
+    }),
+    commandId: formatCommandId({ kind: command.kind, id: command.id }),
+    operationId: formatOperationId({ kind: operation.operation.kind, id: operation.operation.id }),
+    replayed: false,
+  };
 }
 
 async function replayCompletedCommissionCheckout(
   tx: DbClient,
   prepared: PreparedCommissionCheckout,
 ): Promise<CommissionCheckoutResult | null> {
+  const requested = {
+    ...planCommissionCheckoutCommand(prepared.input),
+    payloadHash: prepared.payloadHash,
+  };
   // Interactive transaction handles execute sequentially.
-  const stored = await findCommissionCheckoutCommand(tx, prepared.input.commandKey);
-  const completed = await findCommissionCheckoutCommandByPayment(
-    tx,
-    prepared.input.orderPaymentId,
-  );
+  const storedIdentity = await transactionFlowRepo.findCommand(tx, requested);
+  if (storedIdentity) {
+    // Validate the idempotency identity before dereferencing any product subject.
+    assertCommissionCheckoutReplayIdentity(storedIdentity, requested);
+    const completed = requireCompletedCommand(storedIdentity);
+    const stored = await loadCompletedCommissionCheckoutResult(tx, completed);
+    return { ...stored.result, replayed: true };
+  }
+
+  const completedIdentity = await transactionFlowRepo.findCompletedCommandBySubject(tx, requested);
+  const completed = completedIdentity
+    ? {
+        ...(await loadCompletedCommissionCheckoutResult(
+          tx,
+          requireCompletedCommand(completedIdentity),
+        )),
+        payloadHash: completedIdentity.payloadHash,
+      }
+    : null;
   const start = planCommissionCheckoutStart(
-    stored,
+    null,
     completed,
     prepared.payloadHash,
     prepared.input.actorId,
@@ -119,7 +161,18 @@ async function replayCompletedCommissionCheckout(
 
   if (start.kind === 'PROCEED') return null;
   if (start.saveAlias) {
-    await saveCommissionCheckoutCommand(tx, prepared.input, prepared.payloadHash, start.result);
+    if (!completedIdentity) throw new Error('Completed commission payment disappeared during replay');
+    const completeIdentity = requireCompletedCommand(completedIdentity);
+    const alias = await transactionFlowRepo.saveCommandAlias(tx, {
+      flowId: completeIdentity.flowId,
+      ...requested,
+      resultOperationId: completeIdentity.operationDbId,
+    });
+    return {
+      ...start.result,
+      commandId: formatCommandId({ kind: alias.kind, id: alias.id }),
+      replayed: true,
+    };
   }
   return { ...start.result, replayed: true };
 }
@@ -183,13 +236,15 @@ async function loadCommissionCheckoutPlan(
 async function applyCommissionCheckoutPlan(
   tx: DbClient,
   plan: ExecutableCommissionCheckoutPlan,
-): Promise<CommissionCheckoutEconomicResult> {
+  actionId: string,
+): Promise<CommissionCheckoutDomainResult> {
   // Ledger domain: reserve POINT lots and create the ESCROW transfer.
   const reservation = await financialLedgerRepo.applyCommissionPaymentReservation(
     tx,
     plan.commissionPlan.financialRequest,
     plan.reservation.accountId,
     plan.reservation.allocations,
+    actionId,
   );
 
   // Product domain: form Contract, complete Order/payment, link its reservation, and occupy Slot.
@@ -218,6 +273,16 @@ function hashCommissionCheckoutPayload(input: CommissionCheckoutInput): string {
   return createHash('sha256')
     .update(JSON.stringify([input.orderPaymentId, input.actorId]))
     .digest('hex');
+}
+
+function requireCompletedCommand<T extends {
+  operationDbId: string | null;
+  operationId: string | null;
+}>(identity: T): T & { operationDbId: string; operationId: string } {
+  if (!identity.operationDbId || !identity.operationId) {
+    throw new Error('Financial command has no completed economic result');
+  }
+  return identity as T & { operationDbId: string; operationId: string };
 }
 
 export type CommissionCheckoutService = ReturnType<typeof createCommissionCheckoutService>;

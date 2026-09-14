@@ -55,7 +55,7 @@ export async function loadAvailablePointWorld(db: ReadDbClient, holderId: number
 export async function applyCommissionPaymentReservation(
   db: DbClient,
   request: {
-    referenceId: string;
+    flowId: string;
     bindingNamespace: string;
     bindingKey: string;
     holderId: number;
@@ -65,6 +65,7 @@ export async function applyCommissionPaymentReservation(
   },
   accountId: number,
   allocations: readonly FinancialAllocation[],
+  actionId: string,
 ) {
   for (const allocation of allocations) {
     // Interactive transaction handles execute sequentially, and each guarded
@@ -78,7 +79,7 @@ export async function applyCommissionPaymentReservation(
   }
   const reservation = await db.financialReservation.create({
     data: {
-      referenceId: request.referenceId,
+      flowId: request.flowId,
       bindingNamespace: request.bindingNamespace,
       bindingKey: request.bindingKey,
       holderId: request.holderId,
@@ -93,9 +94,11 @@ export async function applyCommissionPaymentReservation(
   const transfer = await db.financialTransfer.create({
     data: {
       reservationId: reservation.id,
+      flowId: request.flowId,
       fromAccountId: accountId,
       toAccountId: escrow.id,
       amount: request.amount,
+      actionId,
     },
   });
   await db.financialTransferAllocation.createMany({

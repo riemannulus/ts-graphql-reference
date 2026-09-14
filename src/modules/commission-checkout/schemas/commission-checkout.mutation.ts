@@ -18,6 +18,9 @@ export function registerCommissionCheckoutMutations(): void {
       orderPaymentId: t.exposeInt('orderPaymentId'),
       contractId: t.exposeInt('contractId'),
       reservationId: t.exposeInt('reservationId'),
+      referenceId: t.exposeString('referenceId'),
+      commandId: t.exposeString('commandId'),
+      operationId: t.exposeString('operationId'),
       replayed: t.exposeBoolean('replayed'),
     }),
   });

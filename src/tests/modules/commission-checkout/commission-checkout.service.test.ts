@@ -1,5 +1,10 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { CommissionCheckoutIdempotencyError, CommissionCheckoutStateError } from '../../../modules/commission-checkout/commission-checkout.core.js';
+import {
+  CommissionCheckoutActorError,
+  CommissionCheckoutIdempotencyError,
+  CommissionCheckoutStateError,
+} from '../../../modules/commission-checkout/commission-checkout.core.js';
 import { createCommissionCheckoutService } from '../../../modules/commission-checkout/commission-checkout.service.js';
 import { InsufficientFinancialFundsError } from '../../../modules/financial-ledger/financial-ledger.core.js';
 import { resetDb, makeTestPrisma } from '../../support/helpers.js';
@@ -19,8 +24,12 @@ async function seedCommissionCheckoutWorld(opts: { balance?: number; slotState?:
   const slot = await prisma.commissionSlot.create({
     data: { workerId: worker.id, state: opts.slotState ?? 'AVAILABLE' },
   });
+  const flow = await prisma.transactionFlow.create({
+    data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+  });
   const order = await prisma.order.create({
     data: {
+      flowId: flow.id,
       buyerId: buyer.id,
       commissionTypeId: commissionType.id,
       slotId: slot.id,
@@ -31,7 +40,7 @@ async function seedCommissionCheckoutWorld(opts: { balance?: number; slotState?:
   const payment = await prisma.orderPayment.create({
     data: {
       orderId: order.id,
-      referenceId: `order-payment:${order.id}`,
+      flowId: flow.id,
       amount: order.amount,
     },
   });
@@ -89,6 +98,9 @@ describe('CommissionCheckoutService.complete', () => {
       orderPaymentId: world.payment.id,
       contractId: 1,
       reservationId: 1,
+      referenceId: expect.stringMatching(/^COMMISSION-[0-9a-f-]{36}$/),
+      commandId: expect.stringMatching(/^CMD-PAY-[0-9a-f-]{36}$/),
+      operationId: expect.stringMatching(/^OP-PAY-[0-9a-f-]{36}$/),
       replayed: false,
     });
     expect(await prisma.order.findUniqueOrThrow({ where: { id: world.order.id } })).toMatchObject({
@@ -109,7 +121,9 @@ describe('CommissionCheckoutService.complete', () => {
     expect(await prisma.financialTransfer.count()).toBe(1);
     expect(await prisma.financialTransferAllocation.count()).toBe(1);
     expect(await prisma.orderFinancialLink.count()).toBe(1);
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
+    expect(await prisma.financialCommandRun.count()).toBe(1);
+    expect(await prisma.financialOperation.count()).toBe(1);
+    expect(await prisma.financialTransferAction.count()).toBe(1);
   });
 
   it('preserves exact FIFO lot provenance across a multi-lot reservation', async () => {
@@ -139,8 +153,8 @@ describe('CommissionCheckoutService.complete', () => {
       },
     });
     expect(reservation).toMatchObject({
-      referenceId: world.payment.referenceId,
-      bindingNamespace: 'order-payment',
+      flowId: world.order.flowId,
+      bindingNamespace: 'commission-order-payment',
       bindingKey: String(world.payment.id),
       holderId: world.holder.id,
       purpose: 'COMMISSION_PAYMENT',
@@ -194,7 +208,9 @@ describe('CommissionCheckoutService.complete', () => {
       expect(await prisma.financialTransfer.count()).toBe(0);
       expect(await prisma.orderFinancialLink.count()).toBe(0);
       expect(await prisma.contract.count()).toBe(0);
-      expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
+      expect(await prisma.financialCommandRun.count()).toBe(0);
+      expect(await prisma.financialOperation.count()).toBe(0);
+      expect(await prisma.financialTransferAction.count()).toBe(0);
       expect(await prisma.financialAccount.count({ where: { purpose: 'ESCROW' } })).toBe(0);
       expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
         remainingAmount: 1_000,
@@ -220,7 +236,7 @@ describe('CommissionCheckoutService.complete', () => {
     const second = await commissionCheckout.complete(input);
 
     expect(second).toEqual({ ...first, replayed: true });
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
+    expect(await prisma.financialCommandRun.count()).toBe(1);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
@@ -228,7 +244,7 @@ describe('CommissionCheckoutService.complete', () => {
     });
   });
 
-  it('rejects reusing a command key for a different payload', async () => {
+  it('scopes command keys by principal and rejects another actor at the Order boundary', async () => {
     const world = await seedCommissionCheckoutWorld();
     const commissionCheckout = createCommissionCheckoutService(db);
     await commissionCheckout.complete({
@@ -243,8 +259,8 @@ describe('CommissionCheckoutService.complete', () => {
         actorId: world.worker.id,
         commandKey: 'collision',
       }),
-    ).rejects.toBeInstanceOf(CommissionCheckoutIdempotencyError);
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(1);
+    ).rejects.toBeInstanceOf(CommissionCheckoutActorError);
+    expect(await prisma.financialCommandRun.count()).toBe(1);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
   });
@@ -264,13 +280,78 @@ describe('CommissionCheckoutService.complete', () => {
       commandKey: 'second-key',
     });
 
-    expect(replay).toEqual({ ...first, replayed: true });
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(2);
+    expect(replay).toEqual({
+      ...first,
+      commandId: expect.stringMatching(/^CMD-PAY-[0-9a-f-]{36}$/),
+      replayed: true,
+    });
+    expect(replay.commandId).not.toBe(first.commandId);
+    expect(await prisma.financialCommandRun.count()).toBe(2);
     expect(await prisma.financialReservation.count()).toBe(1);
     expect(await prisma.contract.count()).toBe(1);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 500,
     });
+  });
+
+  it('classifies a command key already bound to another subject before loading it', async () => {
+    const world = await seedCommissionCheckoutWorld();
+    await prisma.financialCommandRun.create({
+      data: {
+        flowId: world.order.flowId,
+        flowKind: 'COMMISSION',
+        kind: 'PAY',
+        principalId: world.buyer.id,
+        idempotencyKey: 'foreign-subject',
+        payloadHash: 'different-payload',
+        subjectNamespace: 'another-product',
+        subjectKey: 'missing',
+      },
+    });
+
+    await expect(
+      createCommissionCheckoutService(db).complete({
+        orderPaymentId: world.payment.id,
+        actorId: world.buyer.id,
+        commandKey: 'foreign-subject',
+      }),
+    ).rejects.toBeInstanceOf(CommissionCheckoutIdempotencyError);
+  });
+
+  it('rejects replay when a valid product subject is bound to another flow', async () => {
+    const world = await seedCommissionCheckoutWorld();
+    const otherFlow = await prisma.transactionFlow.create({
+      data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+    });
+    const command = await prisma.financialCommandRun.create({
+      data: {
+        flowId: otherFlow.id,
+        flowKind: 'COMMISSION',
+        kind: 'PAY',
+        principalId: world.buyer.id,
+        idempotencyKey: 'wrong-flow',
+        payloadHash: createHash('sha256')
+          .update(JSON.stringify([world.payment.id, world.buyer.id]))
+          .digest('hex'),
+        subjectNamespace: 'commission-order-payment',
+        subjectKey: String(world.payment.id),
+      },
+    });
+    const operation = await prisma.financialOperation.create({
+      data: { flowId: otherFlow.id, kind: 'PAY', originatingCommandId: command.id },
+    });
+    await prisma.financialCommandRun.update({
+      where: { id: command.id },
+      data: { resultOperationId: operation.id },
+    });
+
+    await expect(
+      createCommissionCheckoutService(db).complete({
+        orderPaymentId: world.payment.id,
+        actorId: world.buyer.id,
+        commandKey: 'wrong-flow',
+      }),
+    ).rejects.toThrow(/belongs to flow/);
   });
 
   it('rejects insufficient POINT without any partial write', async () => {
@@ -286,7 +367,7 @@ describe('CommissionCheckoutService.complete', () => {
     ).rejects.toBeInstanceOf(InsufficientFinancialFundsError);
     expect(await prisma.financialReservation.count()).toBe(0);
     expect(await prisma.contract.count()).toBe(0);
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
+    expect(await prisma.financialCommandRun.count()).toBe(0);
     expect(await prisma.pointLot.findUniqueOrThrow({ where: { id: world.lot.id } })).toMatchObject({
       remainingAmount: 499,
     });
@@ -305,6 +386,6 @@ describe('CommissionCheckoutService.complete', () => {
     ).rejects.toBeInstanceOf(CommissionCheckoutStateError);
     expect(await prisma.financialReservation.count()).toBe(0);
     expect(await prisma.contract.count()).toBe(0);
-    expect(await prisma.commissionCheckoutCommand.count()).toBe(0);
+    expect(await prisma.financialCommandRun.count()).toBe(0);
   });
 });

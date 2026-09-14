@@ -1,5 +1,7 @@
 # Commission Checkout Ledger PoC Implementation Plan
 
+> Revision note (2026-09-14): the original execution checklist below records the first slice. The accepted follow-up replaces arbitrary `referenceId`/`CommissionCheckoutCommand` identity with the typed Flow → Command → Operation → Action model in the companion design spec, `CONTEXT.md`, and ADR 0001. Those documents are authoritative where identifiers or persisted models differ.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove that one GraphQL commission checkout can atomically reserve POINT and form a Contract by applying a pure plan through isolated owner repos.

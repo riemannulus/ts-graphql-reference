@@ -1,81 +1,45 @@
 import type { DbClient } from '../../db/db.js';
-import type {
-  CommissionCheckoutInput,
-  CommissionCheckoutResult,
-} from './commission-checkout.core.js';
 
-const commandResultSelect = {
-  commandKey: true,
-  payloadHash: true,
-  orderPaymentId: true,
-  orderPayment: {
+export async function loadCompletedCommissionCheckoutResult(
+  db: DbClient,
+  identity: {
+    flowId: string;
+    subjectKey: string;
+    referenceId: string;
+    commandId: string;
+    operationId: string;
+  },
+) {
+  const orderPaymentId = Number(identity.subjectKey);
+  if (!Number.isSafeInteger(orderPaymentId)) {
+    throw new Error(`Commission payment subject ${identity.subjectKey} is invalid`);
+  }
+  const payment = await db.orderPayment.findUniqueOrThrow({
+    where: { id: orderPaymentId },
     select: {
+      flowId: true,
       financialLink: { select: { reservationId: true } },
       order: { select: { id: true, buyerId: true, contract: { select: { id: true } } } },
     },
-  },
-} as const;
-
-function mapStoredCommand(row: {
-  commandKey: string;
-  payloadHash: string;
-  orderPaymentId: number;
-  orderPayment: {
-    financialLink: { reservationId: number } | null;
-    order: { id: number; buyerId: number; contract: { id: number } | null };
-  };
-}) {
-  const { financialLink } = row.orderPayment;
-  const { contract } = row.orderPayment.order;
-  if (!financialLink || !contract) {
+  });
+  if (payment.flowId !== identity.flowId) {
     throw new Error(
-      `Commission checkout command ${row.commandKey} has no completed economic result`,
+      `Commission payment ${orderPaymentId} belongs to flow ${payment.flowId}, not ${identity.flowId}`,
     );
   }
+  if (!payment.financialLink || !payment.order.contract) {
+    throw new Error(`Commission payment ${orderPaymentId} has no completed result`);
+  }
   return {
-    commandKey: row.commandKey,
-    payloadHash: row.payloadHash,
-    buyerId: row.orderPayment.order.buyerId,
+    buyerId: payment.order.buyerId,
     result: {
-      orderId: row.orderPayment.order.id,
-      orderPaymentId: row.orderPaymentId,
-      reservationId: financialLink.reservationId,
-      contractId: contract.id,
+      orderId: payment.order.id,
+      orderPaymentId,
+      reservationId: payment.financialLink.reservationId,
+      contractId: payment.order.contract.id,
+      referenceId: identity.referenceId,
+      commandId: identity.commandId,
+      operationId: identity.operationId,
     },
   };
-}
-
-export async function findCommissionCheckoutCommand(db: DbClient, commandKey: string) {
-  const row = await db.commissionCheckoutCommand.findUnique({
-    where: { commandKey },
-    select: commandResultSelect,
-  });
-  return row ? mapStoredCommand(row) : null;
-}
-
-export async function findCommissionCheckoutCommandByPayment(
-  db: DbClient,
-  orderPaymentId: number,
-) {
-  const row = await db.commissionCheckoutCommand.findFirst({
-    where: { orderPaymentId },
-    orderBy: { createdAt: 'asc' },
-    select: commandResultSelect,
-  });
-  return row ? mapStoredCommand(row) : null;
-}
-
-export function saveCommissionCheckoutCommand(
-  db: DbClient,
-  input: CommissionCheckoutInput,
-  payloadHash: string,
-  result: Omit<CommissionCheckoutResult, 'replayed'>,
-) {
-  return db.commissionCheckoutCommand.create({
-    data: {
-      commandKey: input.commandKey,
-      payloadHash,
-      orderPaymentId: result.orderPaymentId,
-    },
-  });
 }

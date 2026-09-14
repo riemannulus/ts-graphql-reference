@@ -22,21 +22,22 @@ export async function loadCommissionCheckoutPaymentFacts(
     where: { id: orderPaymentId },
     select: {
       id: true,
-      referenceId: true,
-      amount: true,
-      currency: true,
-      state: true,
+      flowId: true,
       order: {
         select: {
           id: true,
           buyerId: true,
           commissionTypeId: true,
           slotId: true,
+          flowId: true,
           amount: true,
           currency: true,
           state: true,
         },
       },
+      amount: true,
+      currency: true,
+      state: true,
     },
   });
   if (!row) throw new OrderPaymentNotFoundError(orderPaymentId);
@@ -46,7 +47,7 @@ export async function loadCommissionCheckoutPaymentFacts(
     buyerId: row.order.buyerId,
     commissionTypeId: row.order.commissionTypeId,
     slotId: row.order.slotId,
-    referenceId: row.referenceId,
+    flowId: row.flowId,
     orderAmount: row.order.amount,
     paymentAmount: row.amount,
     orderCurrency: row.order.currency,
@@ -58,7 +59,7 @@ export async function loadCommissionCheckoutPaymentFacts(
 
 export async function applyCommissionCheckoutPayment(
   db: DbClient,
-  input: { orderId: number; orderPaymentId: number; reservationId: number },
+  input: { orderId: number; orderPaymentId: number; flowId: string; reservationId: number },
 ): Promise<void> {
   const payment = await db.orderPayment.updateMany({
     where: { id: input.orderPaymentId, orderId: input.orderId, state: 'PENDING' },
@@ -71,6 +72,10 @@ export async function applyCommissionCheckoutPayment(
   });
   if (order.count !== 1) throw new ConcurrentUpdateError(`Order ${input.orderId}`);
   await db.orderFinancialLink.create({
-    data: { orderPaymentId: input.orderPaymentId, reservationId: input.reservationId },
+    data: {
+      orderPaymentId: input.orderPaymentId,
+      flowId: input.flowId,
+      reservationId: input.reservationId,
+    },
   });
 }

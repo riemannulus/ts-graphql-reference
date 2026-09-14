@@ -38,8 +38,12 @@ async function seedCommissionCheckoutGraphqlWorld() {
     data: { workerId: worker.id, title: 'portrait', price: 500 },
   });
   const slot = await prisma.commissionSlot.create({ data: { workerId: worker.id } });
+  const flow = await prisma.transactionFlow.create({
+    data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+  });
   const order = await prisma.order.create({
     data: {
+      flowId: flow.id,
       buyerId: buyer.id,
       commissionTypeId: commissionType.id,
       slotId: slot.id,
@@ -48,7 +52,7 @@ async function seedCommissionCheckoutGraphqlWorld() {
     },
   });
   const payment = await prisma.orderPayment.create({
-    data: { orderId: order.id, referenceId: `gql-payment:${order.id}`, amount: order.amount },
+    data: { orderId: order.id, flowId: flow.id, amount: order.amount },
   });
   const holder = await prisma.financialHolder.create({
     data: { bindingNamespace: 'user', bindingKey: String(buyer.id) },
@@ -73,7 +77,7 @@ describe('GraphQL API', () => {
     const world = await seedCommissionCheckoutGraphqlWorld();
     const mutation = `mutation CommissionCheckout($payment: Int!, $actor: Int!, $key: String!) {
       checkoutCommission(input: { orderPaymentId: $payment, actorId: $actor, commandKey: $key }) {
-        orderId orderPaymentId contractId reservationId replayed
+        orderId orderPaymentId contractId reservationId referenceId commandId operationId replayed
       }
     }`;
     const variables = { payment: world.payment.id, actor: world.buyer.id, key: 'gql-pay-1' };
@@ -87,6 +91,9 @@ describe('GraphQL API', () => {
       orderPaymentId: world.payment.id,
       contractId: 1,
       reservationId: 1,
+      referenceId: expect.stringMatching(/^COMMISSION-[0-9a-f-]{36}$/),
+      commandId: expect.stringMatching(/^CMD-PAY-[0-9a-f-]{36}$/),
+      operationId: expect.stringMatching(/^OP-PAY-[0-9a-f-]{36}$/),
       replayed: false,
     });
     expect(second.errors).toBeUndefined();

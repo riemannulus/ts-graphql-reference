@@ -128,16 +128,25 @@ async function contractBarrier() {
   };
 }
 
-async function seedCommissionCheckoutWorld(suffix: string) {
+async function seedCommissionCheckoutWorld(
+  suffix: string,
+  existingBuyer?: { id: number },
+) {
   if (!first) throw new Error('COMMISSION_CHECKOUT_RACE_DATABASE_URL is required');
-  const buyer = await first.user.create({ data: { email: `race-buyer-${suffix}@example.com` } });
+  const buyer =
+    existingBuyer ??
+    (await first.user.create({ data: { email: `race-buyer-${suffix}@example.com` } }));
   const worker = await first.user.create({ data: { email: `race-worker-${suffix}@example.com` } });
   const commissionType = await first.commissionType.create({
     data: { workerId: worker.id, title: 'portrait', price: 500 },
   });
   const slot = await first.commissionSlot.create({ data: { workerId: worker.id } });
+  const flow = await first.transactionFlow.create({
+    data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+  });
   const order = await first.order.create({
     data: {
+      flowId: flow.id,
       buyerId: buyer.id,
       commissionTypeId: commissionType.id,
       slotId: slot.id,
@@ -146,22 +155,24 @@ async function seedCommissionCheckoutWorld(suffix: string) {
     },
   });
   const payment = await first.orderPayment.create({
-    data: { orderId: order.id, referenceId: `race:${suffix}`, amount: order.amount },
+    data: { orderId: order.id, flowId: flow.id, amount: order.amount },
   });
-  const holder = await first.financialHolder.create({
-    data: { bindingNamespace: 'user', bindingKey: String(buyer.id) },
-  });
-  const account = await first.financialAccount.create({
-    data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
-  });
-  await first.pointLot.create({
-    data: {
-      accountId: account.id,
-      sourceKind: 'PAID',
-      originalAmount: 1_000,
-      remainingAmount: 1_000,
-    },
-  });
+  if (!existingBuyer) {
+    const holder = await first.financialHolder.create({
+      data: { bindingNamespace: 'user', bindingKey: String(buyer.id) },
+    });
+    const account = await first.financialAccount.create({
+      data: { currency: 'POINT', purpose: 'AVAILABLE', holderId: holder.id },
+    });
+    await first.pointLot.create({
+      data: {
+        accountId: account.id,
+        sourceKind: 'PAID',
+        originalAmount: 1_000,
+        remainingAmount: 1_000,
+      },
+    });
+  }
   return { buyer, payment };
 }
 
@@ -200,7 +211,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
       expect(results[0].reservationId).toBe(results[1].reservationId);
       expect(await clients.first.financialReservation.count()).toBe(1);
       expect(await clients.first.contract.count()).toBe(1);
-      expect(await clients.first.commissionCheckoutCommand.count()).toBe(1);
+      expect(await clients.first.financialCommandRun.count()).toBe(1);
     } finally {
       await barrier.release();
     }
@@ -209,7 +220,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
   it('classifies a concurrently reused command key as an idempotency mismatch', async () => {
     const clients = requireClients();
     const left = await seedCommissionCheckoutWorld('left');
-    const right = await seedCommissionCheckoutWorld('right');
+    const right = await seedCommissionCheckoutWorld('right', left.buyer);
     const barrier = await contractBarrier();
     try {
       const firstRequest = createCommissionCheckoutService({ rw: clients.first, ro: clients.first }).complete({
@@ -238,7 +249,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
       expect(rejected[0]!.reason).toBeInstanceOf(CommissionCheckoutIdempotencyError);
       expect(await clients.first.financialReservation.count()).toBe(1);
       expect(await clients.first.contract.count()).toBe(1);
-      expect(await clients.first.commissionCheckoutCommand.count()).toBe(1);
+      expect(await clients.first.financialCommandRun.count()).toBe(1);
     } finally {
       await barrier.release();
     }
@@ -246,6 +257,30 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
 
   it('rejects a reservation basis update while its first transfer is uncommitted', async () => {
     const clients = requireClients();
+    const principal = await clients.first.user.create({
+      data: { email: 'concurrent-ledger-principal@example.com' },
+    });
+    const flow = await clients.first.transactionFlow.create({
+      data: { kind: 'COMMISSION', policies: { create: { commandKind: 'PAY' } } },
+    });
+    const command = await clients.first.financialCommandRun.create({
+      data: {
+        flowId: flow.id,
+        flowKind: 'COMMISSION',
+        kind: 'PAY',
+        principalId: principal.id,
+        idempotencyKey: 'concurrent-ledger-command',
+        payloadHash: 'test',
+        subjectNamespace: 'test',
+        subjectKey: 'concurrent-ledger',
+      },
+    });
+    const operation = await clients.first.financialOperation.create({
+      data: { flowId: flow.id, kind: 'PAY', originatingCommandId: command.id },
+    });
+    const action = await clients.first.financialTransferAction.create({
+      data: { operationId: operation.id, flowId: flow.id },
+    });
     const holder = await clients.first.financialHolder.create({
       data: { bindingNamespace: 'user', bindingKey: 'concurrent-ledger-owner' },
     });
@@ -254,7 +289,7 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
     });
     const reservation = await clients.first.financialReservation.create({
       data: {
-        referenceId: 'concurrent-ledger-payment',
+        flowId: flow.id,
         bindingNamespace: 'order-payment',
         bindingKey: 'concurrent-ledger-payment',
         holderId: holder.id,
@@ -287,9 +322,11 @@ describe.skipIf(!databaseUrl)('commission checkout concurrency on PostgreSQL', (
       const transfer = await tx.financialTransfer.create({
         data: {
           reservationId: reservation.id,
+          flowId: flow.id,
           fromAccountId: available.id,
           toAccountId: escrow.id,
           amount: 100,
+          actionId: action.id,
         },
       });
       await tx.financialTransferAllocation.create({

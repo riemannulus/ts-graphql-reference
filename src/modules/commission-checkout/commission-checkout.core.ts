@@ -1,6 +1,13 @@
 import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
 
-const COMMISSION_ORDER_PAYMENT_BINDING_NAMESPACE = 'order-payment';
+export const COMMISSION_ORDER_PAYMENT_NAMESPACE = 'commission-order-payment';
+export const COMMISSION_COMMAND_KINDS = [
+  'PAY',
+  'EXTRA_PAY',
+  'SETTLE',
+  'REFUND',
+  'CANCEL',
+] as const;
 
 export interface CommissionCheckoutInput {
   orderPaymentId: number;
@@ -14,7 +21,7 @@ interface CommissionCheckoutPaymentFacts {
   buyerId: number;
   commissionTypeId: number;
   slotId: number;
-  referenceId: string;
+  flowId: string;
   orderAmount: number;
   paymentAmount: number;
   orderCurrency: string;
@@ -32,7 +39,7 @@ export interface CommissionCheckoutFacts extends CommissionCheckoutPaymentFacts 
 }
 
 interface CommissionPaymentReservationRequest {
-  referenceId: string;
+  flowId: string;
   bindingNamespace: string;
   bindingKey: string;
   holderId: number;
@@ -42,15 +49,30 @@ interface CommissionPaymentReservationRequest {
 }
 
 export interface CommissionCheckoutPlan {
+  commandRequest: {
+    flowId: string;
+    flowKind: 'COMMISSION';
+    kind: 'PAY';
+    principalId: number;
+    idempotencyKey: string;
+    subjectNamespace: typeof COMMISSION_ORDER_PAYMENT_NAMESPACE;
+    subjectKey: string;
+  };
+  operationRequest: {
+    kind: 'PAY';
+    actionKind: 'TRANSFER';
+  };
   financialRequest: CommissionPaymentReservationRequest;
   contract: {
     orderId: number;
+    flowId: string;
     buyerId: number;
     workerId: number;
   };
   paidOrder: {
     orderId: number;
     orderPaymentId: number;
+    flowId: string;
   };
   occupiedSlot: {
     slotId: number;
@@ -63,6 +85,9 @@ export interface CommissionCheckoutResult {
   orderPaymentId: number;
   contractId: number;
   reservationId: number;
+  referenceId: string;
+  commandId: string;
+  operationId: string;
   replayed: boolean;
 }
 
@@ -125,11 +150,42 @@ function assertCommissionCheckoutActor(buyerId: number, actorId: number): void {
   if (buyerId !== actorId) throw new CommissionCheckoutActorError();
 }
 
-function assertCommissionCheckoutReplayPayload(
-  storedHash: string,
-  requestedHash: string,
+export function planCommissionCheckoutCommand(input: CommissionCheckoutInput) {
+  return {
+    flowKind: 'COMMISSION' as const,
+    kind: 'PAY' as const,
+    principalId: input.actorId,
+    idempotencyKey: input.commandKey,
+    subjectNamespace: COMMISSION_ORDER_PAYMENT_NAMESPACE,
+    subjectKey: String(input.orderPaymentId),
+  } as const;
+}
+
+export function assertCommissionCheckoutReplayIdentity(
+  stored: {
+    flowKind: string;
+    kind: string;
+    payloadHash: string;
+    subjectNamespace: string;
+    subjectKey: string;
+  },
+  requested: {
+    flowKind: string;
+    kind: string;
+    payloadHash: string;
+    subjectNamespace: string;
+    subjectKey: string;
+  },
 ): void {
-  if (storedHash !== requestedHash) throw new CommissionCheckoutIdempotencyError();
+  if (
+    stored.flowKind !== requested.flowKind ||
+    stored.kind !== requested.kind ||
+    stored.payloadHash !== requested.payloadHash ||
+    stored.subjectNamespace !== requested.subjectNamespace ||
+    stored.subjectKey !== requested.subjectKey
+  ) {
+    throw new CommissionCheckoutIdempotencyError();
+  }
 }
 
 export function planCommissionCheckoutStart(
@@ -139,7 +195,7 @@ export function planCommissionCheckoutStart(
   actorId: number,
 ): CommissionCheckoutStartPlan {
   if (command) {
-    assertCommissionCheckoutReplayPayload(command.payloadHash, requestedHash);
+    if (command.payloadHash !== requestedHash) throw new CommissionCheckoutIdempotencyError();
     return { kind: 'REPLAY', result: command.result, saveAlias: false };
   }
   if (payment) {
@@ -151,7 +207,7 @@ export function planCommissionCheckoutStart(
 
 export function planCommissionCheckout(
   facts: CommissionCheckoutFacts,
-  input: { actorId: number },
+  input: CommissionCheckoutInput,
 ): CommissionCheckoutPlan {
   assertCommissionCheckoutActor(facts.buyerId, input.actorId);
   if (facts.orderState !== 'REQUESTED' || facts.paymentState !== 'PENDING') {
@@ -173,9 +229,14 @@ export function planCommissionCheckout(
   }
 
   return {
+    commandRequest: {
+      flowId: facts.flowId,
+      ...planCommissionCheckoutCommand(input),
+    },
+    operationRequest: { kind: 'PAY', actionKind: 'TRANSFER' },
     financialRequest: {
-      referenceId: facts.referenceId,
-      bindingNamespace: COMMISSION_ORDER_PAYMENT_BINDING_NAMESPACE,
+      flowId: facts.flowId,
+      bindingNamespace: COMMISSION_ORDER_PAYMENT_NAMESPACE,
       bindingKey: String(facts.orderPaymentId),
       holderId: facts.financialHolderId,
       purpose: 'COMMISSION_PAYMENT',
@@ -184,12 +245,14 @@ export function planCommissionCheckout(
     },
     contract: {
       orderId: facts.orderId,
+      flowId: facts.flowId,
       buyerId: facts.buyerId,
       workerId: facts.commissionWorkerId,
     },
     paidOrder: {
       orderId: facts.orderId,
       orderPaymentId: facts.orderPaymentId,
+      flowId: facts.flowId,
     },
     occupiedSlot: {
       slotId: facts.slotId,

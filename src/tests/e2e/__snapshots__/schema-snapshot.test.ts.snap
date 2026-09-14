@@ -15,9 +15,12 @@ input CommissionCheckoutInput {
 
 """PROTOTYPE result of an atomic initial commission checkout."""
 type CommissionCheckoutResult {
+  commandId: String
   contractId: Int
+  operationId: String
   orderId: Int
   orderPaymentId: Int
+  referenceId: String
   replayed: Boolean
   reservationId: Int
 }

@@ -2,169 +2,88 @@
 
 ## Question
 
-Can the proposed Crepe payment architecture be expressed in this repository as
-a small set of deep modules while preserving one atomic commit across an Order,
-a generic financial reservation, Contract formation, slot confirmation, and the
-command result?
+Can an initial commission payment create the Contract and reserve POINT atomically while also exposing the planned Flow → Command → Operation → Action identity, without making the payment module import product implementations?
 
-This is a throwaway proof of concept. Its value is the architectural result and
-tests. It is not a production migration and must be deleted or absorbed after
-the result is accepted.
+This is a throwaway proof of concept. It is not a production migration.
 
-## Scope
+## Implemented vertical slice
 
-The PoC implements one persisted vertical path exposed as a GraphQL mutation:
+A commission Order is created before payment and owns one typed `TransactionFlow(kind = COMMISSION)`. `commissionCheckout.complete({ orderPaymentId, actorId, commandKey })` then performs one serialized transaction:
 
-1. Seed a commission type, an available slot, a buyer, and a funded POINT
-   account through test fixtures.
-2. Prepare an Order and OrderPayment before any Contract exists.
-3. Call `commissionCheckout.complete` with a caller-supplied idempotency key.
-4. Reserve POINT into a reservation-specific ESCROW account.
-5. Create one Contract, mark the Order paid, confirm the slot, and persist the
-   replayable command result in the same database transaction.
-6. Repeating the same command returns the original result without another
-   financial or Contract effect.
-
-The PoC covers internal POINT funding only. Provider approval, additional
-payments, donations, completion, settlement, refunds, withdrawals, accounting
-entries, outbox delivery, and production migration are outside this probe.
-
-## Modules and seams
-
-The modules are `commission-type`, `order`, `financial-ledger`, `contract`,
-`slot`, and `commission-checkout`. `commission-checkout` owns the cross-owner
-orchestration and follows Crepe's `read → decide → execute` rule: it reads
-through owner repos, creates a pure commission-checkout plan in core, and
-applies that plan through owner repo executors. `services.ts` creates the
-commission-checkout service once and exposes it to GraphQL. This adds the
-following sanctioned compile-time edges:
-
-```text
-services -> commission-checkout
-commission-checkout -> commission-type.repo | order.repo | financial-ledger.{core,repo} | contract.repo | slot.repo
-financial-ledger -> no product module
-```
-
-The dependency-cruiser allowlist and generated module graph encode these edges.
-The commission-checkout module may reach only the listed owner plan/repo files; owner services,
-delivery, and arbitrary implementation files remain forbidden. An import from
-`financial-ledger` to Order/Contract/commission-type/slot must fail
-`pnpm check:graph`.
-
-The commission-checkout interface has one deep operation:
+1. load and lock the OrderPayment, buyer holder, commission slot, and principal-scoped PAY idempotency key;
+2. validate Order, payment, commission type, slot, actor, amount, and currency in the pure plan;
+3. create a typed PAY Command Run and matching PAY Operation with a `FinancialTransferAction`;
+4. move the selected POINT lots from AVAILABLE to a reservation-specific ESCROW account;
+5. form the Contract, mark Order and OrderPayment paid, occupy the slot, and create the product-owned financial link;
+6. return the full public identity with the product result.
 
 ```ts
 commissionCheckout.complete({ orderPaymentId, actorId, commandKey })
-  -> { orderId, orderPaymentId, contractId, reservationId, replayed }
+  -> {
+       orderId, orderPaymentId, contractId, reservationId,
+       referenceId: "COMMISSION-<flow UUID>",
+       commandId: "CMD-PAY-<command UUID>",
+       operationId: "OP-PAY-<operation UUID>",
+       replayed
+     }
 ```
 
-Callers need not know the lock order, funding allocations, owner write order,
-or rollback mechanics. Commission checkout opens the transaction and passes that same
-handle as the first argument to every owner repo call. Repos never choose a DB
-handle or open a nested transaction.
+Provider approval, additional payments, completion, settlement, refund, withdrawal, accounting entries, and outbox delivery remain outside the executable slice.
 
-## Persisted model
+## Module boundaries
 
-The schema uses integer POINT amounts and these logical records:
+`commission-checkout` is the cross-owner orchestration module. It directly imports the owner repos for `commission-type`, `order`, `contract`, `slot`, `financial-ledger`, plus the generic `transaction-flow` core/repo. Each repo accepts the same transaction handle. There are no injected repo ports.
 
-- `CommissionType`: the purchasable offer and worker.
-- `CommissionSlot`: an available unit of capacity owned by the worker.
-- `Order`: buyer, commission type snapshot, slot, amount, and
-  `REQUESTED | PAID` state. Prepayment data belongs here.
-- `OrderPayment`: an immutable payment attempt for the Order with
-  `PENDING | PAID` state and one optional product-owned financial link.
-- `FinancialReservation`: generic amount, currency, holder, purpose, state,
-  and immutable `bindingNamespace + bindingKey`. It has no product FK.
-- `FinancialAccount`: `AVAILABLE` for a holder or `ESCROW` for one financial
-  reservation. The schema constrains purpose-specific ownership.
-- `FinancialTransfer` and `FinancialTransferAllocation`: append-only movement
-  and the source-lot allocations used by the reservation.
-- `PointLot`: paid/free provenance and remaining amount.
-- `OrderFinancialLink`: owned on the product side, unique in both
-  `orderPaymentId` and `reservationId` directions.
-- `Contract`: the formed commission, with unique `orderId`.
-- `CommissionCheckoutCommand`: commission-checkout-owned command key, payload hash, and OrderPayment
-  reference. Replay derives reservation and Contract identifiers through the
-  product-owned relations, so unrelated result identifiers cannot be stored.
+`transaction-flow` imports no product module. It receives a principal, idempotency key, opaque subject binding, and flow id. `financial-ledger` imports no Order, Contract, commission type, or slot module. Product-to-finance navigation remains owned by `OrderFinancialLink`.
 
-The financial models contain no `orderId`, `contractId`, `commissionTypeId`, or
-`slotId`. The financial module validates holder, currency, amount, and remaining
-lots for the opaque binding derived by commission checkout. The Order module owns and
-writes `OrderFinancialLink` after the reservation plan is applied.
+```text
+services -> commission-checkout
+commission-checkout -> commission-type.repo
+                    -> order.repo
+                    -> contract.repo
+                    -> slot.repo
+                    -> financial-ledger.{core,repo}
+                    -> transaction-flow.{core,repo}
+transaction-flow -> db only
+financial-ledger -> db + its core only
+```
 
-For the PoC, balance is reconstructed from available lot remainders and the
-reservation transfer. A production-ready balance projection and the full
-multi-currency Action/Operation hierarchy are deliberately deferred because
-they are not needed to answer the module-seam question.
+Dependency-cruiser enforces those edges.
 
-## Transaction and concurrency
+## Persisted identity and invariants
 
-`commissionCheckout.complete` opens one READ COMMITTED `uow.serialized` transaction. Lock
-namespaces are appended for `orderPayment`, `financialHolder`,
-`commissionSlot`, and the hashed `commissionCheckoutCommand` key. The existing global
-ordering prevents deadlocks. READ COMMITTED is intentional: a waiter acquires
-the command lock and then observes the winner's committed command instead of a
-snapshot taken before the wait. The service also compares the buyer, slot, and
-holder found after locking with the pre-transaction lock targets and aborts on
-any reassignment. Inside the transaction it:
+Opaque UUIDs provide uniqueness. Stored enum kinds provide meaning. Public IDs are derived, so a writable string prefix cannot disagree with the row:
 
-1. claims or replays the commission-checkout command;
-2. reads payment, buyer, offer, slot, holder, account, and lot facts through the
-   owner repos;
-3. builds a pure commission-checkout plan and financial allocation plan;
-4. applies the reservation, Contract, paid Order, occupied slot, and command
-   result through owner repo executors.
+- `TransactionFlow(id, kind)` is the commission lifecycle identity. `Order.flowId` owns it; reservations and commands reuse it.
+- `FinancialCommandRun(id, flowId, flowKind, kind, principalId, idempotencyKey, subject)` records a request. `(principalId, kind, idempotencyKey)` is unique.
+- `FinancialOperation(id, flowId, kind, originatingCommandId)` records the committed result.
+- `FinancialTransferAction(id, flowId, operationId)` is the structural TRANSFER subtype; `FinancialTransfer.actionId` cannot reference another action family.
 
-Every owner repo receives the same Prisma transaction handle directly from the
-commission-checkout service. All calls are awaited. A thrown owner error aborts the entire
-transaction. Database uniqueness
-on Contract order, OrderPayment link, reservation binding, and command key backs
-the application rules. Deferred transfer checks also require the exact
-reservation amount, matching holder/source and reservation/destination
-accounts, an exact allocation sum, source-account lot membership, and
-`originalAmount = remainingAmount + cumulative allocations` for every lot.
-Reservation reference/binding/amount/holder/currency/purpose, account ownership,
-and lot origin/account/provenance are immutable from creation. Transfers and
-allocations are append-only, so neither concurrent nor later updates can
-invalidate or rewrite a committed economic history.
+A composite FK from Command Run `(flowId, flowKind)` to Flow `(id, kind)` rejects a copied flow kind that does not match the flow. A second composite FK from Operation `(originatingCommandId, flowId, kind)` to Command Run `(id, flowId, kind)` rejects an operation with a different flow or command kind. Composite FKs also keep OrderPayment, Contract, OrderFinancialLink, FinancialReservation, FinancialTransfer, and FinancialTransferAction on one flow.
 
-A repeated command key with the same payload returns the stored result with
-`replayed: true`. Reuse with a different payload is a domain error. A different
-command key for an already-paid OrderPayment returns the existing economic
-result rather than creating another reservation or Contract.
+PostgreSQL triggers make Command identity/payload/subject append-only and permit `resultOperationId` to move from NULL to its own originated Operation once. A result-alias Command cannot originate another Operation. Every Operation or TransferAction UPDATE/DELETE is rejected, and Order and reservation flow bindings are immutable as well.
 
-## GraphQL surface
+The PoC schema contains only the `COMMISSION` flow family and its command vocabulary: `PAY`, `EXTRA_PAY`, `SETTLE`, `REFUND`, `CANCEL`. Each flow creator writes its own `FlowCommandPolicy` rows. `FinancialCommandRun(flowId, kind)` must match that allow-list, so a new flow family starts with no legal commands until its creator explicitly chooses them.
 
-The PoC adds a `checkoutCommission` mutation taking `orderPaymentId`, `actorId`,
-and `commandKey`. It returns a small payload of opaque integer identifiers and
-the replay flag. Test fixtures call owner repo functions directly to prepare the
-offer, slot, order, payment, buyer, account, and lot; no broad administrative
-GraphQL surface is added for setup.
+The generated migration targets a fresh database because this branch has not shipped. It does not preserve rows from the preceding PoC migration. Legacy physical `referenceId` columns remain nullable, new writes leave them NULL, and public APIs never read them. Production adoption needs a separate backfill and cutover migration.
 
-Expected business failures use `DomainError` subclasses: invalid actor,
-unpayable Order, unavailable slot, insufficient POINT, and idempotency payload
-mismatch. Unexpected persistence failures remain masked by the existing GraphQL
-error handling.
+## Retry behavior
+
+Repeating the same principal, PAY kind, and idempotency key validates the payload hash and returns the same Command and Operation. A new key for an already paid OrderPayment creates a new Command Run that points to the existing Operation. It therefore returns a new `CMD-PAY-…` while keeping the same `COMMISSION-…` and `OP-PAY-…`, reservation, and Contract.
+
+Command locks use `principalId:PAY:idempotencyKey`, matching the database uniqueness scope. OrderPayment, holder, and slot locks prevent duplicate economic effects and stale ownership writes. READ COMMITTED lets a waiter observe the winner after acquiring the advisory lock.
 
 ## Verification
 
-The PoC is accepted when the following checks pass:
+The proof requires:
 
-- A GraphQL commission checkout moves the requested POINT to one generic ESCROW
-  reservation and atomically creates exactly one Contract, paid OrderPayment,
-  paid Order, confirmed slot, product-owned financial link, and command result.
-- A forced Contract write failure leaves every record and lot in its prepayment
-  state.
-- Same-key retry returns the stored result with no additional economic effect.
-- A different-key retry also produces no duplicate reservation or Contract.
-- Command-key reuse with different input fails without writes.
-- A barrier pauses the first real PostgreSQL transaction after lock acquisition;
-  `pg_locks` then proves the second connection is waiting before release. Those
-  tests cover same-payment replay and cross-payment command-key mismatch.
-- Insufficient POINT and unavailable slot fail without partial writes.
-- `pnpm typecheck`, `pnpm lint`, `pnpm check:graph`, focused module/integration
-  tests, the GraphQL schema snapshot, and the full `pnpm test` suite pass.
+- formatter tests for all three public ID shapes;
+- GraphQL and service tests that expose and replay the full identity;
+- a different-key replay test proving only Command ID changes;
+- DB tests rejecting a non-commission command value and an Operation kind that differs from its originating Command;
+- rollback tests leaving no Command, Operation, Action, reservation, transfer, Contract, or product transition after failure;
+- real PostgreSQL concurrency tests for same-payment replay, same-principal key collision with a different payload, and immutable reservation behavior;
+- generated migration application with zero Prisma schema drift;
+- `pnpm typecheck`, `pnpm lint`, `pnpm check:graph`, `pnpm build`, and the full test suite.
 
-The implementation will include concise `NOTES.md` findings beside the PoC,
-recording whether the service remained deep, how the Plan/Apply split behaved,
-and which design decisions should be carried into Crepe.
+See `CONTEXT.md` and ADR 0001 for the domain vocabulary and extension rule.
