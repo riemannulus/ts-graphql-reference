@@ -3,6 +3,7 @@ import type { Db } from '../../db/db.js';
 import { lockKey } from '../../db/lock-registry.js';
 import { uow } from '../../db/uow.js';
 import {
+  assertLockedCheckoutTargets,
   buildContractFormation,
   planCheckoutStart,
   validatePaymentIntent,
@@ -56,6 +57,14 @@ export function createCheckoutService(deps: { db: Db; ports: CheckoutPorts }) {
             namespace: 'user',
             key: String(payment.buyerId),
           });
+          assertLockedCheckoutTargets(
+            {
+              buyerId: targets.buyerId,
+              slotId: targets.slotId,
+              financialHolderId,
+            },
+            { buyerId: payment.buyerId, slotId: payment.slotId, financialHolderId: holderId },
+          );
           const facts: CheckoutFacts = {
             ...payment,
             commissionWorkerId: commissionType.workerId,

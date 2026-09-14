@@ -159,7 +159,7 @@ describe('CheckoutService.payOrder', () => {
   it('rolls back every financial and product write when Contract creation fails', async () => {
     const world = await seedCheckoutWorld();
     const checkout = createCheckoutComposition(db, {
-      createContract: async () => {
+      decorateContractCreate: () => async () => {
         throw new Error('forced contract failure');
       },
     });

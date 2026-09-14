@@ -348,4 +348,46 @@ describe('database CHECK constraints', () => {
       }),
     ).rejects.toThrow(/FinancialTransfer_conservation_check/);
   });
+
+  it('rejects an allocation that leaves the same value spendable in its source lot', async () => {
+    const world = await makeFinancialWorld();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 100,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+        });
+      }),
+    ).rejects.toThrow(/PointLot_conservation_check/);
+  });
+
+  it('rejects allocating more than the source lot originally contained', async () => {
+    const world = await makeFinancialWorld();
+    await prisma.financialReservation.update({
+      where: { id: world.reservation.id },
+      data: { targetAmount: 101 },
+    });
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const transfer = await tx.financialTransfer.create({
+          data: {
+            reservationId: world.reservation.id,
+            fromAccountId: world.available.id,
+            toAccountId: world.escrow.id,
+            amount: 101,
+          },
+        });
+        await tx.financialTransferAllocation.create({
+          data: { transferId: transfer.id, lotId: world.lot.id, amount: 101 },
+        });
+      }),
+    ).rejects.toThrow(/PointLot_conservation_check/);
+  });
 });

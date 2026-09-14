@@ -18,11 +18,16 @@ import {
   confirmSlotForCheckout,
   loadSlotForCheckout,
 } from '../modules/slot/slot.checkout.js';
-import type { CheckoutPorts } from '../modules/checkout/checkout.port.js';
+import type {
+  CheckoutPorts,
+  CheckoutTransactionPorts,
+} from '../modules/checkout/checkout.port.js';
 import { createCheckoutService } from '../modules/checkout/checkout.service.js';
 
 export interface CheckoutCompositionOptions {
-  createContract?: ReturnType<CheckoutPorts['bindTransaction']>['contract']['create'];
+  decorateContractCreate?: (
+    create: CheckoutTransactionPorts['contract']['create'],
+  ) => CheckoutTransactionPorts['contract']['create'];
 }
 
 /** PROTOTYPE — the only file that imports checkout and all owner implementations. */
@@ -40,12 +45,11 @@ export function createCheckoutComposition(db: Db, options: CheckoutCompositionOp
         locateHolder: (binding) => locateFinancialHolder(tx, binding),
         reserve: (request) => reserveFundsForCheckout(tx, request),
       },
-      contract: {
-        create: (formation) =>
-          options.createContract
-            ? options.createContract(formation)
-            : createContractFromPaidOrder(tx, formation),
-      },
+      contract: (() => {
+        const create = (formation: Parameters<CheckoutTransactionPorts['contract']['create']>[0]) =>
+          createContractFromPaidOrder(tx, formation);
+        return { create: options.decorateContractCreate?.(create) ?? create };
+      })(),
       slot: {
         load: (id) => loadSlotForCheckout(tx, id),
         confirm: (input) => confirmSlotForCheckout(tx, input),

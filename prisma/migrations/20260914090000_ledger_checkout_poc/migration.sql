@@ -197,14 +197,48 @@ AFTER INSERT OR UPDATE ON "FinancialTransfer"
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION check_financial_transfer_row();
 
+CREATE FUNCTION assert_point_lot_conservation(checked_lot_id INTEGER)
+RETURNS VOID AS $$
+DECLARE
+  violates BOOLEAN;
+BEGIN
+  SELECT lot."remainingAmount" + COALESCE(SUM(allocation."amount"), 0) <> lot."originalAmount"
+  INTO violates
+  FROM "PointLot" lot
+  LEFT JOIN "FinancialTransferAllocation" allocation ON allocation."lotId" = lot."id"
+  WHERE lot."id" = checked_lot_id
+  GROUP BY lot."id";
+
+  IF violates THEN
+    RAISE EXCEPTION 'PointLot_conservation_check: lot % remaining value and allocations do not equal its original amount', checked_lot_id
+      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_conservation_check';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION check_point_lot_row()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM assert_point_lot_conservation(COALESCE(NEW."id", OLD."id"));
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER "PointLot_conservation_check"
+AFTER UPDATE ON "PointLot"
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION check_point_lot_row();
+
 CREATE FUNCTION check_financial_allocation_row()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP IN ('UPDATE', 'DELETE') THEN
     PERFORM assert_financial_transfer_conservation(OLD."transferId");
+    PERFORM assert_point_lot_conservation(OLD."lotId");
   END IF;
   IF TG_OP IN ('INSERT', 'UPDATE') THEN
     PERFORM assert_financial_transfer_conservation(NEW."transferId");
+    PERFORM assert_point_lot_conservation(NEW."lotId");
   END IF;
   RETURN COALESCE(NEW, OLD);
 END;

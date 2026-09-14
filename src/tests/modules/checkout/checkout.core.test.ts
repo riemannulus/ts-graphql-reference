@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildContractFormation,
+  assertLockedCheckoutTargets,
   CheckoutActorError,
   CheckoutStateError,
   ReceiptMismatchError,
   validatePaymentIntent,
 } from '../../../modules/checkout/checkout.core.js';
+import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 import type { CheckoutFacts, ReservationReceipt } from '../../../modules/checkout/checkout.port.js';
 
 const facts: CheckoutFacts = {
@@ -68,6 +70,20 @@ describe('validatePaymentIntent', () => {
         amount: 500,
       },
     });
+  });
+});
+
+describe('assertLockedCheckoutTargets', () => {
+  it('rejects facts that moved to a buyer, slot, or holder we did not lock', () => {
+    const locked = { buyerId: 1, slotId: 30, financialHolderId: 50 };
+    expect(() =>
+      assertLockedCheckoutTargets(locked, { ...locked, financialHolderId: 51 }),
+    ).toThrow(ConcurrentUpdateError);
+  });
+
+  it('accepts facts that still belong to every locked target', () => {
+    const locked = { buyerId: 1, slotId: 30, financialHolderId: 50 };
+    expect(() => assertLockedCheckoutTargets(locked, locked)).not.toThrow();
   });
 });
 

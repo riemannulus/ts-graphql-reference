@@ -1,4 +1,4 @@
-import { DomainError } from '../../foundation/errors.js';
+import { ConcurrentUpdateError, DomainError } from '../../foundation/errors.js';
 import type {
   CheckoutFacts,
   ContractFormation,
@@ -42,6 +42,25 @@ export class CheckoutIdempotencyError extends DomainError {
 export class ReceiptMismatchError extends DomainError {
   constructor() {
     super('Financial reservation receipt does not match the payment intent', 'RECEIPT_MISMATCH');
+  }
+}
+
+interface CheckoutLockTargets {
+  buyerId: number;
+  slotId: number;
+  financialHolderId: number;
+}
+
+export function assertLockedCheckoutTargets(
+  locked: CheckoutLockTargets,
+  actual: CheckoutLockTargets,
+): void {
+  if (
+    locked.buyerId !== actual.buyerId ||
+    locked.slotId !== actual.slotId ||
+    locked.financialHolderId !== actual.financialHolderId
+  ) {
+    throw new ConcurrentUpdateError('checkout lock targets');
   }
 }
 

@@ -106,7 +106,9 @@ namespaces are appended for `orderPayment`, `financialHolder`,
 `commissionSlot`, and the hashed `checkoutCommand` key. The existing global
 ordering prevents deadlocks. READ COMMITTED is intentional: a waiter acquires
 the command lock and then observes the winner's committed command instead of a
-snapshot taken before the wait. Inside the transaction it:
+snapshot taken before the wait. The service also compares the buyer, slot, and
+holder found after locking with the pre-transaction lock targets and aborts on
+any reassignment. Inside the transaction it:
 
 1. claims or replays the checkout command;
 2. loads and validates payment, buyer, offer, and slot facts through ports;
@@ -121,7 +123,8 @@ awaited. A thrown owner error aborts the entire transaction. Database uniqueness
 on Contract order, OrderPayment link, reservation binding, and command key backs
 the application rules. Deferred transfer checks also require the exact
 reservation amount, matching holder/source and reservation/destination
-accounts, an exact allocation sum, and source-account lot membership.
+accounts, an exact allocation sum, source-account lot membership, and
+`originalAmount = remainingAmount + cumulative allocations` for every lot.
 
 A repeated command key with the same payload returns the stored result with
 `replayed: true`. Reuse with a different payload is a domain error. A different
@@ -153,8 +156,9 @@ The PoC is accepted when the following checks pass:
 - Same-key retry returns the stored result with no additional economic effect.
 - A different-key retry also produces no duplicate reservation or Contract.
 - Command-key reuse with different input fails without writes.
-- Two real PostgreSQL connections prove concurrent same-payment replay and
-  concurrent cross-payment command-key mismatch classification.
+- A barrier pauses the first real PostgreSQL transaction after lock acquisition;
+  `pg_locks` then proves the second connection is waiting before release. Those
+  tests cover same-payment replay and cross-payment command-key mismatch.
 - Insufficient POINT and unavailable slot fail without partial writes.
 - `pnpm typecheck`, `pnpm lint`, `pnpm check:graph`, focused module/integration
   tests, the GraphQL schema snapshot, and the full `pnpm test` suite pass.

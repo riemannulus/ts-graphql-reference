@@ -1,11 +1,10 @@
 import type { DbClient } from '../../db/db.js';
+import { insertContract } from './contract.repo.js';
 
 export async function createContractFromPaidOrder(
   db: DbClient,
   formation: { orderId: number; buyerId: number; workerId: number },
 ) {
-  const contract = await db.contract.create({
-    data: { orderId: formation.orderId, buyerId: formation.buyerId, workerId: formation.workerId },
-  });
+  const contract = await insertContract(db, formation);
   return { contractId: contract.id };
 }

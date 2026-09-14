@@ -60,14 +60,16 @@ factory can lose that override.
   principal. Production must derive the actor from trusted request context.
 - The financial model is the minimum needed for a POINT hold. The reservation
   carries `purpose = COMMISSION_PAYMENT`, and commit-time checks prove transfer
-  amount, accounts, allocation sum, and source-lot membership. It does not prove
+  amount, accounts, allocation sum, source-lot membership, and original value
+  equals the remaining value plus cumulative allocations. It does not prove
   the full Currency-specific Action/Operation ledger, settlement, refund,
   withdrawal, accounting, or outbox designs.
 - PGlite proves rollback and constraints. A separate opt-in test uses two real
   PostgreSQL clients and proves concurrent same-payment replay plus cross-payment
   command-key mismatch classification.
 - The pre-transaction read discovers immutable lock identifiers. The complete
-  facts are re-read and validated after the locks in a READ COMMITTED transaction.
+  facts are re-read after the locks in a READ COMMITTED transaction, and buyer,
+  slot, and holder are compared with the locked targets before any owner write.
 - `FinancialHolder(user, id)` is an opaque adapter binding with no User FK. A
   production composition root must authenticate that binding; a caller must not
   choose arbitrary namespaces or holder IDs.

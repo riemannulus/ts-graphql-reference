@@ -229,7 +229,9 @@ return uow.serialized(
 
 The locked transaction remains READ COMMITTED so a waiter sees the command row
 committed by the lock holder. Taking a REPEATABLE READ snapshot before a blocking
-advisory lock would make that replay result stale.
+advisory lock would make that replay result stale. Re-read buyer, slot, and
+holder targets inside the transaction and abort if they differ from the values
+used to construct the lock keys.
 
 - [ ] **Step 4: Verify GREEN**
 
