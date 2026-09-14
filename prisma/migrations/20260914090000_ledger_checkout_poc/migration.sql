@@ -247,3 +247,69 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "FinancialTransferAllocation_conservation_check"
 AFTER INSERT OR UPDATE OR DELETE ON "FinancialTransferAllocation"
 FOR EACH ROW EXECUTE FUNCTION check_financial_allocation_row();
+
+CREATE FUNCTION keep_reservation_transfer_basis_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (
+    NEW."holderId" IS DISTINCT FROM OLD."holderId"
+    OR NEW."purpose" IS DISTINCT FROM OLD."purpose"
+    OR NEW."currency" IS DISTINCT FROM OLD."currency"
+    OR NEW."targetAmount" IS DISTINCT FROM OLD."targetAmount"
+  ) AND EXISTS (
+    SELECT 1 FROM "FinancialTransfer" WHERE "reservationId" = OLD."id"
+  ) THEN
+    RAISE EXCEPTION 'FinancialReservation_transfer_basis_immutable: reservation % already has a transfer', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialReservation_transfer_basis_immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "FinancialReservation_transfer_basis_immutable"
+BEFORE UPDATE ON "FinancialReservation"
+FOR EACH ROW EXECUTE FUNCTION keep_reservation_transfer_basis_immutable();
+
+CREATE FUNCTION keep_transfer_account_basis_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (
+    NEW."currency" IS DISTINCT FROM OLD."currency"
+    OR NEW."purpose" IS DISTINCT FROM OLD."purpose"
+    OR NEW."holderId" IS DISTINCT FROM OLD."holderId"
+    OR NEW."reservationId" IS DISTINCT FROM OLD."reservationId"
+  ) AND EXISTS (
+    SELECT 1
+    FROM "FinancialTransfer"
+    WHERE "fromAccountId" = OLD."id" OR "toAccountId" = OLD."id"
+  ) THEN
+    RAISE EXCEPTION 'FinancialAccount_transfer_basis_immutable: account % is used by a transfer', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'FinancialAccount_transfer_basis_immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "FinancialAccount_transfer_basis_immutable"
+BEFORE UPDATE ON "FinancialAccount"
+FOR EACH ROW EXECUTE FUNCTION keep_transfer_account_basis_immutable();
+
+CREATE FUNCTION keep_allocated_lot_basis_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (
+    NEW."accountId" IS DISTINCT FROM OLD."accountId"
+    OR NEW."originalAmount" IS DISTINCT FROM OLD."originalAmount"
+  ) AND EXISTS (
+    SELECT 1 FROM "FinancialTransferAllocation" WHERE "lotId" = OLD."id"
+  ) THEN
+    RAISE EXCEPTION 'PointLot_allocation_basis_immutable: lot % already has an allocation', OLD."id"
+      USING ERRCODE = '23514', CONSTRAINT = 'PointLot_allocation_basis_immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "PointLot_allocation_basis_immutable"
+BEFORE UPDATE ON "PointLot"
+FOR EACH ROW EXECUTE FUNCTION keep_allocated_lot_basis_immutable();

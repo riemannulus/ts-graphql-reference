@@ -61,7 +61,9 @@ factory can lose that override.
 - The financial model is the minimum needed for a POINT hold. The reservation
   carries `purpose = COMMISSION_PAYMENT`, and commit-time checks prove transfer
   amount, accounts, allocation sum, source-lot membership, and original value
-  equals the remaining value plus cumulative allocations. It does not prove
+  equals the remaining value plus cumulative allocations. The referenced
+  reservation, account, and lot basis columns become immutable after use so a
+  later update cannot invalidate a committed transfer. It does not prove
   the full Currency-specific Action/Operation ledger, settlement, refund,
   withdrawal, accounting, or outbox designs.
 - PGlite proves rollback and constraints. A separate opt-in test uses two real

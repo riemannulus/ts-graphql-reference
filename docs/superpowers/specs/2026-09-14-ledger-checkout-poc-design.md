@@ -125,6 +125,9 @@ the application rules. Deferred transfer checks also require the exact
 reservation amount, matching holder/source and reservation/destination
 accounts, an exact allocation sum, source-account lot membership, and
 `originalAmount = remainingAmount + cumulative allocations` for every lot.
+Once a transfer exists, its reservation amount/holder/currency, participating
+account ownership, and allocated lot origin/account are immutable so later
+updates cannot invalidate those relationships.
 
 A repeated command key with the same payload returns the stored result with
 `replayed: true`. Reuse with a different payload is a domain error. A different

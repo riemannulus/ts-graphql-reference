@@ -62,6 +62,25 @@ async function makeFinancialWorld() {
   return { holder, available, otherAvailable, reservation, escrow, lot, otherLot };
 }
 
+async function makeCommittedTransfer() {
+  const world = await makeFinancialWorld();
+  await prisma.$transaction(async (tx) => {
+    await tx.pointLot.update({ where: { id: world.lot.id }, data: { remainingAmount: 0 } });
+    const transfer = await tx.financialTransfer.create({
+      data: {
+        reservationId: world.reservation.id,
+        fromAccountId: world.available.id,
+        toAccountId: world.escrow.id,
+        amount: 100,
+      },
+    });
+    await tx.financialTransferAllocation.create({
+      data: { transferId: transfer.id, lotId: world.lot.id, amount: 100 },
+    });
+  });
+  return world;
+}
+
 describe('database CHECK constraints', () => {
   it('rejects an out-of-set user status (in sync with USER_STATUSES)', async () => {
     await expect(
@@ -389,5 +408,38 @@ describe('database CHECK constraints', () => {
         });
       }),
     ).rejects.toThrow(/PointLot_conservation_check/);
+  });
+
+  it('rejects changing a reservation amount after its transfer is committed', async () => {
+    const world = await makeCommittedTransfer();
+    await expect(
+      prisma.financialReservation.update({
+        where: { id: world.reservation.id },
+        data: { targetAmount: 99 },
+      }),
+    ).rejects.toThrow(/FinancialReservation_transfer_basis_immutable/);
+  });
+
+  it('rejects moving an allocated lot to a different account', async () => {
+    const world = await makeCommittedTransfer();
+    await expect(
+      prisma.pointLot.update({
+        where: { id: world.lot.id },
+        data: { accountId: world.otherAvailable.id },
+      }),
+    ).rejects.toThrow(/PointLot_allocation_basis_immutable/);
+  });
+
+  it('rejects changing ownership of an account used by a committed transfer', async () => {
+    const world = await makeCommittedTransfer();
+    const replacementHolder = await prisma.financialHolder.create({
+      data: { bindingNamespace: 'user', bindingKey: 'replacement-owner' },
+    });
+    await expect(
+      prisma.financialAccount.update({
+        where: { id: world.available.id },
+        data: { holderId: replacementHolder.id },
+      }),
+    ).rejects.toThrow(/FinancialAccount_transfer_basis_immutable/);
   });
 });
