@@ -219,51 +219,53 @@ export interface CommissionSettlementFunding {
   };
 }
 
+const fundingCommandSelect = {
+  kind: true,
+  flowId: true,
+  principalId: true,
+  subjectNamespace: true,
+  subjectKey: true,
+  resultOperationId: true,
+} as const;
+
+const fundingOperationSelect = {
+  id: true,
+  flowId: true,
+  kind: true,
+  originatingCommand: { select: fundingCommandSelect },
+} as const;
+
+const fundingActionSelect = {
+  operationKind: true,
+  operation: { select: fundingOperationSelect },
+} as const;
+
+const fundingTransferSelect = {
+  flowId: true,
+  currency: true,
+  amount: true,
+  toAccountId: true,
+  action: { select: fundingActionSelect },
+} as const;
+
+const commissionSettlementFundingSelect = {
+  id: true,
+  flowId: true,
+  state: true,
+  currency: true,
+  targetAmount: true,
+  holder: { select: { bindingNamespace: true, bindingKey: true } },
+  escrowAccount: { select: { id: true } },
+  transfer: { select: fundingTransferSelect },
+} as const;
+
 export async function loadCommissionSettlementFunding(
   db: ReadDbClient,
   reservationId: number,
 ): Promise<CommissionSettlementFunding> {
   const reservation = await db.financialReservation.findUnique({
     where: { id: reservationId },
-    select: {
-      id: true,
-      flowId: true,
-      state: true,
-      currency: true,
-      targetAmount: true,
-      holder: { select: { bindingNamespace: true, bindingKey: true } },
-      escrowAccount: { select: { id: true } },
-      transfer: {
-        select: {
-          flowId: true,
-          currency: true,
-          amount: true,
-          toAccountId: true,
-          action: {
-            select: {
-              operationKind: true,
-              operation: {
-                select: {
-                  id: true,
-                  flowId: true,
-                  kind: true,
-                  originatingCommand: {
-                    select: {
-                      kind: true,
-                      flowId: true,
-                      principalId: true,
-                      subjectNamespace: true,
-                      subjectKey: true,
-                      resultOperationId: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    select: commissionSettlementFundingSelect,
   });
   if (!reservation?.escrowAccount || !reservation.transfer) {
     throw new CommissionSettlementFundingNotFoundError(reservationId);
