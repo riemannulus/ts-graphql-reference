@@ -23,13 +23,13 @@ import {
 
 export function createCommissionSettlementService(db: Db) {
   async function settle(input: CommissionSettlementInput): Promise<CommissionSettlementResult> {
-    const lockFacts = await contractRepo.loadCommissionSettlementContractFacts(
+    const lockContract = await contractRepo.loadCommissionSettlementContract(
       db.rw,
       input.contractId,
     );
     const workerHolderId = await financialLedgerRepo.findHolderId(db.rw, {
       namespace: 'user',
-      key: String(lockFacts.workerId),
+      key: String(lockContract.workerId),
     });
     return uow.serialized(
       db,
@@ -80,35 +80,30 @@ async function executeSettlement(
   }
 
   // Product domain: read the formed Contract and its paid Order-owned reservation link.
-  const contractFacts = await contractRepo.loadCommissionSettlementContractFacts(
+  const contract = await contractRepo.loadCommissionSettlementContract(
     tx,
     input.contractId,
   );
-  const orderFacts = await orderRepo.loadCommissionSettlementOrderFacts(
+  const commerce = await orderRepo.loadCommissionSettlementOrderSnapshot(
     tx,
-    contractFacts.contractOrderId,
+    contract.orderId,
   );
   const workerHolderId = await financialLedgerRepo.findHolderId(tx, {
     namespace: 'user',
-    key: String(contractFacts.workerId),
+    key: String(contract.workerId),
   });
   assertCommissionSettlementHolderIdentity(lockedWorkerHolderId, workerHolderId);
   // Ledger domain: prove the paid POINT transfer and resolve both swap legs.
   const funding = await financialLedgerRepo.loadCommissionSettlementFunding(
     tx,
-    orderFacts.linkedReservationId,
+    commerce.payment.fundingLink.reservationId,
   );
-  const accounts = await financialLedgerRepo.loadCommissionSettlementAccountWorld(
+  const accounts = await financialLedgerRepo.loadCommissionSettlementAccounts(
     tx,
     workerHolderId,
   );
   const plan = planCommissionSettlement(
-    {
-      ...contractFacts,
-      ...orderFacts,
-      ...funding,
-      ...accounts,
-    },
+    { contract, order: commerce.order, payment: commerce.payment, funding, accounts },
     input,
   );
 
@@ -148,8 +143,8 @@ async function loadResult(
   contractId: number,
   replayed: boolean,
 ): Promise<CommissionSettlementResult> {
-  const facts = await contractRepo.loadCommissionSettlementContractFacts(tx, contractId);
-  assertCommissionSettlementReplayFlow(identity.flowId, facts.flowId);
+  const contract = await contractRepo.loadCommissionSettlementContract(tx, contractId);
+  assertCommissionSettlementReplayFlow(identity.flowId, contract.flowId);
   const ledgerResult = await financialLedgerRepo.loadCommissionSettlementLedgerResult(
     tx,
     identity.operationDbId,

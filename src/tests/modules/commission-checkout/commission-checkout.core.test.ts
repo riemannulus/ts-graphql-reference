@@ -4,51 +4,76 @@ import {
   CommissionCheckoutActorError,
   CommissionCheckoutStateError,
   planCommissionCheckout,
-  type CommissionCheckoutFacts,
+  type CommissionCheckoutWorld,
 } from '../../../modules/commission-checkout/commission-checkout.core.js';
 import { ConcurrentUpdateError } from '../../../foundation/errors.js';
 
-const facts: CommissionCheckoutFacts = {
-  orderId: 10,
-  orderPaymentId: 20,
-  buyerId: 1,
-  commissionWorkerId: 2,
-  commissionPrice: 500,
-  slotWorkerId: 2,
-  commissionTypeId: 40,
-  slotId: 30,
-  financialHolderId: 50,
-  flowId: '01995c47-d1cb-7f11-a2bd-a954bbd828ec',
-  orderAmount: 500,
-  paymentAmount: 500,
-  orderCurrency: 'POINT',
-  paymentCurrency: 'POINT',
-  orderState: 'REQUESTED',
-  paymentState: 'PENDING',
-  slotState: 'AVAILABLE',
+const facts: CommissionCheckoutWorld = {
+  order: {
+    id: 10,
+    buyerId: 1,
+    flowId: '01995c47-d1cb-7f11-a2bd-a954bbd828ec',
+    amount: 500,
+    currency: 'POINT',
+    state: 'REQUESTED',
+  },
+  payment: {
+    id: 20,
+    flowId: '01995c47-d1cb-7f11-a2bd-a954bbd828ec',
+    amount: 500,
+    currency: 'POINT',
+    state: 'PENDING',
+  },
+  terms: { workerId: 2, price: 500 },
+  slot: { id: 30, workerId: 2, state: 'AVAILABLE' },
+  funding: { holderId: 50 },
 };
 const input = { actorId: 1, orderPaymentId: 20, commandKey: 'pay-20' };
 
 describe('planCommissionCheckout', () => {
+  it('rejects payment facts for a different input payment', () => {
+    expect(() =>
+      planCommissionCheckout(
+        { ...facts, payment: { ...facts.payment, id: input.orderPaymentId + 1 } },
+        input,
+      ),
+    ).toThrow(CommissionCheckoutStateError);
+  });
+
   it('rejects an actor other than the Order buyer', () => {
     expect(() => planCommissionCheckout(facts, { ...input, actorId: 3 })).toThrow(CommissionCheckoutActorError);
   });
 
   it('rejects an OrderPayment that is no longer pending', () => {
     expect(() =>
-      planCommissionCheckout({ ...facts, paymentState: 'PAID' }, input),
+      planCommissionCheckout({ ...facts, payment: { ...facts.payment, state: 'PAID' } }, input),
     ).toThrow(CommissionCheckoutStateError);
   });
 
   it('rejects a payment amount that differs from the Order snapshot', () => {
     expect(() =>
-      planCommissionCheckout({ ...facts, paymentAmount: 499 }, input),
+      planCommissionCheckout({ ...facts, payment: { ...facts.payment, amount: 499 } }, input),
     ).toThrow(CommissionCheckoutStateError);
   });
 
   it('rejects a slot owned by a different worker', () => {
     expect(() =>
-      planCommissionCheckout({ ...facts, slotWorkerId: 4 }, input),
+      planCommissionCheckout({ ...facts, slot: { ...facts.slot, workerId: 4 } }, input),
+    ).toThrow(CommissionCheckoutStateError);
+  });
+
+  it('rejects an Order and payment from different flows', () => {
+    expect(() =>
+      planCommissionCheckout(
+        {
+          ...facts,
+          payment: {
+            ...facts.payment,
+            flowId: '01995c47-d1cb-7f11-a2bd-a954bbd828ff',
+          },
+        },
+        input,
+      ),
     ).toThrow(CommissionCheckoutStateError);
   });
 

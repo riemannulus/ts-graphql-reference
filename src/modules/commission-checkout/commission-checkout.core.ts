@@ -15,27 +15,25 @@ export interface CommissionCheckoutInput {
   commandKey: string;
 }
 
-interface CommissionCheckoutPaymentFacts {
-  orderId: number;
-  orderPaymentId: number;
-  buyerId: number;
-  commissionTypeId: number;
-  slotId: number;
-  flowId: string;
-  orderAmount: number;
-  paymentAmount: number;
-  orderCurrency: string;
-  paymentCurrency: string;
-  orderState: string;
-  paymentState: string;
-}
-
-export interface CommissionCheckoutFacts extends CommissionCheckoutPaymentFacts {
-  commissionWorkerId: number;
-  commissionPrice: number;
-  slotWorkerId: number;
-  slotState: string;
-  financialHolderId: number;
+export interface CommissionCheckoutWorld {
+  order: {
+    id: number;
+    buyerId: number;
+    flowId: string;
+    amount: number;
+    currency: string;
+    state: string;
+  };
+  payment: {
+    id: number;
+    flowId: string;
+    amount: number;
+    currency: string;
+    state: string;
+  };
+  terms: { workerId: number; price: number };
+  slot: { id: number; workerId: number; state: string };
+  funding: { holderId: number };
 }
 
 interface CommissionPaymentReservationRequest {
@@ -206,57 +204,65 @@ export function planCommissionCheckoutStart(
 }
 
 export function planCommissionCheckout(
-  facts: CommissionCheckoutFacts,
+  world: CommissionCheckoutWorld,
   input: CommissionCheckoutInput,
 ): CommissionCheckoutPlan {
-  assertCommissionCheckoutActor(facts.buyerId, input.actorId);
-  if (facts.orderState !== 'REQUESTED' || facts.paymentState !== 'PENDING') {
+  const { order, payment, terms, slot, funding } = world;
+
+  if (payment.id !== input.orderPaymentId) {
+    throw new CommissionCheckoutStateError('Order payment identity changed');
+  }
+  assertCommissionCheckoutActor(order.buyerId, input.actorId);
+  if (order.state !== 'REQUESTED' || payment.state !== 'PENDING') {
     throw new CommissionCheckoutStateError('Order and payment must both be pending');
   }
-  if (facts.slotState !== 'AVAILABLE') {
+  if (slot.state !== 'AVAILABLE') {
     throw new CommissionCheckoutStateError('Commission slot is not available');
   }
-  if (facts.commissionWorkerId !== facts.slotWorkerId) {
+  if (terms.workerId !== slot.workerId) {
     throw new CommissionCheckoutStateError('Commission slot belongs to a different worker');
   }
+  if (order.flowId !== payment.flowId) {
+    throw new CommissionCheckoutStateError('Order and payment must belong to the same flow');
+  }
   if (
-    facts.orderCurrency !== 'POINT' ||
-    facts.paymentCurrency !== 'POINT' ||
-    facts.orderAmount !== facts.paymentAmount ||
-    facts.orderAmount !== facts.commissionPrice
+    order.currency !== 'POINT' ||
+    payment.currency !== 'POINT' ||
+    order.amount !== payment.amount ||
+    order.amount !== terms.price
   ) {
     throw new CommissionCheckoutStateError('Order, payment, and commission price must match');
   }
 
   return {
     commandRequest: {
-      flowId: facts.flowId,
+      flowId: payment.flowId,
       ...planCommissionCheckoutCommand(input),
     },
     operationRequest: { kind: 'PAY', actionKind: 'TRANSFER' },
     financialRequest: {
-      flowId: facts.flowId,
+      flowId: payment.flowId,
       bindingNamespace: COMMISSION_ORDER_PAYMENT_NAMESPACE,
-      bindingKey: String(facts.orderPaymentId),
-      holderId: facts.financialHolderId,
+      bindingKey: String(payment.id),
+      holderId: funding.holderId,
       purpose: 'COMMISSION_PAYMENT',
       currency: 'POINT',
-      amount: facts.paymentAmount,
+      amount: payment.amount,
     },
     contract: {
-      orderId: facts.orderId,
-      flowId: facts.flowId,
-      buyerId: facts.buyerId,
-      workerId: facts.commissionWorkerId,
+      orderId: order.id,
+      flowId: payment.flowId,
+      buyerId: order.buyerId,
+      workerId: terms.workerId,
     },
     paidOrder: {
-      orderId: facts.orderId,
-      orderPaymentId: facts.orderPaymentId,
-      flowId: facts.flowId,
+      orderId: order.id,
+      orderPaymentId: payment.id,
+      flowId: payment.flowId,
     },
     occupiedSlot: {
-      slotId: facts.slotId,
-      workerId: facts.commissionWorkerId,
+      slotId: slot.id,
+      workerId: terms.workerId,
     },
   };
 }

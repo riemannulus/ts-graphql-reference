@@ -14,10 +14,30 @@ export async function findCommissionCheckoutLockTargets(
   return row.order;
 }
 
-export async function loadCommissionCheckoutPaymentFacts(
+export interface CommissionCheckoutPaymentSnapshot {
+  order: {
+    id: number;
+    buyerId: number;
+    commissionTypeId: number;
+    slotId: number;
+    flowId: string;
+    amount: number;
+    currency: string;
+    state: string;
+  };
+  payment: {
+    id: number;
+    flowId: string;
+    amount: number;
+    currency: string;
+    state: string;
+  };
+}
+
+export async function loadCommissionCheckoutPaymentSnapshot(
   db: ReadDbClient,
   orderPaymentId: number,
-) {
+): Promise<CommissionCheckoutPaymentSnapshot> {
   const row = await db.orderPayment.findUnique({
     where: { id: orderPaymentId },
     select: {
@@ -42,22 +62,40 @@ export async function loadCommissionCheckoutPaymentFacts(
   });
   if (!row) throw new OrderPaymentNotFoundError(orderPaymentId);
   return {
-    orderId: row.order.id,
-    orderPaymentId: row.id,
-    buyerId: row.order.buyerId,
-    commissionTypeId: row.order.commissionTypeId,
-    slotId: row.order.slotId,
-    flowId: row.flowId,
-    orderAmount: row.order.amount,
-    paymentAmount: row.amount,
-    orderCurrency: row.order.currency,
-    paymentCurrency: row.currency,
-    orderState: row.order.state,
-    paymentState: row.state,
+    order: row.order,
+    payment: {
+      id: row.id,
+      flowId: row.flowId,
+      amount: row.amount,
+      currency: row.currency,
+      state: row.state,
+    },
   };
 }
 
-export async function loadCommissionSettlementOrderFacts(db: ReadDbClient, orderId: number) {
+export interface CommissionSettlementOrderSnapshot {
+  order: {
+    id: number;
+    flowId: string;
+    buyerId: number;
+    state: string;
+    amount: number;
+    currency: string;
+  };
+  payment: {
+    id: number;
+    flowId: string;
+    state: string;
+    amount: number;
+    currency: string;
+    fundingLink: { reservationId: number; flowId: string };
+  };
+}
+
+export async function loadCommissionSettlementOrderSnapshot(
+  db: ReadDbClient,
+  orderId: number,
+): Promise<CommissionSettlementOrderSnapshot> {
   const order = await db.order.findUnique({
     where: { id: orderId },
     select: {
@@ -73,6 +111,7 @@ export async function loadCommissionSettlementOrderFacts(db: ReadDbClient, order
         take: 1,
         select: {
           id: true,
+          flowId: true,
           state: true,
           amount: true,
           currency: true,
@@ -86,18 +125,22 @@ export async function loadCommissionSettlementOrderFacts(db: ReadDbClient, order
     throw new DomainError(`Paid commission Order ${orderId} does not exist`, 'PAID_ORDER_NOT_FOUND');
   }
   return {
-    orderId: order.id,
-    orderFlowId: order.flowId,
-    orderBuyerId: order.buyerId,
-    orderState: order.state,
-    orderAmount: order.amount,
-    orderCurrency: order.currency,
-    orderPaymentId: payment.id,
-    paymentState: payment.state,
-    paymentAmount: payment.amount,
-    paymentCurrency: payment.currency,
-    linkedReservationId: payment.financialLink.reservationId,
-    linkedReservationFlowId: payment.financialLink.flowId,
+    order: {
+      id: order.id,
+      flowId: order.flowId,
+      buyerId: order.buyerId,
+      state: order.state,
+      amount: order.amount,
+      currency: order.currency,
+    },
+    payment: {
+      id: payment.id,
+      flowId: payment.flowId,
+      state: payment.state,
+      amount: payment.amount,
+      currency: payment.currency,
+      fundingLink: payment.financialLink,
+    },
   };
 }
 
