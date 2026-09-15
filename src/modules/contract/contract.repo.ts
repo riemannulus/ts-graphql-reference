@@ -7,7 +7,17 @@ export class CommissionContractNotFoundError extends DomainError {
   }
 }
 
-export async function loadCommissionSettlementContractFacts(db: ReadDbClient, contractId: number) {
+export interface CommissionSettlementContract {
+  id: number;
+  orderId: number;
+  flowId: string;
+  workerId: number;
+}
+
+export async function loadCommissionSettlementContract(
+  db: ReadDbClient,
+  contractId: number,
+): Promise<CommissionSettlementContract> {
   const contract = await db.contract.findUnique({
     where: { id: contractId },
     select: {
@@ -18,12 +28,7 @@ export async function loadCommissionSettlementContractFacts(db: ReadDbClient, co
     },
   });
   if (!contract) throw new CommissionContractNotFoundError(contractId);
-  return {
-    contractId: contract.id,
-    contractOrderId: contract.orderId,
-    flowId: contract.flowId,
-    workerId: contract.workerId,
-  };
+  return contract;
 }
 
 export async function applyCommissionCheckoutContractFormation(

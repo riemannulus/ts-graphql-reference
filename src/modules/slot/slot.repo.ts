@@ -13,7 +13,7 @@ export async function loadCommissionCheckoutSlot(db: ReadDbClient, id: number) {
     select: { id: true, workerId: true, state: true },
   });
   if (!row) throw new CommissionSlotNotFoundError(id);
-  return { slotId: row.id, workerId: row.workerId, state: row.state };
+  return row;
 }
 
 export async function applyCommissionCheckoutSlotOccupation(

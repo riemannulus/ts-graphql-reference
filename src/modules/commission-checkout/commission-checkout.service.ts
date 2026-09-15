@@ -194,37 +194,36 @@ async function loadCommissionCheckoutPlan(
 ): Promise<ExecutableCommissionCheckoutPlan> {
   // Interactive transaction handles execute sequentially.
   // Product domain: load the Order payment, commission type, and Slot facts.
-  const payment = await orderRepo.loadCommissionCheckoutPaymentFacts(
+  const commerce = await orderRepo.loadCommissionCheckoutPaymentSnapshot(
     tx,
     prepared.input.orderPaymentId,
   );
   const commissionType = await commissionTypeRepo.loadCommissionCheckoutTerms(
     tx,
-    payment.commissionTypeId,
+    commerce.order.commissionTypeId,
   );
-  const slot = await slotRepo.loadCommissionCheckoutSlot(tx, payment.slotId);
+  const slot = await slotRepo.loadCommissionCheckoutSlot(tx, commerce.order.slotId);
 
   // Ledger domain: resolve the buyer's POINT holder used by the acquired lock.
   const financialHolderId = await financialLedgerRepo.findHolderId(tx, {
     namespace: COMMISSION_BUYER_HOLDER_NAMESPACE,
-    key: String(payment.buyerId),
+    key: String(commerce.order.buyerId),
   });
 
   assertLockedCommissionCheckoutTargets(prepared.lockedTargets, {
-    buyerId: payment.buyerId,
-    slotId: payment.slotId,
+    buyerId: commerce.order.buyerId,
+    slotId: commerce.order.slotId,
     financialHolderId,
   });
 
   // Product/Ledger boundary: plan Product transitions and the Ledger reservation request.
   const plan = planCommissionCheckout(
     {
-      ...payment,
-      commissionWorkerId: commissionType.workerId,
-      commissionPrice: commissionType.price,
-      slotWorkerId: slot.workerId,
-      slotState: slot.state,
-      financialHolderId,
+      order: commerce.order,
+      payment: commerce.payment,
+      terms: commissionType,
+      slot,
+      funding: { holderId: financialHolderId },
     },
     prepared.input,
   );

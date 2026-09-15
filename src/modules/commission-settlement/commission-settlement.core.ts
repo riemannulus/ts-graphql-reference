@@ -8,50 +8,57 @@ export interface CommissionSettlementInput {
   commandKey: string;
 }
 
-export interface CommissionSettlementFacts {
-  contractId: number;
-  contractOrderId: number;
-  orderId: number;
-  orderBuyerId: number;
-  orderFlowId: string;
-  flowId: string;
-  workerId: number;
-  orderState: string;
-  orderAmount: number;
-  orderCurrency: string;
-  orderPaymentId: number;
-  paymentState: string;
-  paymentAmount: number;
-  paymentCurrency: string;
-  linkedReservationId: number;
-  linkedReservationFlowId: string;
-  reservationId: number;
-  reservationFlowId: string;
-  reservationState: string;
-  reservationCurrency: string;
-  reservationTargetAmount: number;
-  reservationHolderBindingNamespace: string;
-  reservationHolderBindingKey: string;
-  pointEscrowAccountId: number;
-  fundingTransferId: number;
-  fundingTransferFlowId: string;
-  fundingTransferCurrency: string;
-  fundingTransferAmount: number;
-  fundingTransferToAccountId: number;
-  fundingActionOperationKind: string;
-  fundingOperationId: string;
-  fundingOperationFlowId: string;
-  fundingOperationKind: string;
-  fundingCommandFlowId: string;
-  fundingCommandKind: string;
-  fundingCommandPrincipalId: number;
-  fundingCommandSubjectNamespace: string;
-  fundingCommandSubjectKey: string;
-  fundingCommandResultOperationId: string | null;
-  pointSettledAccountId: number;
-  incomeIssuerAccountId: number;
-  incomeAvailableAccountId: number;
-  beneficiaryHolderId: number;
+export interface CommissionSettlementWorld {
+  contract: { id: number; orderId: number; flowId: string; workerId: number };
+  order: {
+    id: number;
+    buyerId: number;
+    flowId: string;
+    state: string;
+    amount: number;
+    currency: string;
+  };
+  payment: {
+    id: number;
+    flowId: string;
+    state: string;
+    amount: number;
+    currency: string;
+    fundingLink: { reservationId: number; flowId: string };
+  };
+  funding: {
+    reservation: {
+      id: number;
+      flowId: string;
+      state: string;
+      currency: string;
+      targetAmount: number;
+      holderBinding: { namespace: string; key: string };
+      escrowAccountId: number;
+    };
+    transfer: {
+      flowId: string;
+      currency: string;
+      amount: number;
+      toAccountId: number;
+    };
+    provenance: {
+      action: { operationKind: string };
+      operation: { id: string; flowId: string; kind: string };
+      command: {
+        flowId: string;
+        kind: string;
+        principalId: number;
+        subject: { namespace: string; key: string };
+        resultOperationId: string | null;
+      };
+    };
+  };
+  accounts: {
+    beneficiaryHolderId: number;
+    point: { settledAccountId: number };
+    income: { issuerAccountId: number; availableAccountId: number };
+  };
 }
 
 export class CommissionSettlementStateError extends DomainError {
@@ -61,82 +68,86 @@ export class CommissionSettlementStateError extends DomainError {
 }
 
 export function planCommissionSettlement(
-  facts: CommissionSettlementFacts,
+  world: CommissionSettlementWorld,
   input: CommissionSettlementInput,
 ) {
-  if (facts.contractId !== input.contractId) {
+  const { contract, order, payment, funding, accounts } = world;
+  const { reservation, transfer, provenance } = funding;
+
+  if (contract.id !== input.contractId) {
     throw new CommissionSettlementStateError('Contract identity changed');
   }
-  if (facts.contractOrderId !== facts.orderId) {
+  if (contract.orderId !== order.id) {
     throw new CommissionSettlementStateError('Contract Order identity changed');
   }
-  if (facts.workerId !== input.actorId) {
+  if (contract.workerId !== input.actorId) {
     throw new CommissionSettlementStateError('Only the contract worker can settle commission');
   }
-  if (facts.orderState !== 'PAID') {
+  if (order.state !== 'PAID') {
     throw new CommissionSettlementStateError('Commission Order must be paid before settlement');
   }
-  if (facts.paymentState !== 'PAID') {
+  if (payment.state !== 'PAID') {
     throw new CommissionSettlementStateError('Commission payment must be paid before settlement');
   }
-  if (facts.reservationState !== 'HELD') {
+  if (reservation.state !== 'HELD') {
     throw new CommissionSettlementStateError('Commission POINT must still be held for settlement');
   }
   if (
-    facts.orderCurrency !== 'POINT' ||
-    facts.paymentCurrency !== 'POINT' ||
-    facts.reservationCurrency !== 'POINT' ||
-    facts.fundingTransferCurrency !== 'POINT' ||
-    facts.reservationTargetAmount <= 0
+    order.currency !== 'POINT' ||
+    payment.currency !== 'POINT' ||
+    reservation.currency !== 'POINT' ||
+    transfer.currency !== 'POINT' ||
+    reservation.targetAmount <= 0
   ) {
     throw new CommissionSettlementStateError('Settlement input must be positive POINT');
   }
   if (
-    facts.flowId !== facts.orderFlowId ||
-    facts.flowId !== facts.linkedReservationFlowId ||
-    facts.flowId !== facts.reservationFlowId ||
-    facts.flowId !== facts.fundingTransferFlowId
+    contract.flowId !== order.flowId ||
+    contract.flowId !== payment.flowId ||
+    contract.flowId !== payment.fundingLink.flowId ||
+    contract.flowId !== reservation.flowId ||
+    contract.flowId !== transfer.flowId
   ) {
     throw new CommissionSettlementStateError('Settlement funding must belong to the Contract flow');
   }
-  if (facts.linkedReservationId !== facts.reservationId) {
+  if (payment.fundingLink.reservationId !== reservation.id) {
     throw new CommissionSettlementStateError('Settlement must use the Order-owned reservation link');
   }
   if (
-    facts.fundingActionOperationKind !== 'PAY' ||
-    facts.fundingOperationKind !== 'PAY' ||
-    facts.fundingCommandKind !== 'PAY' ||
-    facts.fundingOperationId !== facts.fundingCommandResultOperationId ||
-    facts.fundingOperationFlowId !== facts.flowId ||
-    facts.fundingCommandFlowId !== facts.flowId
+    provenance.action.operationKind !== 'PAY' ||
+    provenance.operation.kind !== 'PAY' ||
+    provenance.command.kind !== 'PAY' ||
+    provenance.operation.id !== provenance.command.resultOperationId ||
+    provenance.operation.flowId !== contract.flowId ||
+    provenance.command.flowId !== contract.flowId
   ) {
     throw new CommissionSettlementStateError('Settlement funding must come from a completed PAY');
   }
   if (
-    facts.fundingCommandPrincipalId !== facts.orderBuyerId ||
-    facts.fundingCommandSubjectNamespace !== 'commission-order-payment' ||
-    facts.fundingCommandSubjectKey !== String(facts.orderPaymentId) ||
-    facts.reservationHolderBindingNamespace !== 'user' ||
-    facts.reservationHolderBindingKey !== String(facts.orderBuyerId)
+    provenance.command.principalId !== order.buyerId ||
+    provenance.command.subject.namespace !== 'commission-order-payment' ||
+    provenance.command.subject.key !== String(payment.id) ||
+    reservation.holderBinding.namespace !== 'user' ||
+    reservation.holderBinding.key !== String(order.buyerId)
   ) {
     throw new CommissionSettlementStateError(
       'Settlement PAY principal, payment subject, and buyer holder must agree',
     );
   }
   if (
-    facts.orderAmount !== facts.paymentAmount ||
-    facts.orderAmount !== facts.reservationTargetAmount ||
-    facts.orderAmount !== facts.fundingTransferAmount
+    order.amount !== payment.amount ||
+    order.amount !== reservation.targetAmount ||
+    order.amount !== transfer.amount
   ) {
     throw new CommissionSettlementStateError('Settlement funded amount must equal the paid Order');
   }
-  if (facts.fundingTransferToAccountId !== facts.pointEscrowAccountId) {
+  if (transfer.toAccountId !== reservation.escrowAccountId) {
     throw new CommissionSettlementStateError('Settlement funding must target the reservation escrow');
   }
 
   return {
     commandRequest: {
-      flowId: facts.flowId,
+      flowId: contract.flowId,
       flowKind: 'COMMISSION' as const,
       kind: 'SETTLE' as const,
       principalId: input.actorId,
@@ -146,25 +157,25 @@ export function planCommissionSettlement(
     },
     operationRequest: { kind: 'SETTLE' as const, actionKind: 'SWAP' as const },
     swap: {
-      flowId: facts.flowId,
-      reservationId: facts.reservationId,
-      beneficiaryHolderId: facts.beneficiaryHolderId,
-      amount: facts.reservationTargetAmount,
+      flowId: contract.flowId,
+      reservationId: reservation.id,
+      beneficiaryHolderId: accounts.beneficiaryHolderId,
+      amount: reservation.targetAmount,
       pointLeg: {
         currency: 'POINT' as const,
-        fromAccountId: facts.pointEscrowAccountId,
-        toAccountId: facts.pointSettledAccountId,
+        fromAccountId: reservation.escrowAccountId,
+        toAccountId: accounts.point.settledAccountId,
       },
       incomeLeg: {
         currency: 'INCOME' as const,
-        fromAccountId: facts.incomeIssuerAccountId,
-        toAccountId: facts.incomeAvailableAccountId,
+        fromAccountId: accounts.income.issuerAccountId,
+        toAccountId: accounts.income.availableAccountId,
       },
       incomeLot: {
-        accountId: facts.incomeAvailableAccountId,
+        accountId: accounts.income.availableAccountId,
         currency: 'INCOME' as const,
         sourceKind: 'COMMISSION_SETTLEMENT' as const,
-        originalAmount: facts.reservationTargetAmount,
+        originalAmount: reservation.targetAmount,
       },
     },
   };

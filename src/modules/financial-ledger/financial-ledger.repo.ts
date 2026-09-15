@@ -153,10 +153,16 @@ async function findAccountId(
   return account.id;
 }
 
-export async function loadCommissionSettlementAccountWorld(
+export interface CommissionSettlementAccounts {
+  beneficiaryHolderId: number;
+  point: { settledAccountId: number };
+  income: { issuerAccountId: number; availableAccountId: number };
+}
+
+export async function loadCommissionSettlementAccounts(
   db: ReadDbClient,
   workerHolderId: number,
-) {
+): Promise<CommissionSettlementAccounts> {
   const platformHolderId = await findHolderId(db, { namespace: 'system', key: 'platform' });
   // Sequential reads keep this compatible with every interactive-transaction adapter.
   const pointSettledAccountId = await findAccountId(db, {
@@ -175,17 +181,48 @@ export async function loadCommissionSettlementAccountWorld(
     purpose: 'AVAILABLE',
   });
   return {
-    pointSettledAccountId,
-    incomeIssuerAccountId,
-    incomeAvailableAccountId,
     beneficiaryHolderId: workerHolderId,
+    point: { settledAccountId: pointSettledAccountId },
+    income: {
+      issuerAccountId: incomeIssuerAccountId,
+      availableAccountId: incomeAvailableAccountId,
+    },
+  };
+}
+
+export interface CommissionSettlementFunding {
+  reservation: {
+    id: number;
+    flowId: string;
+    state: string;
+    currency: string;
+    targetAmount: number;
+    holderBinding: { namespace: string; key: string };
+    escrowAccountId: number;
+  };
+  transfer: {
+    flowId: string;
+    currency: string;
+    amount: number;
+    toAccountId: number;
+  };
+  provenance: {
+    action: { operationKind: string };
+    operation: { id: string; flowId: string; kind: string };
+    command: {
+      flowId: string;
+      kind: string;
+      principalId: number;
+      subject: { namespace: string; key: string };
+      resultOperationId: string | null;
+    };
   };
 }
 
 export async function loadCommissionSettlementFunding(
   db: ReadDbClient,
   reservationId: number,
-) {
+): Promise<CommissionSettlementFunding> {
   const reservation = await db.financialReservation.findUnique({
     where: { id: reservationId },
     select: {
@@ -198,7 +235,6 @@ export async function loadCommissionSettlementFunding(
       escrowAccount: { select: { id: true } },
       transfer: {
         select: {
-          id: true,
           flowId: true,
           currency: true,
           amount: true,
@@ -232,34 +268,48 @@ export async function loadCommissionSettlementFunding(
   if (!reservation?.escrowAccount || !reservation.transfer) {
     throw new CommissionSettlementFundingNotFoundError(reservationId);
   }
+  const { holder, escrowAccount, transfer } = reservation;
+  const { action } = transfer;
+  const { operation } = action;
+  const command = operation.originatingCommand;
+
   return {
-    reservationId: reservation.id,
-    reservationFlowId: reservation.flowId,
-    reservationState: reservation.state,
-    reservationCurrency: reservation.currency,
-    reservationTargetAmount: reservation.targetAmount,
-    reservationHolderBindingNamespace: reservation.holder.bindingNamespace,
-    reservationHolderBindingKey: reservation.holder.bindingKey,
-    pointEscrowAccountId: reservation.escrowAccount.id,
-    fundingTransferId: reservation.transfer.id,
-    fundingTransferFlowId: reservation.transfer.flowId,
-    fundingTransferCurrency: reservation.transfer.currency,
-    fundingTransferAmount: reservation.transfer.amount,
-    fundingTransferToAccountId: reservation.transfer.toAccountId,
-    fundingActionOperationKind: reservation.transfer.action.operationKind,
-    fundingOperationId: reservation.transfer.action.operation.id,
-    fundingOperationFlowId: reservation.transfer.action.operation.flowId,
-    fundingOperationKind: reservation.transfer.action.operation.kind,
-    fundingCommandFlowId: reservation.transfer.action.operation.originatingCommand.flowId,
-    fundingCommandKind: reservation.transfer.action.operation.originatingCommand.kind,
-    fundingCommandPrincipalId:
-      reservation.transfer.action.operation.originatingCommand.principalId,
-    fundingCommandSubjectNamespace:
-      reservation.transfer.action.operation.originatingCommand.subjectNamespace,
-    fundingCommandSubjectKey:
-      reservation.transfer.action.operation.originatingCommand.subjectKey,
-    fundingCommandResultOperationId:
-      reservation.transfer.action.operation.originatingCommand.resultOperationId,
+    reservation: {
+      id: reservation.id,
+      flowId: reservation.flowId,
+      state: reservation.state,
+      currency: reservation.currency,
+      targetAmount: reservation.targetAmount,
+      holderBinding: {
+        namespace: holder.bindingNamespace,
+        key: holder.bindingKey,
+      },
+      escrowAccountId: escrowAccount.id,
+    },
+    transfer: {
+      flowId: transfer.flowId,
+      currency: transfer.currency,
+      amount: transfer.amount,
+      toAccountId: transfer.toAccountId,
+    },
+    provenance: {
+      action: { operationKind: action.operationKind },
+      operation: {
+        id: operation.id,
+        flowId: operation.flowId,
+        kind: operation.kind,
+      },
+      command: {
+        flowId: command.flowId,
+        kind: command.kind,
+        principalId: command.principalId,
+        subject: {
+          namespace: command.subjectNamespace,
+          key: command.subjectKey,
+        },
+        resultOperationId: command.resultOperationId,
+      },
+    },
   };
 }
 
