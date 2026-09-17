@@ -19,6 +19,7 @@ datasource db {
 enum TransactionFlowKind {
   COMMISSION
   WITHDRAWAL
+  POINT_CHARGE
 }
 
 enum FinancialCommandKind {
@@ -28,6 +29,7 @@ enum FinancialCommandKind {
   REFUND
   CANCEL
   WITHDRAW
+  CHARGE
 }
 
 /// A user of the system. `status` is a state machine (see user.state.ts):
@@ -280,23 +282,27 @@ model FinancialAccount {
 
 /// PROTOTYPE — Currency provenance and remaining spendable amount.
 model FinancialLot {
-  id                  Int                           @id @default(autoincrement())
-  accountId           Int
-  currency            String                        @default("POINT")
-  account             FinancialAccount              @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
-  sourceKind          String
-  sourceOperationId   String?                       @db.Uuid
-  sourceSwapActionId  String?                       @unique @db.Uuid
-  sourceFlowId        String?                       @db.Uuid
-  sourceFlowKind      TransactionFlowKind?
-  sourceOperationKind FinancialCommandKind?
-  sourceOperation     FinancialOperation?           @relation(fields: [sourceOperationId, sourceFlowId, sourceOperationKind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
-  sourceFlow          TransactionFlow?              @relation("FinancialLotSourceFlow", fields: [sourceFlowId, sourceFlowKind], references: [id, kind], onDelete: Restrict, onUpdate: NoAction)
-  sourceSwapAction    FinancialSwapAction?          @relation(fields: [sourceSwapActionId, sourceOperationId, sourceFlowId], references: [id, operationId, flowId], onDelete: Restrict, onUpdate: NoAction)
-  originalAmount      Int
-  remainingAmount     Int
-  allocations         FinancialTransferAllocation[]
-  createdAt           DateTime                      @default(now()) @db.Timestamptz(6)
+  id                      Int                           @id @default(autoincrement())
+  accountId               Int
+  currency                String                        @default("POINT")
+  account                 FinancialAccount              @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: NoAction)
+  sourceKind              String
+  sourceOperationId       String?                       @db.Uuid
+  sourceSwapActionId      String?                       @unique @db.Uuid
+  sourceFlowId            String?                       @db.Uuid
+  sourceFlowKind          TransactionFlowKind?
+  sourceOperationKind     FinancialCommandKind?
+  /// Immutable accounting basis captured when a provenance-backed lot is issued.
+  issuanceReason          String?
+  accountingCategory      String?
+  accountingPolicyVersion String?
+  sourceOperation         FinancialOperation?           @relation(fields: [sourceOperationId, sourceFlowId, sourceOperationKind], references: [id, flowId, kind], onDelete: Restrict, onUpdate: NoAction)
+  sourceFlow              TransactionFlow?              @relation("FinancialLotSourceFlow", fields: [sourceFlowId, sourceFlowKind], references: [id, kind], onDelete: Restrict, onUpdate: NoAction)
+  sourceSwapAction        FinancialSwapAction?          @relation(fields: [sourceSwapActionId, sourceOperationId, sourceFlowId], references: [id, operationId, flowId], onDelete: Restrict, onUpdate: NoAction)
+  originalAmount          Int
+  remainingAmount         Int
+  allocations             FinancialTransferAllocation[]
+  createdAt               DateTime                      @default(now()) @db.Timestamptz(6)
 
   @@unique([id, accountId, currency])
   @@unique([sourceOperationId])

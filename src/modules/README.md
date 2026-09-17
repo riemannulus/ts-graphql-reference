@@ -27,12 +27,13 @@ depend one way only"):
 | `commission-checkout → commission-type, order, financial-ledger, contract, slot, transaction-flow` | commission checkout builds one pure product/ledger/identity plan and applies it through reviewed repo/core files on one transaction | value |
 | `commission-settlement → contract, order, financial-ledger, transaction-flow` | commission settlement combines owner projections, proves the PAY transfer, and atomically applies one typed SETTLE/SWAP to the ledger and flow history | value |
 | `income-withdrawal → financial-ledger, transaction-flow` | income withdrawal creates its own flow and atomically reserves FIFO INCOME lots from the ledger | value |
+| `point-charge → financial-ledger, transaction-flow` | an internal PoC use-case records one supplied external-payment identity as a POINT_CHARGE flow and immutable paid POINT lot; no public verified-payment adapter exists yet | value |
 
 `user`, `post`, `point`, `feature-flag`, `commission-type`, `order`,
 `financial-ledger`, `contract`, `slot`, and `transaction-flow` import no other module. In particular,
 the financial module has no product imports. `commission-checkout` is the one-way
 composite that imports only reviewed owner and transaction-flow repo/core files and passes them its transaction.
-`commission-settlement` and `income-withdrawal` follow the same direction: they
+`commission-settlement`, `income-withdrawal`, and `point-charge` follow the same direction: they
 compose owner writes from above, while their cores and delivery files cannot
 import owner implementations.
 The open

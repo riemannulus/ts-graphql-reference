@@ -9,6 +9,7 @@ import { createCommissionSettlementService } from './modules/commission-settleme
 import { createOnboardingService } from './modules/onboarding/onboarding.service.js';
 import { createPointService } from './modules/point/point.service.js';
 import { createIncomeWithdrawalService } from './modules/income-withdrawal/income-withdrawal.service.js';
+import { createPointChargeService } from './modules/point-charge/point-charge.service.js';
 import {
   type PostSearchIndex,
   stubPostSearchIndex,
@@ -75,6 +76,8 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
   const commissionCheckout = createCommissionCheckoutService(db);
   const commissionSettlement = createCommissionSettlementService(db);
   const incomeWithdrawal = createIncomeWithdrawalService(db);
+  // No public delivery calls this yet: bind a verified-payment adapter before exposing charge().
+  const pointCharge = createPointChargeService(db);
   return {
     user,
     point,
@@ -85,6 +88,7 @@ export function createServices(db: Db, options: CreateServicesOptions = {}) {
     commissionCheckout,
     commissionSettlement,
     incomeWithdrawal,
+    pointCharge,
   };
 }
 

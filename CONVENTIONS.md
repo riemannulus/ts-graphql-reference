@@ -45,7 +45,8 @@ per-file lint cannot:
   only; the service arrives injected), and `commission-checkout → {commission-type,
   contract, financial-ledger, order, slot, transaction-flow}`,
   `commission-settlement → {contract, financial-ledger, order, transaction-flow}`,
-  and `income-withdrawal → {financial-ledger, transaction-flow}` (reviewed repo/core files only;
+  `income-withdrawal → {financial-ledger, transaction-flow}`, and
+  `point-charge → {financial-ledger, transaction-flow}` (reviewed repo/core files only;
   composite services import owner repos directly and owner modules never point back).
   Two modules can entangle with no
   file-level cycle (`user/a.ts → post/x.ts` plus `post/y.ts → user/b.ts`),
