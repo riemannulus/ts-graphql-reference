@@ -23,6 +23,8 @@ const commandResultSelect = {
   flowId: true,
   flowKind: true,
   kind: true,
+  principalId: true,
+  idempotencyKey: true,
   payloadHash: true,
   subjectNamespace: true,
   subjectKey: true,
@@ -34,6 +36,8 @@ function mapStoredCommand(row: {
   flowId: string;
   flowKind: TransactionFlowKind;
   kind: FinancialCommandKind;
+  principalId: number;
+  idempotencyKey: string;
   payloadHash: string;
   subjectNamespace: string;
   subjectKey: string;
@@ -44,6 +48,8 @@ function mapStoredCommand(row: {
     flowId: row.flowId,
     flowKind: row.flowKind,
     kind: row.kind,
+    principalId: row.principalId,
+    idempotencyKey: row.idempotencyKey,
     payloadHash: row.payloadHash,
     subjectNamespace: row.subjectNamespace,
     subjectKey: row.subjectKey,
@@ -145,6 +151,6 @@ export function saveCommandAlias(
 
 export async function assertCommandEffectCompleteness(db: DbClient) {
   await db.$executeRawUnsafe(
-    'SET CONSTRAINTS "FinancialCommand_effect_completeness_check", "FinancialTransfer_command_completion_check" IMMEDIATE',
+    'SET CONSTRAINTS "FinancialCommand_effect_completeness_check", "FinancialTransfer_command_completion_check", "FinancialLot_point_charge_shape_check" IMMEDIATE',
   );
 }

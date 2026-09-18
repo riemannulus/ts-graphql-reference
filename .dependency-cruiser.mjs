@@ -41,7 +41,7 @@ export default {
       from: {
         path: '^src/modules/([^/]+)/',
         pathNot:
-          '^src/modules/(auth|commission-checkout|commission-settlement|income-withdrawal|onboarding|search)/',
+          '^src/modules/(auth|commission-checkout|commission-settlement|income-withdrawal|point-charge|onboarding|search)/',
       },
       to: { path: '^src/modules/', pathNot: '^src/modules/$1/' },
     },
@@ -179,6 +179,36 @@ export default {
       to: { path: '^src/modules/(financial-ledger|transaction-flow)/' },
     },
     {
+      name: 'point-charge-reaches-reviewed-owners-only',
+      comment:
+        'Point charge composes generic flow identity with one provenance-backed POINT lot in one transaction.',
+      severity: 'error',
+      from: { path: '^src/modules/point-charge/' },
+      to: {
+        path: '^src/modules/',
+        pathNot: '^src/modules/(point-charge|financial-ledger|transaction-flow)/',
+      },
+    },
+    {
+      name: 'point-charge-imports-owner-repos-only',
+      severity: 'error',
+      from: { path: '^src/modules/point-charge/' },
+      to: {
+        path: '^src/modules/(financial-ledger|transaction-flow)/',
+        pathNot:
+          '^src/modules/(financial-ledger/financial-ledger\\.repo|transaction-flow/transaction-flow\\.(core|repo))\\.ts$',
+      },
+    },
+    {
+      name: 'point-charge-owner-imports-live-in-service',
+      severity: 'error',
+      from: {
+        path: '^src/modules/point-charge/',
+        pathNot: '^src/modules/point-charge/point-charge\\.service\\.ts$',
+      },
+      to: { path: '^src/modules/(financial-ledger|transaction-flow)/' },
+    },
+    {
       name: 'composition-root-is-the-top',
       comment:
         'app.ts / services.ts / server.ts assemble everything, so nothing ' +
@@ -292,6 +322,7 @@ export default {
             { criteria: { source: '^src/modules/commission-checkout' }, attributes: { fillcolor: '#eef2ff', color: '#6366f1' } },
             { criteria: { source: '^src/modules/commission-settlement' }, attributes: { fillcolor: '#f5f3ff', color: '#7c3aed' } },
             { criteria: { source: '^src/modules/income-withdrawal' }, attributes: { fillcolor: '#ecfeff', color: '#0891b2' } },
+            { criteria: { source: '^src/modules/point-charge' }, attributes: { fillcolor: '#fff7ed', color: '#d97706' } },
             { criteria: { source: '^src/modules/financial-ledger' }, attributes: { fillcolor: '#ecfdf5', color: '#10b981' } },
             { criteria: { source: '^src/modules/order' }, attributes: { fillcolor: '#fff7ed', color: '#ea580c' } },
             { criteria: { source: '^src/modules/contract' }, attributes: { fillcolor: '#fdf4ff', color: '#c026d3' } },
@@ -312,6 +343,7 @@ export default {
             { criteria: { resolved: '^src/modules/commission-checkout' }, attributes: { color: '#6366f1' } },
             { criteria: { resolved: '^src/modules/commission-settlement' }, attributes: { color: '#7c3aed' } },
             { criteria: { resolved: '^src/modules/income-withdrawal' }, attributes: { color: '#0891b2' } },
+            { criteria: { resolved: '^src/modules/point-charge' }, attributes: { color: '#d97706' } },
             { criteria: { resolved: '^src/modules/financial-ledger' }, attributes: { color: '#10b981' } },
             { criteria: { resolved: '^src/modules/order' }, attributes: { color: '#ea580c' } },
             { criteria: { resolved: '^src/modules/contract' }, attributes: { color: '#c026d3' } },

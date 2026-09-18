@@ -45,6 +45,10 @@ export const lockKey = defineLocks({
   incomeWithdrawalCommand: (commandKey: string) => stringLockId(commandKey),
   /** PROTOTYPE: claims one commission-settlement command before creating its operation. */
   commissionSettlementCommand: (commandKey: string) => stringLockId(commandKey),
+  /** PROTOTYPE: claims one external point-charge payment before creating its flow. */
+  pointChargePayment: (externalPaymentId: string) => stringLockId(externalPaymentId),
+  /** PROTOTYPE: claims one point-charge command key before creating its flow. */
+  pointChargeCommand: (commandKey: string) => stringLockId(commandKey),
 });
 
 /** The registered lock namespaces, derived from the registry. */

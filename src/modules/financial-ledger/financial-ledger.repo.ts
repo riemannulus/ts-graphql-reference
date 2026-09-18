@@ -64,6 +64,98 @@ export async function loadAvailablePointWorld(db: ReadDbClient, holderId: number
   };
 }
 
+export async function loadPointChargeWorld(db: ReadDbClient, holderId: number) {
+  const account = await db.financialAccount.findUnique({
+    where: {
+      holderId_currency_purpose: { holderId, currency: 'POINT', purpose: 'AVAILABLE' },
+    },
+    select: { id: true },
+  });
+  if (!account) throw new AvailableAccountNotFoundError(holderId);
+  return { holderId, availableAccountId: account.id };
+}
+
+export function applyPointChargeLot(
+  db: DbClient,
+  input: {
+    flowId: string;
+    operationId: string;
+    request: {
+      accountId: number;
+      currency: 'POINT';
+      sourceKind: 'PAID';
+      issuanceReason: 'PURCHASE';
+      accountingCategory: 'CUSTOMER_ADVANCE';
+      accountingPolicyVersion: string;
+      amount: number;
+    };
+  },
+) {
+  return db.financialLot.create({
+    data: {
+      accountId: input.request.accountId,
+      currency: input.request.currency,
+      sourceKind: input.request.sourceKind,
+      sourceOperationId: input.operationId,
+      sourceFlowId: input.flowId,
+      sourceFlowKind: 'POINT_CHARGE',
+      sourceOperationKind: 'CHARGE',
+      issuanceReason: input.request.issuanceReason,
+      accountingCategory: input.request.accountingCategory,
+      accountingPolicyVersion: input.request.accountingPolicyVersion,
+      originalAmount: input.request.amount,
+      remainingAmount: input.request.amount,
+    },
+    select: { id: true, originalAmount: true },
+  });
+}
+
+export async function loadPointChargeLedgerResult(db: ReadDbClient, operationId: string) {
+  const lot = await db.financialLot.findUniqueOrThrow({
+    where: { sourceOperationId: operationId },
+    select: { id: true, originalAmount: true },
+  });
+  return { lotId: lot.id, amount: lot.originalAmount };
+}
+
+export async function loadCommissionPointFundingAllocations(
+  db: ReadDbClient,
+  reservationId: number,
+) {
+  const reservation = await db.financialReservation.findUniqueOrThrow({
+    where: { id: reservationId },
+    select: {
+      transfer: {
+        select: {
+          allocations: {
+            orderBy: { lotId: 'asc' },
+            select: {
+              lotId: true,
+              amount: true,
+              lot: {
+                select: {
+                  sourceFlowId: true,
+                  sourceFlowKind: true,
+                  sourceOperationId: true,
+                  sourceOperationKind: true,
+                  issuanceReason: true,
+                  accountingCategory: true,
+                  accountingPolicyVersion: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  return (reservation.transfer?.allocations ?? []).map((allocation) => ({
+    lotId: allocation.lotId,
+    amount: allocation.amount,
+    ...allocation.lot,
+  }));
+}
+
 export async function applyCommissionPaymentReservation(
   db: DbClient,
   request: {
@@ -219,51 +311,53 @@ export interface CommissionSettlementFunding {
   };
 }
 
+const fundingCommandSelect = {
+  kind: true,
+  flowId: true,
+  principalId: true,
+  subjectNamespace: true,
+  subjectKey: true,
+  resultOperationId: true,
+} as const;
+
+const fundingOperationSelect = {
+  id: true,
+  flowId: true,
+  kind: true,
+  originatingCommand: { select: fundingCommandSelect },
+} as const;
+
+const fundingActionSelect = {
+  operationKind: true,
+  operation: { select: fundingOperationSelect },
+} as const;
+
+const fundingTransferSelect = {
+  flowId: true,
+  currency: true,
+  amount: true,
+  toAccountId: true,
+  action: { select: fundingActionSelect },
+} as const;
+
+const commissionSettlementFundingSelect = {
+  id: true,
+  flowId: true,
+  state: true,
+  currency: true,
+  targetAmount: true,
+  holder: { select: { bindingNamespace: true, bindingKey: true } },
+  escrowAccount: { select: { id: true } },
+  transfer: { select: fundingTransferSelect },
+} as const;
+
 export async function loadCommissionSettlementFunding(
   db: ReadDbClient,
   reservationId: number,
 ): Promise<CommissionSettlementFunding> {
   const reservation = await db.financialReservation.findUnique({
     where: { id: reservationId },
-    select: {
-      id: true,
-      flowId: true,
-      state: true,
-      currency: true,
-      targetAmount: true,
-      holder: { select: { bindingNamespace: true, bindingKey: true } },
-      escrowAccount: { select: { id: true } },
-      transfer: {
-        select: {
-          flowId: true,
-          currency: true,
-          amount: true,
-          toAccountId: true,
-          action: {
-            select: {
-              operationKind: true,
-              operation: {
-                select: {
-                  id: true,
-                  flowId: true,
-                  kind: true,
-                  originatingCommand: {
-                    select: {
-                      kind: true,
-                      flowId: true,
-                      principalId: true,
-                      subjectNamespace: true,
-                      subjectKey: true,
-                      resultOperationId: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    select: commissionSettlementFundingSelect,
   });
   if (!reservation?.escrowAccount || !reservation.transfer) {
     throw new CommissionSettlementFundingNotFoundError(reservationId);
